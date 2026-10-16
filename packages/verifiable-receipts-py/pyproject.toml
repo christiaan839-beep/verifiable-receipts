@@ -5,7 +5,7 @@ description = "Python signer and verifier for VAOS v2 receipts (Ed25519), and RF
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
-    { name = "Sovereign Matrix", email = "spec@sovereignmatrix.agency" }
+    { name = "Sovereign Matrix", email = "sovereign.systems007@gmail.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [

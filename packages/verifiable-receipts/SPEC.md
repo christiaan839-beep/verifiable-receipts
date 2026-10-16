@@ -240,5 +240,5 @@ implementation is Apache-2.0. Use both, fork both, ship both.
 
 ## Contact
 
-- Editorial: `spec@sovereignmatrix.agency`
-- Security: `security@sovereignmatrix.agency`
+`sovereign.systems007@gmail.com`, for editorial feedback and for security reports. Start a security report's subject with
+`[security]`, and please don't open a public issue for one.

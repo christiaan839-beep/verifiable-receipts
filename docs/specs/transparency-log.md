@@ -4,7 +4,7 @@
 | ----------- | --------------------------------------------------------------------------- |
 | Version     | 0.1                                                                         |
 | Status      | Draft — primitives shipped in `@sovereign-matrix/verifiable-receipts@0.1.x` |
-| Editor      | Sovereign Matrix — `spec@sovereignmatrix.agency`                            |
+| Editor      | Sovereign Matrix — `sovereign.systems007@gmail.com`                         |
 | License     | CC0 1.0 (public domain)                                                     |
 | Inspired by | RFC 6962 / RFC 9162 (Certificate Transparency)                              |
 
@@ -237,5 +237,5 @@ incremental work.
 
 ## 10. Contact
 
-`spec@sovereignmatrix.agency` — editorial feedback.
-`security@sovereignmatrix.agency` — security disclosure.
+`sovereign.systems007@gmail.com` — editorial feedback and security disclosures. Start a security report's subject with
+`[security]`, and please don't open a public issue for one.

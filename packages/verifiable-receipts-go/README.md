@@ -121,5 +121,5 @@ fmt.Println(ok) // true if leaf provably appears in the tree
 
 Apache 2.0 © Sovereign Matrix; see [LICENSE](./LICENSE).
 
-Bug in verification math? Report to `security@sovereignmatrix.agency`
+Bug in verification math? Report to `sovereign.systems007@gmail.com`
 before public disclosure.

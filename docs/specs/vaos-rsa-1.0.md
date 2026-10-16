@@ -2,7 +2,7 @@
 
 **Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.3.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
-**Contact:** spec@sovereignmatrix.agency
+**Contact:** sovereign.systems007@gmail.com
 
 VAOS-RSA defines a **Merkle-rooted commitment over the full chunk
 sequence of an LLM stream**, enabling auditors to prove "chunk N
