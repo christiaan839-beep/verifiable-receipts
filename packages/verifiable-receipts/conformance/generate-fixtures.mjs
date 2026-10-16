@@ -1,6 +1,6 @@
 /**
  * Regenerates the v2 signature fixtures + public-key.pem for the
- * cross-language conformance corpus.
+ * cross-language conformance corpus (eight v2 fixtures).
  *
  * Why this exists: the corpus is only auditable if the verification
  * key ships with it. The original corpus was signed with a throwaway
@@ -39,6 +39,20 @@ const CANONICAL_TAMPERED = CANONICAL.replace(
 
 const contentHash =
   "sha256:" + createHash("sha256").update(CANONICAL, "utf8").digest("hex");
+
+// CANONICAL's fields repeated beside it, as a receipt carries them. The
+// rule's keys are in another order: verifiers compare JSON values, so
+// key order does not matter. Every field beside canonical, contentHash
+// and signature must equal the canonical's.
+const ENVELOPE = {
+  agentSlug: "loan-underwriter",
+  issuedAt: "2026-05-18T10:00:00Z",
+  overall: "pass",
+  rules: [{ durationMs: 2, ruleId: "hipaa-no-raw-ssn", verdict: "pass" }],
+  runId: "run_conformance_001",
+  tokenId: "tok_001",
+  verdictId: "v_conf_001",
+};
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const { privateKey: wrongKey } = generateKeyPairSync("ed25519");
@@ -89,6 +103,47 @@ const fixtures = {
       signature: "v1=aG1hYw==",
     },
     expected: { ok: false, reasonContains: "v2" },
+  },
+  "v2-valid-envelope-agrees.json": {
+    description:
+      "v2 valid — envelope fields repeat the signed canonical (a nested object's keys in another order)",
+    receipt: {
+      ...ENVELOPE,
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+    },
+    expected: { ok: true },
+  },
+  "v2-invalid-envelope-disagrees.json": {
+    description:
+      "v2 invalid — envelope field overall says fail, the signed canonical says pass",
+    receipt: {
+      ...ENVELOPE,
+      overall: "fail",
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+    },
+    expected: {
+      ok: false,
+      reasonContains: 'envelope field "overall" disagrees',
+    },
+  },
+  "v2-invalid-envelope-unsigned.json": {
+    description:
+      "v2 invalid — envelope field approvedBy is not in the signed canonical",
+    receipt: {
+      ...ENVELOPE,
+      approvedBy: "compliance-officer",
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+    },
+    expected: {
+      ok: false,
+      reasonContains: 'envelope field "approvedBy" is not in the signed canonical',
+    },
   },
 };
 

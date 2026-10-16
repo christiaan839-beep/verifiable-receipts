@@ -1,6 +1,6 @@
 # @sovereign-matrix/verifiable-receipts
 
-TypeScript library for signed AI agent receipts. Version 0.3.0,
+TypeScript library for signed AI agent receipts. Version 0.3.1,
 Apache-2.0. Not published to npm yet: install it from this repository.
 
 A receipt records an agent run (inputs, output, the checks that ran and
@@ -46,7 +46,10 @@ written proof sketches in Markdown; they are not machine-checked.
 
 `canonical` is the exact UTF-8 JSON that was signed, `contentHash` is
 `sha256:` plus the hex SHA-256 of `canonical`, and `signature` is `v2=`
-plus the base64 Ed25519 signature over `canonical`.
+plus the base64 Ed25519 signature over `canonical`. Every other field
+repeats a field of `canonical`: the Python and Go verifiers reject a
+receipt with a field that disagrees with the parsed `canonical` or that
+`canonical` does not contain.
 
 ## Install from the repository
 
@@ -65,7 +68,7 @@ package into your project. Node 18 or later. One runtime dependency:
 
 ## Tests
 
-Measured on 16 October 2026: **681 passed, 4 skipped** (vitest 3, 22 test
+Measured on 16 October 2026: **689 passed, 4 skipped** (vitest 3, 22 test
 files, including the cross-language conformance suite; Node 22). The four
 skipped tests are the witness CLI's network flow, skipped in
 `tests/witness-cli.test.ts`. To run them, from a clone of this repository:
@@ -76,11 +79,15 @@ npm install
 npm test
 ```
 
-The [`conformance/`](./conformance) folder has 11 JSON fixtures (valid
-and tampered receipts, wrong keys, inclusion proofs). The TypeScript,
-Python ([`../verifiable-receipts-py`](../verifiable-receipts-py)) and Go
+The [`conformance/`](./conformance) folder has 14 JSON fixtures (valid
+and tampered receipts, wrong keys, fields beside `canonical` that agree
+or disagree with it, inclusion proofs). The TypeScript, Python
+([`../verifiable-receipts-py`](../verifiable-receipts-py)) and Go
 ([`../verifiable-receipts-go`](../verifiable-receipts-go)) verifiers all
-run against them and must agree.
+run against them and must agree. [`conformance/roundtrip/`](./conformance/roundtrip)
+signs receipts with the Python signer, `verifiable-receipts-sign` and
+`runGuardian` under a throwaway key and verifies each in Python, Go and
+node; CI runs it.
 
 ## Sign and verify a verdict
 
@@ -162,6 +169,12 @@ Run any of them with `--help` for the full flags (`verifiable-receipts-sign
 --mldsa-key` adds the ML-DSA-65 signature for a `v3=` receipt).
 `verifiable-receipts verify` exits `0` (verifies), `1` (fails) or `2`
 (usage error).
+
+`verifiable-receipts-sign` drops any `canonical`, `contentHash` and
+`signature` from the body, sorts its keys at every depth, signs the
+compact JSON, and writes the body's fields plus `canonical`,
+`contentHash` and `signature`. A `v2=` receipt from it verifies with the
+Python `verify_v2_receipt` and the Go `VerifyV2Receipt`.
 
 ## Rule packs
 

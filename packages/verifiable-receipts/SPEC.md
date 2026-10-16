@@ -50,6 +50,13 @@ const canonical = JSON.stringify(sortKeysDeep(receipt));
 The projection MUST be byte-stable across implementations. The
 reference is `stableStringify()` in `dist/bundle.js`.
 
+A receipt carries the signed string as `canonical`. Verifiers check
+that string as given; they do not re-derive it from the receipt's other
+fields, and they reject a receipt whose other fields disagree with the
+parsed `canonical` or are missing from it. See
+[`docs/specs/vaos-2.0.md`](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-2.0.md)
+§5 and §7 (clarified 16 October 2026).
+
 ---
 
 ## v2 wire format — Ed25519
@@ -194,9 +201,9 @@ A receipt signed by this version of the package can be verified by:
   guarantee — the math is the contract);
 - any future version of this package that retains v2/v3 verifiers
   (no retirement is currently planned for either);
-- any implementation in any language that re-derives the canonical
-  projection per §2 and verifies the signature per §3 / §4 against
-  the published keys.
+- any implementation in any language that verifies the signature over
+  the receipt's `canonical` string per §3 / §4 against the published
+  keys, and checks the receipt's other fields against it.
 
 If a future major version of this package deprecates v2 or v3 in
 favour of `v4=`, this SPEC.md (frozen with version 0.1.0) is still

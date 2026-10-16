@@ -97,6 +97,20 @@ class TestVerifyV2Receipt:
         assert result.ok is False
         assert "contentHash" in (result.reason or "")
 
+    def test_rejects_a_content_hash_that_is_not_a_string(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"verdictId":"v_test"}'
+        receipt = {
+            "canonical": canonical,
+            "signature": _sign_v2(priv, canonical),
+            "contentHash": 5,
+        }
+        result = verify_v2_receipt(receipt, pub_pem)
+        assert result.ok is False
+        assert result.reason == "contentHash must be a string"
+        receipt["contentHash"] = None
+        assert verify_v2_receipt(receipt, pub_pem).ok is True
+
     def test_rejects_non_v2_signature_prefix(self) -> None:
         _, pub_pem = _make_keypair()
         receipt = {
@@ -126,9 +140,9 @@ class TestVerifyV2Receipt:
         assert verify_v2_receipt("not a dict", pub_pem).ok is False  # type: ignore[arg-type]
         assert verify_v2_receipt(None, pub_pem).ok is False  # type: ignore[arg-type]
 
-    def test_guardian_attestation_is_an_alias(self) -> None:
+    def test_guardian_attestation_accepts_a_matching_envelope(self) -> None:
         priv, pub_pem = _make_keypair()
-        canonical = '{"verdictId":"g_test","overall":"pass"}'
+        canonical = '{"verdictId":"g_test","overall":"pass","rules":[]}'
         att = {
             "canonical": canonical,
             "signature": _sign_v2(priv, canonical),
@@ -136,6 +150,158 @@ class TestVerifyV2Receipt:
             "overall": "pass",
             "rules": [],
         }
+        assert verify_guardian_attestation(att, pub_pem).ok is True
+
+
+class TestEnvelopeConsistency:
+    """Fields beside ``canonical`` must match the signed canonical."""
+
+    CANONICAL = (
+        '{"agentSlug":"loan-underwriter","overall":"pass",'
+        '"rules":[{"ruleId":"r1","verdict":"pass","durationMs":2}],"n":1}'
+    )
+
+    def _receipt(self, priv: Ed25519PrivateKey, **fields: object) -> dict:
+        return {
+            **fields,
+            "canonical": self.CANONICAL,
+            "contentHash": _content_hash(self.CANONICAL),
+            "signature": _sign_v2(priv, self.CANONICAL),
+        }
+
+    def test_accepts_fields_that_agree_in_any_key_order(self) -> None:
+        priv, pub_pem = _make_keypair()
+        receipt = self._receipt(
+            priv,
+            overall="pass",
+            rules=[{"durationMs": 2, "verdict": "pass", "ruleId": "r1"}],
+            n=1.0,  # numerically equal to the canonical's 1
+        )
+        result = verify_v2_receipt(receipt, pub_pem)
+        assert result.ok is True, result.reason
+
+    def test_rejects_a_field_that_disagrees(self) -> None:
+        priv, pub_pem = _make_keypair()
+        result = verify_v2_receipt(self._receipt(priv, overall="fail"), pub_pem)
+        assert result.ok is False
+        assert result.reason == (
+            'envelope field "overall" disagrees with the signed canonical'
+        )
+
+    def test_rejects_a_nested_difference(self) -> None:
+        priv, pub_pem = _make_keypair()
+        receipt = self._receipt(
+            priv, rules=[{"ruleId": "r1", "verdict": "block", "durationMs": 2}]
+        )
+        result = verify_v2_receipt(receipt, pub_pem)
+        assert result.ok is False
+        assert '"rules" disagrees' in (result.reason or "")
+
+    def test_rejects_a_field_absent_from_the_canonical(self) -> None:
+        priv, pub_pem = _make_keypair()
+        result = verify_v2_receipt(
+            self._receipt(priv, approvedBy="compliance"), pub_pem
+        )
+        assert result.ok is False
+        assert result.reason == (
+            'envelope field "approvedBy" is not in the signed canonical'
+        )
+
+    def test_a_boolean_never_equals_a_number(self) -> None:
+        priv, pub_pem = _make_keypair()
+        result = verify_v2_receipt(self._receipt(priv, n=True), pub_pem)
+        assert result.ok is False
+        assert '"n" disagrees' in (result.reason or "")
+
+    def test_rejects_a_signed_canonical_that_is_not_an_object(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '["not","an","object"]'
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+        result = verify_v2_receipt(receipt, pub_pem)
+        assert result.ok is False
+        assert result.reason == "canonical is not a JSON object"
+
+    def test_rejects_a_signed_canonical_that_is_not_json(self) -> None:
+        priv, pub_pem = _make_keypair()
+        for canonical in ("not json", '{"x":NaN}', '{"x":1} trailing'):
+            receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+            result = verify_v2_receipt(receipt, pub_pem)
+            assert result.ok is False
+            assert result.reason == "canonical is not valid JSON"
+
+
+class TestGuardianAttestation:
+    """The envelope ``runGuardian`` (TypeScript) returns."""
+
+    # Rules sorted by ruleId, projected to ruleId/verdict/reason, as
+    # guardian.ts canonicalize() writes them.
+    CANONICAL = (
+        '{"v":1,"type":"guardian-verdict","verdictId":"g_1","runId":"r1",'
+        '"agentSlug":"a","tokenId":"t","overall":"warn","rules":['
+        '{"ruleId":"hipaa-no-mrn","verdict":"warn","reason":"MRN found"},'
+        '{"ruleId":"hipaa-no-raw-ssn","verdict":"pass","reason":null}],'
+        '"issuedAt":"2026-10-16T00:00:00.000Z"}'
+    )
+
+    def _attestation(self, priv: Ed25519PrivateKey) -> dict:
+        return {
+            "verdictId": "g_1",
+            "overall": "warn",
+            # Evaluation order, with the unsigned durationMs and evidence.
+            "rules": [
+                {"ruleId": "hipaa-no-raw-ssn", "verdict": "pass", "durationMs": 0},
+                {
+                    "ruleId": "hipaa-no-mrn",
+                    "verdict": "warn",
+                    "reason": "MRN found",
+                    "evidence": {"offset": 4},
+                    "durationMs": 1,
+                },
+            ],
+            "totalMs": 1,
+            "issuedAt": "2026-10-16T00:00:00.000Z",
+            "canonical": self.CANONICAL,
+            "contentHash": hashlib.sha256(self.CANONICAL.encode("utf-8")).hexdigest(),
+            "signature": _sign_v2(priv, self.CANONICAL),
+        }
+
+    def test_accepts_a_run_guardian_envelope(self) -> None:
+        priv, pub_pem = _make_keypair()
+        result = verify_guardian_attestation(self._attestation(priv), pub_pem)
+        assert result.ok is True, result.reason
+
+    def test_the_generic_check_rejects_the_unsigned_fields(self) -> None:
+        priv, pub_pem = _make_keypair()
+        result = verify_v2_receipt(self._attestation(priv), pub_pem)
+        assert result.ok is False
+
+    def test_rejects_a_changed_verdict(self) -> None:
+        priv, pub_pem = _make_keypair()
+        att = self._attestation(priv)
+        att["rules"][1]["verdict"] = "pass"
+        result = verify_guardian_attestation(att, pub_pem)
+        assert result.ok is False
+        assert '"rules" disagrees' in (result.reason or "")
+
+    def test_rejects_a_dropped_rule(self) -> None:
+        priv, pub_pem = _make_keypair()
+        att = self._attestation(priv)
+        att["rules"] = att["rules"][:1]
+        assert verify_guardian_attestation(att, pub_pem).ok is False
+
+    def test_rejects_a_changed_overall(self) -> None:
+        priv, pub_pem = _make_keypair()
+        att = self._attestation(priv)
+        att["overall"] = "pass"
+        result = verify_guardian_attestation(att, pub_pem)
+        assert result.ok is False
+        assert '"overall" disagrees' in (result.reason or "")
+
+    def test_ignores_the_unsigned_timings(self) -> None:
+        priv, pub_pem = _make_keypair()
+        att = self._attestation(priv)
+        att["totalMs"] = 999
+        att["rules"][0]["durationMs"] = 999
         assert verify_guardian_attestation(att, pub_pem).ok is True
 
 

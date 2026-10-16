@@ -11,6 +11,10 @@
  * tests are sandboxed in this dev env, but THESE tests don't need
  * network — sign.mjs is a pure crypto operation. They should pass
  * everywhere.
+ *
+ * The output also carries `canonical` and `contentHash`, and is checked
+ * with the conformance corpus's v2 verifier (the same checks as the
+ * Python and Go verifiers, envelope consistency included).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -19,9 +23,12 @@ import {
   createPublicKey,
   verify as edVerify,
 } from "node:crypto";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateMlDsa65Keypair, verifyMlDsa65 } from "../src/pq-sign.js";
+import { verifyV2Receipt } from "../conformance/verify-v2.mjs";
 
 const CLI = join(__dirname, "..", "bin", "sign.mjs");
 
@@ -47,7 +54,7 @@ function runCli(args: string[], stdinData?: string): CliResult {
 function sortKeysDeep(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(sortKeysDeep);
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = Object.create(null);
   for (const k of Object.keys(value as Record<string, unknown>).sort()) {
     out[k] = sortKeysDeep((value as Record<string, unknown>)[k]);
   }
@@ -56,8 +63,14 @@ function sortKeysDeep(value: unknown): unknown {
 
 function canonicalize(body: Record<string, unknown>): string {
   const copy: Record<string, unknown> = { ...body };
+  delete copy.canonical;
+  delete copy.contentHash;
   delete copy.signature;
   return JSON.stringify(sortKeysDeep(copy));
+}
+
+function sha256Hex(s: string): string {
+  return createHash("sha256").update(s, "utf8").digest("hex");
 }
 
 let tmp: string;
@@ -223,6 +236,100 @@ describe("sign CLI — signs a real VAOS v2 receipt", () => {
       Buffer.from(signed.signature.slice(3), "base64"),
     );
     expect(ok).toBe(true);
+  });
+
+  it("writes the signed string as canonical, and its hash as contentHash", () => {
+    const r = runCli(["--key", keyPath, "--json"], JSON.stringify(FIXTURE_BODY));
+    expect(r.status).toBe(0);
+    const signed = JSON.parse(r.stdout.trim()) as Record<string, unknown> & {
+      canonical: string;
+      contentHash: string;
+      signature: string;
+    };
+    expect(signed.canonical).toBe(canonicalize(FIXTURE_BODY));
+    expect(signed.contentHash).toBe(`sha256:${sha256Hex(signed.canonical)}`);
+    expect(
+      edVerify(
+        null,
+        Buffer.from(signed.canonical, "utf8"),
+        createPublicKey(privateKey),
+        Buffer.from(signed.signature.slice(3), "base64"),
+      ),
+    ).toBe(true);
+  });
+
+  it("passes the v2 verifier the Python and Go verifiers mirror", () => {
+    const r = runCli(["--key", keyPath, "--json"], JSON.stringify(FIXTURE_BODY));
+    expect(r.status).toBe(0);
+    const signed = JSON.parse(r.stdout.trim()) as Record<string, unknown>;
+    expect(verifyV2Receipt(signed, createPublicKey(privateKey))).toEqual({
+      ok: true,
+    });
+    // An edited field beside the canonical is caught.
+    expect(
+      verifyV2Receipt(
+        { ...signed, agentName: "someone-else" },
+        createPublicKey(privateKey),
+      ),
+    ).toEqual({
+      ok: false,
+      reason: 'envelope field "agentName" disagrees with the signed canonical',
+    });
+  });
+
+  it("signing its own output again gives the same canonical and signature", () => {
+    const first = runCli(["--key", keyPath, "--json"], JSON.stringify(FIXTURE_BODY));
+    expect(first.status).toBe(0);
+    const second = runCli(["--key", keyPath, "--json"], first.stdout);
+    expect(second.status).toBe(0);
+    const a = JSON.parse(first.stdout) as Record<string, unknown>;
+    const b = JSON.parse(second.stdout) as Record<string, unknown>;
+    expect(b.canonical).toBe(a.canonical);
+    expect(b.signature).toBe(a.signature);
+  });
+
+  it("keeps a __proto__ key in the canonical", () => {
+    const body = '{"id":"rcpt_proto","__proto__":{"x":1}}';
+    const r = runCli(["--key", keyPath, "--json"], body);
+    expect(r.status).toBe(0);
+    const signed = JSON.parse(r.stdout.trim()) as Record<string, unknown> & {
+      canonical: string;
+    };
+    expect(signed.canonical).toBe('{"__proto__":{"x":1},"id":"rcpt_proto"}');
+    expect(verifyV2Receipt(signed, createPublicKey(privateKey))).toEqual({
+      ok: true,
+    });
+  });
+
+  it("signs v3= over the same canonical when given an ML-DSA-65 key", () => {
+    const { secretKeyB64, publicKeyB64 } = generateMlDsa65Keypair();
+    const mldsaPath = join(tmp, "mldsa65.b64");
+    writeFileSync(mldsaPath, secretKeyB64);
+    const r = runCli(
+      ["--key", keyPath, "--mldsa-key", mldsaPath, "--json"],
+      JSON.stringify(FIXTURE_BODY),
+    );
+    expect(r.status).toBe(0);
+    const signed = JSON.parse(r.stdout.trim()) as Record<string, unknown> & {
+      canonical: string;
+      contentHash: string;
+      signature: string;
+    };
+    expect(signed.canonical).toBe(canonicalize(FIXTURE_BODY));
+    expect(signed.contentHash).toBe(`sha256:${sha256Hex(signed.canonical)}`);
+    expect(signed.signature.startsWith("v3=")).toBe(true);
+    const [edB64, mlB64] = signed.signature.slice(3).split(".");
+    expect(
+      edVerify(
+        null,
+        Buffer.from(signed.canonical, "utf8"),
+        createPublicKey(privateKey),
+        Buffer.from(edB64, "base64"),
+      ),
+    ).toBe(true);
+    expect(
+      verifyMlDsa65(signed.canonical, mlB64, Buffer.from(publicKeyB64, "base64")),
+    ).toBe(true);
   });
 
   it("rejects non-JSON input with exit 2", () => {

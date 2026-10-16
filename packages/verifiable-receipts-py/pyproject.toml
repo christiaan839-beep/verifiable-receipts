@@ -1,7 +1,7 @@
 [project]
 name = "sovereign-matrix-verifiable-receipts"
-version = "0.1.0"
-description = "Pure-Python verifier for VAOS receipts — Ed25519 + RFC 9162 inclusion proofs"
+version = "0.2.0"
+description = "Python signer and verifier for VAOS v2 receipts (Ed25519), and RFC 9162 inclusion-proof verifier"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [

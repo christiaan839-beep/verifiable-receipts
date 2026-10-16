@@ -9,7 +9,7 @@ The code lives here, in three packages:
 | Language   | Path                                                                 | Role                                 |
 | ---------- | -------------------------------------------------------------------- | ------------------------------------ |
 | TypeScript | [`packages/verifiable-receipts`](packages/verifiable-receipts)       | Signs and verifies (source of truth) |
-| Python     | [`packages/verifiable-receipts-py`](packages/verifiable-receipts-py) | Verifies                             |
+| Python     | [`packages/verifiable-receipts-py`](packages/verifiable-receipts-py) | Signs and verifies v2 receipts       |
 | Go         | [`packages/verifiable-receipts-go`](packages/verifiable-receipts-go) | Verifies                             |
 
 The v2 wire format is written down in
@@ -36,6 +36,8 @@ A v2 receipt looks like this (values shortened):
 - `contentHash` is `sha256:` followed by the hex SHA-256 of `canonical`.
 - `signature` is `v2=` followed by the base64 Ed25519 signature over
   `canonical`.
+- Every other field (`verdictId`, `overall`, `issuedAt` here) repeats
+  the field of the same name in `canonical`.
 
 A `v3=` receipt signs the same `canonical` twice:
 `v3=<ed25519>.<ml-dsa-65>`, where ML-DSA-65 is the post-quantum signature
@@ -46,21 +48,38 @@ of FIPS 204.
 1. Hash `canonical` with SHA-256 and compare it with `contentHash`.
 2. Check the Ed25519 signature after `v2=` over `canonical` with the
    issuer's public key.
+3. Parse `canonical` as a JSON object.
+4. Check that every other field of the receipt is in that object with
+   an equal JSON value (numbers by value, objects regardless of key
+   order).
 
 If one byte of `canonical` changes, the hash no longer matches; if
-another key signed it, the signature does not hold.
+another key signed it, the signature does not hold; if a field beside
+`canonical` says something `canonical` does not, such as
+`"overall": "fail"` beside a signed `"pass"`, or is missing from it,
+step 4 fails. Verifiers check `canonical` as given and do not re-derive
+it from the other fields
+([`docs/specs/vaos-2.0.md`](docs/specs/vaos-2.0.md) §5 and §7).
 
 ## What each verifier checks
 
 - **Python** (`verify_v2_receipt`, `verify_inclusion_proof`): v2
-  (Ed25519) receipts, first `contentHash` when the receipt has one, then
-  the signature; and RFC 9162 transparency-log inclusion proofs.
-  `verify_guardian_attestation` is the same v2 check under another name.
-  It does not sign, and it does not verify `v3=` (ML-DSA-65) signatures.
-- **Go** (`VerifyV2Receipt`, `VerifyInclusionProof`): the same checks as
-  the Python verifier, using only the Go standard library.
-  `VerifyGuardianAttestation` is the same v2 check under another name. It
-  does not sign, and it does not verify `v3=` signatures.
+  (Ed25519) receipts, the four steps above in that order (`contentHash`
+  only when the receipt has one); and RFC 9162 transparency-log
+  inclusion proofs. `verify_guardian_attestation` makes the same checks
+  on an attestation from the TypeScript `runGuardian`, but skips the
+  fields its canonical does not sign (`totalMs`, and each rule's
+  `durationMs` and `evidence`) and compares each rule as
+  `{ruleId, verdict, reason}` in any order. `sign_v2_receipt` signs v2
+  receipts: it builds `canonical` with `canonicalize` (keys sorted at
+  every depth; floats refused) and returns the body with `canonical`,
+  `contentHash` and `signature`. It does not sign or verify `v3=`
+  (ML-DSA-65) signatures.
+- **Go** (`VerifyV2Receipt`, `VerifyGuardianAttestation`,
+  `VerifyInclusionProof`): the same checks as the Python verifier, using
+  only the Go standard library. Unmarshal a receipt's JSON into
+  `Receipt` so that its other fields reach `Envelope` and are checked.
+  It does not sign, and it does not verify `v3=` signatures.
 - **TypeScript**: signs and verifies the `v3=` dual signature. ML-DSA-65
   signing and verification are built in (`signMlDsa65`, `verifyMlDsa65`);
   `verifyDualSig` passes only when both halves hold, and checks the
@@ -68,7 +87,14 @@ another key signed it, the signature does not hold.
   `node:crypto`). Ed25519 is bring-your-own throughout: `runGuardian`
   takes a signer and `verifyGuardianAttestation` a verifier, while the
   `verifiable-receipts-sign` CLI signs `v2=` or `v3=` receipts with
-  `node:crypto`. It also provides the transparency log: RFC 9162 Merkle
+  `node:crypto` and writes `canonical`, `contentHash` and `signature`
+  beside the body's fields, so its `v2=` receipts verify in Python and
+  Go. `verifyGuardianAttestation` rebuilds the Guardian canonical from
+  the attestation's `verdictId`, `overall`, `rules` and `issuedAt`,
+  requires it to equal `canonical` byte for byte, then checks
+  `contentHash` and the signature; it does not look at any other field
+  (the Python and Go Guardian checks reject one that `canonical` does
+  not contain). It also provides the transparency log: RFC 9162 Merkle
   tree hashes, inclusion and consistency proofs with their verification,
   and tree heads for the caller to sign.
 - **In the browser**: the Sovereign Matrix studio's receipts demo checks
@@ -92,11 +118,16 @@ pip install ./packages/verifiable-receipts-py
 ```
 
 ```python
-from sovereign_matrix.verifiable_receipts import verify_v2_receipt
+from sovereign_matrix.verifiable_receipts import sign_v2_receipt, verify_v2_receipt
 
+receipt = sign_v2_receipt({"verdictId": "v_1", "overall": "pass"}, private_key)
 result = verify_v2_receipt(receipt, open("ed25519.pem", "rb").read())
 print(result.ok, result.reason)
 ```
+
+`private_key` is an Ed25519 private key from `cryptography`; the
+package's [README](packages/verifiable-receipts-py) shows how to load
+one.
 
 **TypeScript** (Node 18 or later). `dist/` is not committed, so build it
 once in the clone, then install the package into your own project:
@@ -132,28 +163,41 @@ python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-recei
 
 # Go
 (cd packages/verifiable-receipts-go && go test ./...)
+
+# Cross-language round trip (needs all three toolchains, and the
+# TypeScript package built by the npm install above)
+bash packages/verifiable-receipts/conformance/roundtrip/run.sh
 ```
 
 Measured on 16 October 2026 (Node 22, Python 3.13, Go 1.24):
 
-| Verifier   | Result                                                  |
+| Suite      | Result                                                  |
 | ---------- | ------------------------------------------------------- |
-| TypeScript | 681 passed, 4 skipped (22 test files, vitest 3)         |
-| Python     | 22 passed, and 12 passed in the conformance suite       |
-| Go         | 23 tests passed, one of them with a subtest per fixture |
+| TypeScript | 689 passed, 4 skipped (22 test files, vitest 3)         |
+| Python     | 66 passed, and 15 passed in the conformance suite       |
+| Go         | 36 tests passed, one of them with a subtest per fixture |
+| Round trip | 18 checks passed                                        |
 
 The four skipped TypeScript tests are the witness CLI's network flow,
 skipped in `tests/witness-cli.test.ts`.
 
-All three verifiers run against the same 11 conformance fixtures in
+All three verifiers run against the same 14 conformance fixtures in
 [`packages/verifiable-receipts/conformance/fixtures/`](packages/verifiable-receipts/conformance/fixtures)
 (a valid receipt, a tampered one, one signed with another key, bad
-base64, a `v1=` prefix, and six inclusion proofs) and agree on each one.
+base64, a `v1=` prefix, three receipts whose fields beside `canonical`
+agree with it, disagree with it or are missing from it, and six
+inclusion proofs) and agree on each one.
+
+The round trip makes a throwaway Ed25519 key, signs a receipt with the
+Python signer and another with `verifiable-receipts-sign`, and a Guardian
+attestation with `runGuardian`; it verifies each with the Python, Go and
+node verifiers, and checks that all three reject a copy of each with one
+field edited. CI runs it on every push.
 
 ## Status
 
-The TypeScript package is at version 0.3.0 and the Python package at
-0.1.0; the Go module has no version tag yet. All three are tested and
+The TypeScript package is at version 0.3.1 and the Python package at
+0.2.0; the Go module has no version tag yet. All three are tested and
 none is published to a package registry.
 
 Moved from the sovereign-v2 repository on 16 October 2026, at commit
