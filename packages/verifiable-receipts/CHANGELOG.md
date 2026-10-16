@@ -4,10 +4,38 @@ All notable changes to `@sovereign-matrix/verifiable-receipts` are documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] — 2026-10-16
+
+### Fixed
+
+- `verifiable-receipts-sign` writes `canonical` (the exact string it
+  signed) and `contentHash` (`sha256:` plus the hex SHA-256 of
+  `canonical`) beside the body's fields and `signature`. Its output
+  used to carry only the body and `signature`, which the Python and Go
+  verifiers reject ("missing canonical projection"). It now verifies in
+  Python, Go and node. `v3=` signing is unchanged and signs the same
+  `canonical`.
+- `verifiable-receipts-sign` keeps a `__proto__` key of the body in the
+  canonical. It used to drop it, so the output's `__proto__` field was
+  unsigned.
+
+### Added
+
+- Three conformance fixtures for envelope consistency, 14 in all: a
+  receipt whose fields beside `canonical` repeat it, one whose
+  `overall` disagrees with it, and one with a field it does not
+  contain. The conformance harness's v2 verifier moved to
+  `conformance/verify-v2.mjs` and now checks those fields against the
+  parsed canonical, as the Python and Go verifiers do.
+- `conformance/roundtrip/`: signs with the Python signer, this CLI and
+  `runGuardian` under a throwaway key, and verifies in Python, Go and
+  node. CI runs it. Neither ships in the npm package.
 
 ### Changed
 
+- `verifiable-receipts-sign` drops `canonical` and `contentHash` from
+  its input before signing, as it already dropped `signature`, so
+  signing its own output again gives the same canonical.
 - The package moved from `sovereign-v2` to its own repository,
   [`christiaan839-beep/verifiable-receipts`](https://github.com/christiaan839-beep/verifiable-receipts),
   on 16 October 2026. The `repository`, `homepage` and `bugs` fields

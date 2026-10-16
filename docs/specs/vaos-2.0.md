@@ -93,10 +93,28 @@ The canonicalization algorithm of VAOS 1.0 §6 (`sortKeysDeep` over
 the receipt body, JSON-stringified without whitespace) carries
 forward unchanged.
 
-VAOS 2.0 verifiers MUST byte-stringify with the same projection. A
-2.0 signature over a payload canonicalized under a different
-algorithm is invalid. Conforming implementations SHOULD share the
-canonicalization code path between v1 and v2 to avoid drift.
+Issuers SHOULD byte-stringify with this projection, and SHOULD share
+the canonicalization code path between v1 and v2 to avoid drift.
+
+> **Clarification (16 October 2026).** The signed bytes are the
+> receipt's `canonical` string: the UTF-8 bytes of that string, exactly
+> as the receipt carries it. Verifiers MUST verify those bytes. They do
+> not re-derive them from the receipt's other fields, and MUST NOT
+> reject a receipt because its `canonical` uses another key order; §7
+> says what they check instead. This section used to say that
+> verifiers MUST byte-stringify with the same projection, but issuers
+> do not all sort keys (the reference implementation's Guardian
+> envelope writes its fields in a fixed order, and vector A in §11 was
+> printed unsorted until this date), so re-deriving would reject valid
+> receipts.
+>
+> Issuers SHOULD produce `canonical` with `sortKeysDeep` and SHOULD
+> avoid floating-point numbers in the receipt body: JavaScript and
+> Python print the same float differently (`1` and `1.0`), so a body
+> with floats canonicalizes differently in each language. JavaScript
+> also reads every number as a double and orders integer-like object
+> keys (`"2"`, `"10"`) before the others, so integers beyond
+> ±(2^53 − 1) and such keys canonicalize differently too.
 
 ---
 
@@ -113,6 +131,11 @@ The issuer:
    (RFC 4648 §4).
 4. Prefixes the encoded signature with `v2=`.
 5. Sets the receipt's `signature` field to the resulting string.
+6. Sets the receipt's `canonical` field to the string signed in
+   step 2, and SHOULD set `contentHash` to `sha256:` followed by the
+   hex SHA-256 of its UTF-8 bytes. Every other field of the receipt
+   MUST appear in `canonical` with the same value (§7, steps 5 and 6).
+   (Step added 16 October 2026.)
 
 ### 6.2 Wire format
 
@@ -149,12 +172,37 @@ Given a receipt and the issuer's verification key, a verifier:
 1. Parses `signature`. If the prefix is `v1=`, fall back to VAOS 1.0
    §8. If the prefix is `v2=`, continue. Any other prefix → reject.
 2. Strips the `v2=` prefix and base64-decodes the remainder.
-3. Recomputes the canonical projection of the receipt per §5.
+3. Takes the receipt's `canonical` string as the signed message: its
+   UTF-8 bytes, exactly as given. When the receipt carries
+   `contentHash`, checks that it equals `sha256:` followed by the hex
+   SHA-256 of those bytes (the `sha256:` prefix is optional).
 4. Calls the host's Ed25519 verification primitive
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the
    canonical bytes, the decoded signature, and the verification key.
-5. Returns true iff the primitive returns true.
+5. Parses `canonical` as JSON and rejects unless it is a JSON object.
+6. For every other top-level field of the receipt (all but
+   `canonical`, `contentHash` and `signature`), rejects when the
+   object has no such key or holds a different value under it. Values
+   compare as JSON values: the same type, numbers by numeric value,
+   strings by code points, arrays element by element, objects key by
+   key regardless of key order.
+7. Returns true iff the primitive returned true and every check
+   passed.
+
+> **Clarification (16 October 2026).** Step 3 used to read "Recomputes
+> the canonical projection of the receipt per §5". Verifiers do not
+> recompute it: they verify the `canonical` string, and steps 5 and 6
+> bind every field beside it to what was signed, so a receipt cannot
+> carry an unsigned or altered claim beside a valid signature. An
+> envelope format built on VAOS 2.0 MAY name fields it leaves unsigned
+> (the reference implementation's Guardian attestation leaves
+> `totalMs`, and each rule's `durationMs` and `evidence`, unsigned); a
+> verifier for that format skips exactly those fields, and no one
+> should rely on them. The Python and Go verifiers and the JavaScript
+> conformance verifier in this repository implement steps 2 to 7 (they
+> reject a `v1=` prefix rather than fall back to VAOS 1.0), and the
+> conformance fixtures test steps 5 and 6.
 
 A verifier MUST NOT execute side-effects (DB writes, network calls,
 log lines containing the receipt body) before the signature check
@@ -248,11 +296,18 @@ Future versions:
 }
 ```
 
-Canonical projection (UTF-8 bytes):
+Canonical projection (UTF-8 bytes), keys sorted at every depth per §5:
 
 ```
-{"v":1,"id":"rcpt_test_001","agentName":"echo","modelUsed":"nim-nemotron","input":{"prompt":"hello"},"output":{"text":"hello"},"safetyResult":{"passed":true,"score":1},"durationMs":42,"createdAt":"2026-01-01T00:00:00.000Z"}
+{"agentName":"echo","createdAt":"2026-01-01T00:00:00.000Z","durationMs":42,"id":"rcpt_test_001","input":{"prompt":"hello"},"modelUsed":"nim-nemotron","output":{"text":"hello"},"safetyResult":{"passed":true,"score":1},"v":1}
 ```
+
+(Corrected 16 October 2026: earlier copies printed the keys in body
+order, not sorted.) The body writes `score` as `1.0`; JavaScript reads
+it as the number 1 and prints `1`. The `verifiable-receipts-sign` CLI
+produces this string from the body as shown. The Python
+`canonicalize()` in this repository refuses the float `1.0` (§5), and
+produces the same string when `score` is written as `1`.
 
 (Reference implementations: see the `signRun()` and
 `canonicalizeRun()` helpers in `src/lib/agent-runs.ts` of the

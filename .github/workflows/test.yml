@@ -1,4 +1,5 @@
-# The three verifiers and their shared conformance fixtures, on every push and pull request.
+# The three verifiers, their shared conformance fixtures and a cross-language
+# sign-and-verify round trip, on every push and pull request.
 name: test
 on:
   push:
@@ -40,3 +41,23 @@ jobs:
           go-version: "1.22"
       - run: go vet ./...
       - run: go test ./...
+  roundtrip:
+    # Signs body.json with the Python signer and the sign CLI, and a
+    # Guardian attestation with runGuardian, under an Ed25519 key made in
+    # the job; verifies each in Python, Go and node (conformance/roundtrip/).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: npm install
+        working-directory: packages/verifiable-receipts
+      - run: pip install ./packages/verifiable-receipts-py
+      - run: bash packages/verifiable-receipts/conformance/roundtrip/run.sh

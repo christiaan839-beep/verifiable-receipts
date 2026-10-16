@@ -1,26 +1,34 @@
 """
 Verifier for VAOS 2.0 receipts (Ed25519, RFC 8032).
 
-Mirror of `verifyDualSig()` from the TypeScript package's pq-sign.ts
-but verifier-side only and v2-only. v3 (Ed25519 + ML-DSA-65) requires a
-post-quantum dependency; that lands in v0.2 once a pure-Python ML-DSA
-backend is standardized.
+v2 only: v3 (Ed25519 + ML-DSA-65) needs a post-quantum dependency and
+is not verified here.
 
-The contract:
-  - A v2 wire-format signature is exactly "v2=<base64>"
-  - The signed bytes are the UTF-8 encoding of the canonical JSON
-    projection of the receipt (the `canonical` field, byte-for-byte)
-  - Verification is `Ed25519.verify(pubkey, canonical_bytes, sig_bytes)`
+What ``verify_v2_receipt`` checks, in this order:
+  1. ``canonical`` and ``signature`` are non-empty strings.
+  2. ``signature`` is "v2=<base64>" with standard base64.
+  3. ``contentHash``, when present and not null, is a string; when
+     non-empty, it equals the hex SHA-256 of the UTF-8 bytes of
+     ``canonical`` ("sha256:" prefix optional).
+  4. The Ed25519 signature verifies over the UTF-8 bytes of
+     ``canonical``, exactly as given.
+  5. ``canonical`` parses as a JSON object.
+  6. Every other top-level field of the receipt (all but
+     ``canonical``, ``contentHash`` and ``signature``) is present in
+     that object with an equal JSON value. A field that disagrees, or
+     that the canonical does not contain, is an unsigned claim and the
+     receipt is rejected.
 
-If the receipt has both `canonical` and `contentHash`, we ALSO check
-that sha256(canonical) == contentHash. This catches receipts where
-the canonical string was tampered with after the hash was computed.
+The verifier does not re-derive ``canonical`` from the other fields:
+the signed bytes are the ``canonical`` string itself, whatever key
+order the issuer used.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -32,13 +40,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+# Top-level fields that carry the signature material rather than
+# signed content. Every other field must match the canonical.
+_ENVELOPE_ONLY = frozenset({"canonical", "contentHash", "signature"})
+
 
 @dataclass(frozen=True)
 class VerifyResult:
     """Outcome of a receipt verification attempt.
 
     Attributes:
-        ok: True if the signature verifies AND (if present) contentHash matches canonical.
+        ok: True when every check in ``verify_v2_receipt`` passes.
         reason: When ok is False, a short human-readable reason string.
     """
 
@@ -69,6 +81,66 @@ def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
     return key
 
 
+def _reject_constant(name: str) -> Any:
+    # json.loads accepts NaN and Infinity by default; JSON does not.
+    raise ValueError(f"{name} is not valid JSON")
+
+
+def _parse_canonical(canonical: str) -> Any:
+    """Parse the canonical string as strict JSON. Raises ValueError."""
+    try:
+        return json.loads(canonical, parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("canonical is not valid JSON") from exc
+
+
+def _json_equal(a: Any, b: Any) -> bool:
+    """Deep JSON-value equality.
+
+    Same JSON type and same value: numbers by numeric value (1 equals
+    1.0), strings by code points, arrays element by element, objects
+    key by key regardless of key order. Booleans never equal numbers.
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b
+    if isinstance(a, str) or isinstance(b, str):
+        return isinstance(a, str) and isinstance(b, str) and a == b
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            _json_equal(x, y) for x, y in zip(a, b)
+        )
+    if isinstance(a, Mapping) and isinstance(b, Mapping):
+        return set(a.keys()) == set(b.keys()) and all(
+            _json_equal(a[k], b[k]) for k in a
+        )
+    return False
+
+
+def _check_envelope(receipt: Mapping[str, Any], canonical: str) -> str | None:
+    """Return a reason string when the envelope disagrees with canonical."""
+    try:
+        signed = _parse_canonical(canonical)
+    except ValueError as exc:
+        return str(exc)
+    if not isinstance(signed, dict):
+        return "canonical is not a JSON object"
+    try:
+        for key in sorted(receipt, key=str):
+            if key in _ENVELOPE_ONLY:
+                continue
+            if key not in signed:
+                return f'envelope field "{key}" is not in the signed canonical'
+            if not _json_equal(receipt[key], signed[key]):
+                return f'envelope field "{key}" disagrees with the signed canonical'
+    except RecursionError:
+        return "envelope is nested too deeply to compare"
+    return None
+
+
 def verify_v2_receipt(
     receipt: Mapping[str, Any],
     public_key_pem: bytes,
@@ -76,10 +148,11 @@ def verify_v2_receipt(
     """Verify a VAOS 2.0 receipt.
 
     Args:
-        receipt: A dict-like with at minimum ``canonical`` (the bytes
-            that were signed) and ``signature`` ("v2=<base64>"). If
-            ``contentHash`` is present, we additionally verify
-            sha256(canonical) == contentHash.
+        receipt: A dict-like with ``canonical`` (the string that was
+            signed) and ``signature`` ("v2=<base64>"), optionally
+            ``contentHash``, and any other fields. Each other field
+            must appear in the parsed ``canonical`` with an equal JSON
+            value. See the module docstring for the full list of checks.
         public_key_pem: The Ed25519 public key as PEM bytes (the same
             file a TypeScript verifier would load).
 
@@ -107,14 +180,15 @@ def verify_v2_receipt(
     except ValueError as exc:
         return VerifyResult(False, str(exc))
 
-    canonical_bytes = canonical.encode("utf-8")
+    try:
+        canonical_bytes = canonical.encode("utf-8")
+    except UnicodeEncodeError:
+        return VerifyResult(False, "canonical is not valid UTF-8 text")
 
-    # Cross-check contentHash if present. This catches a tampered
-    # canonical string with a still-valid hash (would have to also
-    # be re-signed by the issuer to pass the signature check, which
-    # is the protection).
     content_hash = receipt.get("contentHash")
-    if isinstance(content_hash, str) and content_hash:
+    if content_hash is not None and not isinstance(content_hash, str):
+        return VerifyResult(False, "contentHash must be a string")
+    if content_hash:
         actual = hashlib.sha256(canonical_bytes).hexdigest()
         expected = content_hash.removeprefix("sha256:")
         if actual != expected:
@@ -127,27 +201,98 @@ def verify_v2_receipt(
     except InvalidSignature:
         return VerifyResult(False, "signature does not verify under the supplied public key")
 
+    # Only now parse the canonical: these bytes are authenticated.
+    reason = _check_envelope(receipt, canonical)
+    if reason is not None:
+        return VerifyResult(False, reason)
+
     return VerifyResult(True)
+
+
+# Fields of a TypeScript `runGuardian` attestation that are not part of
+# its signed canonical: the envelope's `totalMs`, and each rule's
+# `durationMs` and `evidence`.
+_GUARDIAN_UNSIGNED = "totalMs"
+
+
+def _guardian_rule_projection(rule: Any) -> Any:
+    """The part of one envelope rule that the Guardian canonical signs."""
+    if not isinstance(rule, Mapping):
+        return rule
+    out: dict[str, Any] = {}
+    for key in ("ruleId", "verdict"):
+        if key in rule:
+            out[key] = rule[key]
+    reason = rule.get("reason")
+    out["reason"] = reason
+    return out
+
+
+def _guardian_rules_in_canonical_order(rules: list[Any], canonical: Any) -> list[Any]:
+    """Project the envelope rules; reorder them to the canonical's order.
+
+    The Guardian canonical sorts its rules by ruleId. When the projected
+    envelope rules are the same multiset as the canonical's rules, this
+    returns them in the canonical's order, so the generic envelope check
+    passes; otherwise it returns them in their own order, and the
+    generic check rejects the envelope's ``rules``.
+    """
+    projected = [_guardian_rule_projection(r) for r in rules]
+    try:
+        signed = _parse_canonical(canonical) if isinstance(canonical, str) else None
+    except ValueError:
+        return projected
+    signed_rules = signed.get("rules") if isinstance(signed, dict) else None
+    if not isinstance(signed_rules, list) or len(signed_rules) != len(projected):
+        return projected
+    remaining = list(projected)
+    ordered: list[Any] = []
+    for want in signed_rules:
+        for i, have in enumerate(remaining):
+            if _json_equal(have, want):
+                ordered.append(remaining.pop(i))
+                break
+        else:
+            return projected
+    return ordered
 
 
 def verify_guardian_attestation(
     attestation: Mapping[str, Any],
     public_key_pem: bytes,
 ) -> VerifyResult:
-    """Verify a signed Guardian attestation envelope.
+    """Verify a signed Guardian attestation from the TypeScript ``runGuardian``.
 
-    Same wire format as a v2 receipt — Guardian attestations ARE v2
-    receipts whose canonical projection lists rule verdicts in a
-    deterministic order. We just expose a separate name for callers
-    that want the Guardian-specific surface.
+    The same checks as ``verify_v2_receipt``, applied to the part of the
+    attestation that its canonical signs, as the TypeScript
+    ``verifyGuardianAttestation`` does:
+
+      - ``totalMs`` is not signed and is not checked.
+      - Each rule in ``rules`` is compared as ``{ruleId, verdict,
+        reason}`` (a missing ``reason`` reads as null); its
+        ``durationMs`` and ``evidence`` are not signed and are not
+        checked. The order of ``rules`` does not matter.
+      - Every other field must equal the canonical's, as in
+        ``verify_v2_receipt``.
+
+    Do not rely on ``totalMs``, ``durationMs`` or ``evidence``: no
+    signature covers them.
 
     Args:
-        attestation: The Guardian attestation dict (typically with
-            ``verdictId``, ``overall``, ``rules``, ``canonical``,
-            ``contentHash``, ``signature``).
+        attestation: The Guardian attestation dict (``verdictId``,
+            ``overall``, ``rules``, ``totalMs``, ``issuedAt``,
+            ``canonical``, ``contentHash``, ``signature``).
         public_key_pem: The Ed25519 public key as PEM bytes.
 
     Returns:
-        VerifyResult — same semantics as verify_v2_receipt().
+        VerifyResult, as from verify_v2_receipt().
     """
-    return verify_v2_receipt(attestation, public_key_pem)
+    if not isinstance(attestation, Mapping):
+        return VerifyResult(False, "receipt must be a mapping")
+    view = {k: v for k, v in attestation.items() if k != _GUARDIAN_UNSIGNED}
+    rules = view.get("rules")
+    if isinstance(rules, list):
+        view["rules"] = _guardian_rules_in_canonical_order(
+            rules, attestation.get("canonical")
+        )
+    return verify_v2_receipt(view, public_key_pem)

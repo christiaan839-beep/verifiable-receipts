@@ -24,13 +24,16 @@ Same playbook used by:
 
 ## Files
 
-| File                                            | Purpose                                                   |
-| ----------------------------------------------- | --------------------------------------------------------- |
-| `public-key.pem`                                | The single Ed25519 PEM used for signing the v2 fixtures.  |
-| `fixtures/*.json`                               | The corpus. Each file is one self-describing test vector. |
-| `conformance.test.ts`                           | TypeScript harness (vitest).                              |
-| `conformance.py`                                | Python harness (pytest).                                  |
-| `../verifiable-receipts-go/conformance_test.go` | Go harness (`go test`).                                   |
+| File                                            | Purpose                                                                       |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `public-key.pem`                                | The single Ed25519 PEM used for signing the v2 fixtures.                      |
+| `fixtures/*.json`                               | The corpus. Each file is one self-describing test vector.                     |
+| `conformance.test.ts`                           | TypeScript harness (vitest).                                                  |
+| `verify-v2.mjs`                                 | The TypeScript harness's v2 verifier (node:crypto), shared with `roundtrip/`. |
+| `conformance.py`                                | Python harness (pytest).                                                      |
+| `../verifiable-receipts-go/conformance_test.go` | Go harness (`go test`).                                                       |
+| `generate-fixtures.mjs`                         | Regenerates the key and the v2 fixtures (see below).                          |
+| `roundtrip/`                                    | Signs and verifies across languages with a throwaway key (see below).         |
 
 ## Fixture shape
 
@@ -47,6 +50,11 @@ A v2 receipt fixture:
   "expected": { "ok": true }
 }
 ```
+
+A receipt may carry other fields beside these three, as signed receipts
+do (`"overall": "pass"`, and so on). Each verifier checks every such
+field against the parsed `canonical`: it must be there, with an equal
+JSON value (numbers by value, objects regardless of key order).
 
 An RFC 9162 inclusion-proof fixture:
 
@@ -82,8 +90,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 16 October 2026: TypeScript 12 passed,
-Python 12 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 16 October 2026: TypeScript 15 passed,
+Python 15 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -92,17 +100,23 @@ Fixtures cover:
 
 - v2 wire format: well-formed accept · canonical-tamper reject ·
   wrong-key reject · base64 malformed · non-v2 prefix
+- v2 envelope: fields beside `canonical` that repeat it (a nested
+  object's keys in another order) accept · a field that disagrees with
+  it (`overall` fail against pass) reject · a field it does not contain
+  reject
 - RFC 9162 inclusion proof: single-leaf · 4-leaf (idx 1) · 7-leaf
   asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) · tampered-root
   reject · out-of-range index
 
-11 fixtures × 3 verifiers = **33 cross-language conformance checks.**
+14 fixtures × 3 verifiers = **42 cross-language conformance checks.**
 
 ## How to add a fixture
 
-1. Generate signed bytes via the TypeScript canonical implementation
-   (`@sovereign-matrix/verifiable-receipts`). Issuer-side signing is
-   the only canonical path.
+1. A fixture that needs a valid signature under `public-key.pem` has
+   to reuse a signature already in the corpus, since the private key
+   was discarded: the three envelope fixtures repeat `v2-valid-001.json`'s
+   `canonical`, `contentHash` and `signature`. Add the fixture to
+   `generate-fixtures.mjs` as well, so a regeneration reproduces it.
 2. Write the fixture to `fixtures/<name>.json`.
 3. Run all three harnesses. They MUST all agree on the new
    fixture's expected outcome.
@@ -118,9 +132,30 @@ discarded at generation time). If the corpus ever needs re-signing:
 node packages/verifiable-receipts/conformance/generate-fixtures.mjs
 ```
 
-This rewrites `public-key.pem` and the five `v2-*.json` fixtures in
-one deterministic pass; inclusion-proof fixtures are key-independent
+This rewrites `public-key.pem` and the eight `v2-*.json` fixtures in
+one pass with a new key; inclusion-proof fixtures are key-independent
 and untouched. Re-run all three harnesses afterwards.
+
+## Round trip
+
+`roundtrip/run.sh` makes a throwaway Ed25519 key in a temporary
+directory, signs `roundtrip/body.json` with the Python signer
+(`sign_v2_receipt`) and with `verifiable-receipts-sign`, and signs a
+Guardian attestation with `runGuardian`. It checks that the two signers
+wrote the same `canonical`, `contentHash` and signature for the body,
+then verifies all three files with the Python, Go and node verifiers,
+edits one field of each, and checks that all three verifiers reject the
+edits: 18 checks. It deletes the key when it finishes. CI runs it in the
+`roundtrip` job.
+
+```bash
+(cd packages/verifiable-receipts && npm install)   # builds dist/
+pip install ./packages/verifiable-receipts-py      # or just `cryptography`
+bash packages/verifiable-receipts/conformance/roundtrip/run.sh
+```
+
+It needs node, python with `cryptography`, and go; it reads the Python
+package from the working tree.
 
 ## Stability guarantee
 

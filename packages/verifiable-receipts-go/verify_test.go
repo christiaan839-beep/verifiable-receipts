@@ -151,7 +151,7 @@ func TestVerifyV2Receipt_RejectsMissingFields(t *testing.T) {
 	}
 }
 
-func TestVerifyGuardianAttestation_IsAlias(t *testing.T) {
+func TestVerifyGuardianAttestation_AcceptsBareReceipt(t *testing.T) {
 	pub, priv, _ := makeKeyPair(t)
 	canonical := `{"verdictId":"g_x","overall":"pass","rules":[]}`
 	r := Receipt{

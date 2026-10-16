@@ -11,7 +11,9 @@
 
 Verify Ed25519-signed receipts (VAOS 2.0), check Guardian attestation
 envelopes, and walk RFC 9162 transparency-log inclusion proofs from
-any Go process. Zero external dependencies — pure Go stdlib
+any Go process. Measured on 16 October 2026: 36 tests passed
+(`go test ./...`, Go 1.24), one of them with a subtest per conformance
+fixture. Zero external dependencies — pure Go stdlib
 (`crypto/ed25519`, `crypto/sha256`).
 
 Built for cloud / SRE / regulator tooling where Go is the lingua
@@ -37,6 +39,7 @@ and then `go mod tidy`.
 package main
 
 import (
+    "encoding/json"
     "fmt"
     "os"
 
@@ -47,10 +50,12 @@ func main() {
     pemBytes, _ := os.ReadFile("./ed25519.pem")
     pubKey, _ := vaos.LoadEd25519PublicKeyFromPEM(pemBytes)
 
-    receipt := vaos.Receipt{
-        Canonical:   `{"verdictId":"v_xxx",...}`,
-        ContentHash: "sha256:abc...",
-        Signature:   "v2=base64encodedsig==",
+    // Unmarshal the whole receipt: canonical, contentHash and signature
+    // fill their fields, and every other field lands in Envelope.
+    data, _ := os.ReadFile("./receipt.json")
+    var receipt vaos.Receipt
+    if err := json.Unmarshal(data, &receipt); err != nil {
+        panic(err)
     }
 
     result := vaos.VerifyV2Receipt(receipt, pubKey)
@@ -58,6 +63,33 @@ func main() {
     fmt.Println(result.Reason)  // "" | "signature does not verify under the supplied public key" | ...
 }
 ```
+
+`VerifyV2Receipt` checks, in this order:
+
+1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
+   followed by standard base64.
+2. If `ContentHash` is set, it equals the hex SHA-256 of `Canonical`
+   (the `sha256:` prefix is optional).
+3. The Ed25519 signature verifies over the bytes of `Canonical`, exactly
+   as given.
+4. `Canonical` parses as a JSON object.
+5. Every field in `Envelope` is in that object with an equal JSON value
+   (numbers by value, integers exactly, objects regardless of key
+   order). A field that disagrees, such as `"overall": "fail"` beside a
+   canonical that says `"pass"`, or that the canonical does not contain,
+   fails the check.
+
+It does not re-derive `Canonical` from the other fields, so it accepts
+receipts whose canonical uses another key order. A `Receipt` built by
+hand without `Envelope` has no envelope fields to check: unmarshal the
+receipt's JSON to check them.
+
+`VerifyGuardianAttestation` makes the same checks on an attestation from
+the TypeScript `runGuardian`, except for the fields its canonical does
+not sign: it skips `totalMs`, compares each rule in `rules` as
+`{ruleId, verdict, reason}` (a missing `reason` reads as null) in any
+order, and skips each rule's `durationMs` and `evidence`. No signature
+covers those skipped fields.
 
 ## Quick start — verify a transparency-log inclusion proof
 
@@ -74,9 +106,13 @@ fmt.Println(ok) // true if leaf provably appears in the tree
 
 ## What this package is NOT
 
-- **Not an issuer.** Issuer-side signing stays TypeScript-canonical
-  (`@sovereign-matrix/verifiable-receipts`). Verification is symmetric;
-  any language can re-check a TypeScript-signed receipt.
+- **Not an issuer.** The TypeScript package
+  (`@sovereign-matrix/verifiable-receipts`, including its
+  `verifiable-receipts-sign` CLI) and the Python package
+  (`sign_v2_receipt`) sign receipts; this module verifies what either
+  signs. The round trip in
+  [`../verifiable-receipts/conformance/roundtrip/`](../verifiable-receipts/conformance/roundtrip)
+  checks that in CI.
 - **Not a ML-DSA-65 verifier in v0.1.** Post-quantum verification
   requires a non-stdlib dependency (`cloudflare/circl` ships Go-native
   Dilithium); that lands in v0.2.

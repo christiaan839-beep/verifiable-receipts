@@ -28,20 +28,17 @@ import (
 const fixturesDir = "../verifiable-receipts/conformance/fixtures"
 const publicKeyPath = "../verifiable-receipts/conformance/public-key.pem"
 
-type v2Receipt struct {
-	Canonical   string `json:"canonical"`
-	ContentHash string `json:"contentHash,omitempty"`
-	Signature   string `json:"signature"`
-}
-
 type v2Expected struct {
-	OK              bool   `json:"ok"`
+	OK             bool   `json:"ok"`
 	ReasonContains string `json:"reasonContains,omitempty"`
 }
 
+// Receipt decodes through (*Receipt).UnmarshalJSON, so every field
+// beside canonical, contentHash and signature lands in Envelope and is
+// checked against the signed canonical.
 type v2Fixture struct {
 	Description string     `json:"description"`
-	Receipt     v2Receipt  `json:"receipt"`
+	Receipt     Receipt    `json:"receipt"`
 	Expected    v2Expected `json:"expected"`
 }
 
@@ -117,12 +114,7 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 				if err := json.Unmarshal(raw, &fixture); err != nil {
 					t.Fatalf("unmarshal v2: %v", err)
 				}
-				receipt := Receipt{
-					Canonical:   fixture.Receipt.Canonical,
-					ContentHash: fixture.Receipt.ContentHash,
-					Signature:   fixture.Receipt.Signature,
-				}
-				result := VerifyV2Receipt(receipt, pub)
+				result := VerifyV2Receipt(fixture.Receipt, pub)
 				if result.OK != fixture.Expected.OK {
 					t.Fatalf(
 						"%s: expected ok=%v, got ok=%v reason=%q",

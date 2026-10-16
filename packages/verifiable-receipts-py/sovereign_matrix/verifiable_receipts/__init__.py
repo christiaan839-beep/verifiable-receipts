@@ -1,15 +1,18 @@
 """
-Pure-Python verifier for VAOS receipts — Ed25519 (v2) + RFC 9162
-transparency-log inclusion proofs. The math is the contract: this
-implementation re-derives the canonical projection independently and
-confirms signatures with the published Ed25519 public key.
+Python signer and verifier for VAOS 2.0 receipts (Ed25519), and a
+verifier for RFC 9162 transparency-log inclusion proofs.
 
-This module is verifier-side only. Issuers mint receipts via the
-canonical TypeScript implementation; verifiers re-check them from
-any language with the same primitive available.
+The verifier checks the receipt's ``canonical`` string as given: its
+``contentHash``, its Ed25519 signature, and that every other top-level
+field of the receipt equals the same field in the parsed canonical. It
+does not re-derive ``canonical`` from the other fields. The signer
+builds ``canonical`` with keys sorted at every depth and refuses floats.
 
 Public API:
+    canonicalize(body) -> str
+    sign_v2_receipt(body, private_key) -> dict
     verify_v2_receipt(receipt, public_key_pem) -> VerifyResult
+    verify_guardian_attestation(attestation, public_key_pem) -> VerifyResult
     verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex) -> bool
 """
 
@@ -17,6 +20,10 @@ from .verify import (
     VerifyResult,
     verify_v2_receipt,
     verify_guardian_attestation,
+)
+from .sign import (
+    canonicalize,
+    sign_v2_receipt,
 )
 from .transparency import (
     verify_inclusion_proof,
@@ -26,6 +33,8 @@ from .transparency import (
 
 __all__ = [
     "VerifyResult",
+    "canonicalize",
+    "sign_v2_receipt",
     "verify_v2_receipt",
     "verify_guardian_attestation",
     "verify_inclusion_proof",
@@ -33,4 +42,4 @@ __all__ = [
     "inner_hash",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

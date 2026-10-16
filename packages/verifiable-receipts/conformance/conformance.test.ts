@@ -14,9 +14,11 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createHash, createPublicKey, verify as nodeVerify } from "node:crypto";
+import { createPublicKey } from "node:crypto";
 
 import { verifyInclusionProof } from "../src/transparency.js";
+// The harness's own v2 verifier, shared with roundtrip/verify.mjs.
+import { verifyV2Receipt } from "./verify-v2.mjs";
 
 const FIXTURES_DIR = join(__dirname, "fixtures");
 const PUBLIC_KEY_PEM = readFileSync(join(__dirname, "public-key.pem"));
@@ -24,10 +26,12 @@ const PUBLIC_KEY = createPublicKey(PUBLIC_KEY_PEM);
 
 interface V2Fixture {
   description: string;
+  // Any field beside these three must match the signed canonical.
   receipt: {
     canonical: string;
     contentHash?: string;
     signature: string;
+    [field: string]: unknown;
   };
   expected: { ok: boolean; reasonContains?: string };
 }
@@ -54,66 +58,6 @@ function loadFixtures(): AnyFixture[] {
   });
 }
 
-/**
- * Local v2 verifier that mirrors the TypeScript canonical
- * implementation but is INLINED here so the conformance harness
- * exercises only documented public-API behavior, not any private
- * shortcut.
- */
-function verifyV2Receipt(receipt: V2Fixture["receipt"]): {
-  ok: boolean;
-  reason?: string;
-} {
-  if (!receipt.canonical) return { ok: false, reason: "missing canonical" };
-  if (!receipt.signature) return { ok: false, reason: "missing signature" };
-  if (!receipt.signature.startsWith("v2=")) {
-    return { ok: false, reason: "signature is not v2" };
-  }
-  let sigBytes: Buffer;
-  try {
-    sigBytes = Buffer.from(receipt.signature.slice(3), "base64");
-    // Reject if re-encode doesn't round-trip (catches malformed base64).
-    if (
-      sigBytes.toString("base64").replace(/=+$/, "") !==
-      receipt.signature.slice(3).replace(/=+$/, "")
-    ) {
-      return { ok: false, reason: "signature base64 malformed" };
-    }
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `signature base64 invalid: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  if (receipt.contentHash) {
-    const actual = createHash("sha256")
-      .update(receipt.canonical, "utf8")
-      .digest("hex");
-    const expected = receipt.contentHash.replace(/^sha256:/, "");
-    if (actual !== expected) {
-      return { ok: false, reason: "contentHash mismatch" };
-    }
-  }
-
-  try {
-    const ok = nodeVerify(
-      null,
-      Buffer.from(receipt.canonical, "utf8"),
-      PUBLIC_KEY,
-      sigBytes,
-    );
-    if (!ok) return { ok: false, reason: "signature does not verify" };
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `signature verify threw: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  return { ok: true };
-}
-
 describe("Cross-language conformance — TypeScript verifier", () => {
   const fixtures = loadFixtures();
 
@@ -126,7 +70,10 @@ describe("Cross-language conformance — TypeScript verifier", () => {
     const isInclusion = "leafHashHex" in fixture;
     it(`${fixture.__filename} — ${fixture.description}`, () => {
       if (isV2) {
-        const result = verifyV2Receipt((fixture as V2Fixture).receipt);
+        const result = verifyV2Receipt(
+          (fixture as V2Fixture).receipt,
+          PUBLIC_KEY,
+        ) as { ok: boolean; reason?: string };
         expect(result.ok).toBe(fixture.expected.ok);
         const expectedReason = (fixture as V2Fixture).expected.reasonContains;
         if (expectedReason && !result.ok) {

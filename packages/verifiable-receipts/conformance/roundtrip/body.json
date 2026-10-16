@@ -1,0 +1,14 @@
+{
+  "receiptId": "rcpt_roundtrip_001",
+  "agentSlug": "loan-underwriter",
+  "overall": "warn",
+  "issuedAt": "2026-10-16T00:00:00Z",
+  "input": { "prompt": "Résumé check for Zoë, 東京 office", "applicantId": "u_42" },
+  "rules": [
+    { "verdict": "pass", "ruleId": "hipaa-no-raw-ssn", "durationMs": 2 },
+    { "ruleId": "disclosure", "verdict": "warn", "reason": "AI disclosure missing" }
+  ],
+  "tokenId": null,
+  "retries": 0,
+  "flags": [true, false]
+}

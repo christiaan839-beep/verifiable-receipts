@@ -31,12 +31,17 @@
  *     --mldsa-key ./mldsa65-secret.b64 \
  *     --out ./signed-receipt-v3.json
  *
- * Input shape: any JSON object. The CLI removes the `signature` field
- * if present, canonicalizes the rest per VAOS §5, signs, and re-adds
- * the signature.
+ * Input shape: any JSON object. The CLI removes the `canonical`,
+ * `contentHash` and `signature` fields if present, canonicalizes the
+ * rest per VAOS §5, and signs.
  *
- * Output: the same object with a `signature` field of the form
- * `v2=<base64-ed25519>` or `v3=<base64-ed25519>.<base64-mldsa65>`.
+ * Output: the body's fields, plus
+ *   - `canonical`: the exact string that was signed;
+ *   - `contentHash`: `sha256:` + hex SHA-256 of its UTF-8 bytes;
+ *   - `signature`: `v2=<base64-ed25519>` or
+ *     `v3=<base64-ed25519>.<base64-mldsa65>`.
+ * The Python and Go verifiers check a `v2=` receipt in this shape: the
+ * signature over `canonical`, and every other field against it.
  *
  * Exit codes:
  *   0  Signed successfully
@@ -45,6 +50,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import {
+  createHash,
   createPrivateKey,
   sign as edSign,
 } from "node:crypto";
@@ -104,11 +110,14 @@ function printHelp() {
       "  2  Usage error",
       "",
       "VAOS canonical projection (deterministic input to the signer):",
-      "  • Remove the `signature` field if present.",
+      "  • Remove the `canonical`, `contentHash` and `signature` fields if present.",
       "  • Sort object keys lexicographically at every depth.",
       "  • JSON-stringify with no whitespace.",
       "  • Sign the UTF-8 bytes with Ed25519 per RFC 8032.",
       "  • Wire prefix: `v2=` (Ed25519) or `v3=` (Ed25519 + ML-DSA-65).",
+      "",
+      "Output: the body's fields plus `canonical` (the signed string),",
+      "`contentHash` (sha256: + hex of it) and `signature`.",
       "",
     ].join("\n"),
   );
@@ -123,17 +132,27 @@ async function readStdin() {
 function sortKeysDeep(value) {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(sortKeysDeep);
-  const out = {};
+  // A null-prototype object keeps a "__proto__" key as an ordinary
+  // field; on a plain object the assignment would set the prototype
+  // and drop the key from the canonical.
+  const out = Object.create(null);
   for (const k of Object.keys(value).sort()) {
     out[k] = sortKeysDeep(value[k]);
   }
   return out;
 }
 
-function canonicalize(receiptBody) {
+// Fields the signer writes; a body's own copies are dropped first.
+const SIGNER_FIELDS = ["canonical", "contentHash", "signature"];
+
+function withoutSignerFields(receiptBody) {
   const copy = { ...receiptBody };
-  delete copy.signature;
-  return JSON.stringify(sortKeysDeep(copy));
+  for (const k of SIGNER_FIELDS) delete copy[k];
+  return copy;
+}
+
+function canonicalize(fields) {
+  return JSON.stringify(sortKeysDeep(fields));
 }
 
 async function main() {
@@ -194,8 +213,12 @@ async function main() {
   }
 
   // Canonicalize + sign
-  const canonical = canonicalize(body);
-  const edSigBytes = edSign(null, Buffer.from(canonical, "utf8"), edPrivKey);
+  const fields = withoutSignerFields(body);
+  const canonical = canonicalize(fields);
+  const canonicalBytes = Buffer.from(canonical, "utf8");
+  const contentHash =
+    "sha256:" + createHash("sha256").update(canonicalBytes).digest("hex");
+  const edSigBytes = edSign(null, canonicalBytes, edPrivKey);
   const edB64 = edSigBytes.toString("base64");
 
   let wire;
@@ -206,7 +229,7 @@ async function main() {
     wire = `v2=${edB64}`;
   }
 
-  const signedReceipt = { ...body, signature: wire };
+  const signedReceipt = { ...fields, canonical, contentHash, signature: wire };
   const out =
     flags.json === "true"
       ? JSON.stringify(signedReceipt)
