@@ -5,7 +5,7 @@
 | Version        | 2.0                                                              |
 | Supersedes     | VAOS 1.0 (HMAC-SHA256; its spec is not in this repository)       |
 | Status         | Draft (open for comment)                                         |
-| Editor         | Sovereign Matrix — `spec@sovereignmatrix.agency`                 |
+| Editor         | Sovereign Matrix — `sovereign.systems007@gmail.com`              |
 | License        | CC0 1.0 (public domain)                                          |
 | Reference impl | `@sovereign-matrix/verifiable-receipts` (Apache-2.0)             |
 | Discussion     | https://github.com/christiaan839-beep/verifiable-receipts/issues |
@@ -337,5 +337,5 @@ VAOS 2.0 is informed by the design of:
 
 ## 13. Contact
 
-`spec@sovereignmatrix.agency` for editorial feedback.
-`security@sovereignmatrix.agency` for security disclosures.
+`sovereign.systems007@gmail.com`, for editorial feedback and for security disclosures. Start a security report's subject with
+`[security]`, and please don't open a public issue for one.

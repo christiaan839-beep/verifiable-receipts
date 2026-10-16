@@ -2,7 +2,7 @@
 
 **Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.2.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
-**Contact:** spec@sovereignmatrix.agency
+**Contact:** sovereign.systems007@gmail.com
 
 VAPT is a wire-format primitive for **transaction-scoped tokens minted
 by autonomous AI agents under verified human authority**. It is the

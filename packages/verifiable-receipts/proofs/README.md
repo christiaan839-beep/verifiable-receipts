@@ -46,5 +46,5 @@ questions go to different specialists.
 Apache 2.0 © Sovereign Matrix. Republish, formalize, fork.
 
 If you find a flaw in any proof, please email
-`security@sovereignmatrix.agency` before public disclosure. We treat
+`sovereign.systems007@gmail.com` before public disclosure. We treat
 proof flaws as security issues.

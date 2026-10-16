@@ -120,6 +120,6 @@ signs with this package and checks the result in Go and node.
 ## License
 
 Apache-2.0; see [LICENSE](./LICENSE). Report suspected bugs in the
-verification code privately to `security@sovereignmatrix.agency` (the
+verification code privately to `sovereign.systems007@gmail.com` (the
 security contact in
 [SPEC.md](../verifiable-receipts/SPEC.md#contact)) before disclosing them.

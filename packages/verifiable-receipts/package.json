@@ -3,7 +3,7 @@
   "version": "0.3.1",
   "description": "Pure-TypeScript primitives for cryptographically-signed AI agent receipts. Ed25519 + ML-DSA-65 (Dilithium3) dual-signing, ZIP-bundle export with signed manifest, Guardian verdict envelopes, post-quantum forward-secure verification. Zero platform coupling — drop into any AI agent runtime.",
   "license": "Apache-2.0",
-  "author": "Christiaan de Wet <christiaan@sovereignmatrix.agency>",
+  "author": "Christiaan de Wet <sovereign.systems007@gmail.com>",
   "homepage": "https://github.com/christiaan839-beep/verifiable-receipts/tree/main/packages/verifiable-receipts",
   "repository": {
     "type": "git",

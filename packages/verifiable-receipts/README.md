@@ -201,5 +201,5 @@ Compose them with `composePacks(...)`. Subpath imports are available:
 ## License
 
 Apache-2.0; see [LICENSE](./LICENSE). Report suspected bugs in the
-cryptography privately to `security@sovereignmatrix.agency` (the security
+cryptography privately to `sovereign.systems007@gmail.com` (the security
 contact in [SPEC.md](./SPEC.md#contact)) before disclosing them.
