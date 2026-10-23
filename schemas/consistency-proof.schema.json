@@ -12,7 +12,12 @@
     "newSize": { "$ref": "defs.schema.json#/$defs/count" },
     "oldRootHex": { "$ref": "defs.schema.json#/$defs/hash" },
     "newRootHex": { "$ref": "defs.schema.json#/$defs/hash" },
-    "proof": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/hash" }, "maxItems": 106 }
+    "proof": {
+      "description": "At most ceil(log2(newSize)) + 1 entries (RFC 6962 section 2.1.2): 54 for a tree of 2^53 - 1 leaves.",
+      "type": "array",
+      "items": { "$ref": "defs.schema.json#/$defs/hash" },
+      "maxItems": 54
+    }
   },
   "additionalProperties": false
 }

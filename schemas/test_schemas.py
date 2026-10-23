@@ -112,7 +112,9 @@ def test_example_fits_its_schema(example: str, schema: str) -> None:
 def test_rejected_by_schema_names_real_fixtures() -> None:
     names = {p.name for p in _fixture_files()}
     assert REJECTED_BY_SCHEMA <= names, sorted(REJECTED_BY_SCHEMA - names)
-    accepted = sorted(n for n in REJECTED_BY_SCHEMA if _load(FIXTURES / n)["expected"]["ok"])
+    accepted = sorted(
+        n for n in REJECTED_BY_SCHEMA if _load(FIXTURES / n)["expected"]["ok"] is not False
+    )
     assert not accepted, f"fixtures a verifier must accept cannot be rejected by schema: {accepted}"
 
 
@@ -176,15 +178,18 @@ BROKEN = [
     ("consistency-proof", ("newSize",), 1.5, "fraction"),
     ("consistency-proof", ("proof", 0), "0x" + HASH, "0x prefix"),
     ("consistency-proof", ("oldRootHex",), HASH.upper(), "uppercase"),
-    ("consistency-proof", ("proof",), [HASH] * 107, "107 entries"),
+    ("consistency-proof", ("proof",), [HASH] * 55, "55 entries"),
     ("consistency-proof", ("kind",), "inclusion", "wrong kind"),
     ("consistency-proof", ("issuer",), "unsigned claim", "unknown field"),
     ("cosignature", ("signature",), NONCANONICAL_V2, "v2 ending Ah=="),
     ("cosignature", ("signature",), V3, "v3"),
     ("cosignature", ("signature",), V2[:-1], "v2 one character short"),
     ("cosignature", ("witnessId",), "", "empty"),
+    ("cosignature", ("sthCanonical",), "{", "one character"),
     ("cosignature", ("publicKeyUrl",), "http://witness.example/w1.pem", "http"),
     ("cosignature", ("publicKeyUrl",), "https://witness.example/w 1.pem", "space"),
+    ("cosignature", ("publicKeyUrl",), "https://witness.example/w\x001.pem", "NUL"),
+    ("cosignature", ("publicKeyUrl",), "https://" + "a" * 2041, "2049 characters"),
     ("receipt", ("signature",), NONCANONICAL_V2, "v2 ending Ah=="),
     ("receipt", ("signature",), NONCANONICAL_V3, "v3 Ed25519 half ending Ah=="),
     ("receipt", ("signature",), "v1=aG1hYw==", "v1"),
@@ -218,6 +223,14 @@ NEWLINE = [
 ]
 
 
+# (kind, path to the field, a value at the schema's bound that it must accept, label)
+AT_BOUND = [
+    ("consistency-proof", ("proof",), [HASH] * 54, "54 entries"),
+    ("inclusion-proof", ("auditPath",), [HASH] * 53, "53 entries"),
+    ("cosignature", ("publicKeyUrl",), "https://" + "a" * 2040, "2048 characters"),
+]
+
+
 def _with(obj: dict[str, Any], path: tuple[str | int, ...], value: object) -> dict[str, Any]:
     target: Any = obj
     for key in path[:-1]:
@@ -242,6 +255,17 @@ def test_schema_rejects_a_broken_field(
     validator = _validator(SCHEMA_OF[kind])
     assert validator.is_valid(_valid(kind))
     assert not validator.is_valid(_with(_valid(kind), path, value))
+
+
+@pytest.mark.parametrize(
+    ("kind", "path", "value"),
+    [case[:3] for case in AT_BOUND],
+    ids=[f"{kind}-{'.'.join(map(str, path))}-{label}" for kind, path, _, label in AT_BOUND],
+)
+def test_schema_accepts_a_field_at_its_bound(
+    kind: str, path: tuple[str | int, ...], value: object
+) -> None:
+    _validator(SCHEMA_OF[kind]).validate(_with(_valid(kind), path, value))
 
 
 @pytest.mark.parametrize(
