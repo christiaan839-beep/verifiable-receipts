@@ -2,9 +2,22 @@
 /**
  * verifiable-receipts witness CLI — bin/witness.mjs
  *
- * Polls a transparency log endpoint, verifies consistency since the
- * last witnessed STH, signs the canonical bytes with the operator's
- * Ed25519 key, and submits the cosignature to /api/transparency/witness.
+ * Polls a transparency log endpoint, checks the tree head it serves,
+ * verifies consistency since the last witnessed STH, signs the
+ * canonical bytes with the operator's Ed25519 key, and submits the
+ * cosignature to /api/transparency/witness.
+ *
+ * Before it signs, the witness checks (docs/specs/transparency-log.md
+ * sections 3.3, 3.6 and 5):
+ *   - every field has its one valid spelling (v 1, a non-empty logId,
+ *     a 64-lowercase-hex rootHash, an integer treeSize from 0 to
+ *     2^53 - 1, a toISOString timestamp, a canonical v2=/v3= signature);
+ *   - `canonical` is exactly canonicalizeSth() of those fields. The
+ *     witness signs the canonical it rebuilt, so it cosigns only the
+ *     head it checked;
+ *   - the logId is the one in its state file;
+ *   - a head at the size it last signed has the same root;
+ *   - with --log-public-key, the log's v2= signature over the canonical.
  *
  * Usage:
  *
@@ -14,6 +27,7 @@
  *     --key ./witness-ed25519.pem \
  *     --witness-id "example-witness" \
  *     --public-key-url https://eu-witness.example/key.pem \
+ *     --log-public-key ./log-ed25519.pub.pem \
  *     --once
  *
  *   # Daemon: poll every N seconds (default: 3600)
@@ -24,12 +38,17 @@
  *     --interval 3600
  *
  * State file at ~/.sovereign-witness/<sanitized-witness-id>.json:
- *   { lastSize, lastRoot, lastTimestamp, lastSubmittedAt }
+ *   { logId, lastSize, lastRoot, lastTimestamp, lastSubmittedAt }
+ * A state file without logId (written by an earlier version) still
+ * loads; the logId is added the next time the state is saved.
  *
  * Exit codes (--once mode):
  *   0  Witnessed successfully OR no change since last poll
- *   1  Fork or rewrite detected — operator MUST investigate
- *   2  Usage error (bad flags, network failure, malformed STH)
+ *   1  The log misbehaved: fork or rewrite, a canonical that does not
+ *      match the fields, another logId, or a bad log signature.
+ *      Operator MUST investigate
+ *   2  Usage error (bad flags, network failure, malformed STH, a v3=
+ *      STH with --log-public-key)
  */
 
 import {
@@ -40,11 +59,14 @@ import {
 } from "node:fs";
 import {
   createPrivateKey,
+  createPublicKey,
   sign as edSign,
+  verify as edVerify,
 } from "node:crypto";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { verifyConsistencyProof } from "../dist/transparency.js";
+import { canonicalizeSth, verifyConsistencyProof } from "../dist/transparency.js";
+import { isHashHex } from "../dist/hash.js";
 import { fail, parseArgs } from "./cli.mjs";
 
 function printHelp() {
@@ -66,6 +88,10 @@ function printHelp() {
       "",
       "Optional:",
       "  --public-key-url <url>  URL where you publish your witness public key",
+      "  --log-public-key <path> The log's Ed25519 public key (PEM). When given,",
+      "                          the log's v2= STH signature must verify before",
+      "                          the witness cosigns; a v3= STH is refused.",
+      "                          Without it the log signature is not checked.",
       "  --interval <sec>        Daemon poll interval (default 3600)",
       "  --once                  Single check + exit (don't loop)",
       "  --state <path>          Override state file location",
@@ -74,8 +100,11 @@ function printHelp() {
       "",
       "Exit codes (--once):",
       "  0  Witnessed OR no change",
-      "  1  Fork / rewrite detected (do NOT auto-recover; investigate)",
-      "  2  Usage error or network failure",
+      "  1  The log misbehaved: fork / rewrite, canonical not matching its",
+      "     fields, another logId, bad log signature (do NOT auto-recover;",
+      "     investigate)",
+      "  2  Usage error, network failure, malformed STH, or a v3= STH with",
+      "     --log-public-key",
       "",
     ].join("\n"),
   );
@@ -121,6 +150,25 @@ function loadPrivateKey(keyPath) {
   }
 }
 
+function loadLogPublicKey(keyPath) {
+  let pem;
+  try {
+    pem = readFileSync(keyPath, "utf8");
+  } catch (err) {
+    fail(`could not read --log-public-key: ${err.message}`);
+  }
+  let key;
+  try {
+    key = createPublicKey({ key: pem, format: "pem" });
+  } catch (err) {
+    fail(`--log-public-key is not a valid PEM public key: ${err.message}`);
+  }
+  if (key.asymmetricKeyType !== "ed25519") {
+    fail("--log-public-key must be an Ed25519 public key");
+  }
+  return key;
+}
+
 async function fetchSth(baseUrl) {
   const res = await fetch(`${baseUrl}/api/transparency/sth`, {
     headers: { accept: "application/json" },
@@ -128,17 +176,58 @@ async function fetchSth(baseUrl) {
   if (!res.ok) {
     throw new Error(`STH fetch failed: HTTP ${res.status}`);
   }
-  const body = await res.json();
-  if (
-    typeof body.v !== "number" ||
-    typeof body.logId !== "string" ||
-    typeof body.treeSize !== "number" ||
-    typeof body.rootHash !== "string" ||
-    typeof body.canonical !== "string"
-  ) {
-    throw new Error("STH response is malformed");
+  return await res.json();
+}
+
+// One valid spelling per field (transparency-log.md sections 3.3 and
+// 3.6; schemas/tree-head.schema.json and defs.schema.json).
+const ISO_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+const V2_SIGNATURE = /^v2=[A-Za-z0-9+/]{85}[AQgw]==$/;
+const V3_SIGNATURE = /^v3=[A-Za-z0-9+/]{85}[AQgw]==\.[A-Za-z0-9+/]{4412}$/;
+
+/** Why `sth` is not a well-formed tree head, or null when it is. */
+function sthShapeError(sth) {
+  if (typeof sth !== "object" || sth === null || Array.isArray(sth)) {
+    return "not a JSON object";
   }
-  return body;
+  if (sth.v !== 1) return "v must be 1";
+  if (typeof sth.logId !== "string" || sth.logId.length === 0) {
+    return "logId must be a non-empty string";
+  }
+  if (!isHashHex(sth.rootHash)) {
+    return "rootHash must be 64 lowercase hex digits";
+  }
+  if (!Number.isSafeInteger(sth.treeSize) || sth.treeSize < 0) {
+    return "treeSize must be an integer from 0 to 2^53 - 1";
+  }
+  if (
+    typeof sth.timestamp !== "string" ||
+    !ISO_TIMESTAMP.test(sth.timestamp) ||
+    Number.isNaN(Date.parse(sth.timestamp)) ||
+    new Date(sth.timestamp).toISOString() !== sth.timestamp
+  ) {
+    return "timestamp must be a date as toISOString writes it";
+  }
+  if (
+    sth.signature !== undefined &&
+    !(typeof sth.signature === "string" &&
+      (V2_SIGNATURE.test(sth.signature) || V3_SIGNATURE.test(sth.signature)))
+  ) {
+    return "signature must be a canonical v2= or v3= signature";
+  }
+  if (typeof sth.canonical !== "string") return "canonical must be a string";
+  return null;
+}
+
+/** Verify the log's v2= Ed25519 signature over `canonical`. */
+function verifyLogSignature(canonical, signature, publicKey) {
+  try {
+    const sig = Buffer.from(signature.slice(3), "base64");
+    if (sig.length !== 64) return false;
+    return edVerify(null, Buffer.from(canonical, "utf8"), publicKey, sig);
+  } catch {
+    return false;
+  }
 }
 
 async function fetchConsistencyProof(baseUrl, oldSize, newSize) {
@@ -176,31 +265,109 @@ async function runOnce(opts) {
   const log = (line) => {
     if (opts.json !== "true") process.stdout.write(line + "\n");
   };
+  const emit = (envelope) => {
+    if (opts.json === "true") {
+      process.stdout.write(JSON.stringify(envelope) + "\n");
+    }
+  };
+  // Every refusal: no signature, no submission, one [witness] line, a
+  // JSON verdict in --json mode, and a non-zero exit.
+  const refuse = (verdict, exit, message, extra = {}) => {
+    log(`[witness] ${message} — NOT cosigning`);
+    emit({ verdict, ...extra, message });
+    return { verdict, exit };
+  };
 
   const sth = await fetchSth(opts.url);
+  const shapeError = sthShapeError(sth);
+  if (shapeError) {
+    return refuse("malformed-sth", 2, `MALFORMED STH: ${shapeError}`);
+  }
   log(`[witness] fetched STH: logId=${sth.logId} size=${sth.treeSize} root=${sth.rootHash.slice(0, 16)}…`);
+
+  // The canonical the witness signs is the one it rebuilds from the
+  // fields it checks; the log's copy must be byte-identical to it.
+  const canonical = canonicalizeSth({
+    v: sth.v,
+    logId: sth.logId,
+    rootHash: sth.rootHash,
+    timestamp: sth.timestamp,
+    treeSize: sth.treeSize,
+  });
+  if (sth.canonical !== canonical) {
+    return refuse(
+      "canonical-mismatch",
+      1,
+      "STH canonical does not match its fields (logId, rootHash, timestamp, treeSize, v)",
+    );
+  }
+
+  if (opts.logPublicKey) {
+    if (sth.signature === undefined) {
+      return refuse("bad-log-signature", 1, "STH has no log signature");
+    }
+    if (sth.signature.startsWith("v3=")) {
+      return refuse(
+        "unsupported-log-signature",
+        2,
+        "v3= STH signature: --log-public-key checks v2= (Ed25519) only, and checking the Ed25519 half alone would skip the ML-DSA-65 half",
+      );
+    }
+    if (!verifyLogSignature(canonical, sth.signature, opts.logPublicKey)) {
+      return refuse("bad-log-signature", 1, "log signature does not verify under --log-public-key");
+    }
+    log("[witness] log signature OK");
+  } else {
+    log("[witness] log signature NOT checked (no --log-public-key)");
+  }
 
   const state = loadState(opts.statePath);
   if (state) {
+    if (typeof state.logId === "string" && state.logId !== sth.logId) {
+      return refuse(
+        "log-id-mismatch",
+        1,
+        `STH is for logId ${JSON.stringify(sth.logId)}, but this state file is for ${JSON.stringify(state.logId)}`,
+        { expectedLogId: state.logId, logId: sth.logId },
+      );
+    }
+    if (typeof state.logId !== "string") {
+      log(`[witness] state file has no logId; recording ${JSON.stringify(sth.logId)}`);
+    }
     if (
       state.lastSize === sth.treeSize &&
       state.lastRoot === sth.rootHash
     ) {
-      log("[witness] no change since last poll — nothing to witness");
-      if (opts.json === "true") {
-        process.stdout.write(
-          JSON.stringify({
-            verdict: "no-change",
-            treeSize: sth.treeSize,
-            rootHash: sth.rootHash,
-          }) + "\n",
-        );
+      if (typeof state.logId !== "string") {
+        saveState(opts.statePath, { logId: sth.logId, ...state });
       }
+      log("[witness] no change since last poll — nothing to witness");
+      emit({
+        verdict: "no-change",
+        treeSize: sth.treeSize,
+        rootHash: sth.rootHash,
+      });
       return { verdict: "no-change", exit: 0 };
     }
     if (state.lastSize > sth.treeSize) {
-      log("[witness] FORK DETECTED — tree size went BACKWARDS");
-      return { verdict: "fork-detected", exit: 1 };
+      return refuse("fork-detected", 1, "FORK DETECTED — tree size went BACKWARDS", {
+        reason: "tree-size-decreased",
+        oldSize: state.lastSize,
+        newSize: sth.treeSize,
+      });
+    }
+    if (state.lastSize === sth.treeSize) {
+      return refuse(
+        "fork-detected",
+        1,
+        `FORK DETECTED — a different root for tree size ${sth.treeSize}, which this witness already signed`,
+        {
+          reason: "same-size-different-root",
+          treeSize: sth.treeSize,
+          signedRoot: state.lastRoot,
+          rootHash: sth.rootHash,
+        },
+      );
     }
     // Fetch + verify consistency proof from last → current.
     const proof = await fetchConsistencyProof(opts.url, state.lastSize, sth.treeSize);
@@ -212,29 +379,23 @@ async function runOnce(opts) {
       proof,
     );
     if (!ok) {
-      log("[witness] CONSISTENCY PROOF FAILED — log forked or rewrote");
-      if (opts.json === "true") {
-        process.stdout.write(
-          JSON.stringify({
-            verdict: "fork-detected",
-            oldSize: state.lastSize,
-            newSize: sth.treeSize,
-          }) + "\n",
-        );
-      }
-      return { verdict: "fork-detected", exit: 1 };
+      return refuse("fork-detected", 1, "CONSISTENCY PROOF FAILED — log forked or rewrote", {
+        reason: "consistency-proof-failed",
+        oldSize: state.lastSize,
+        newSize: sth.treeSize,
+      });
     }
     log(`[witness] consistency proof OK (${state.lastSize} → ${sth.treeSize})`);
   } else {
     log("[witness] no prior state — first-time witness of this log");
   }
 
-  // Sign the canonical bytes and submit.
-  const signature = signCanonical(sth.canonical, opts.privateKey);
+  // Sign the canonical rebuilt from the checked fields and submit.
+  const signature = signCanonical(canonical, opts.privateKey);
   const submitBody = {
     witnessId: opts.witnessId,
     signature,
-    sthCanonical: sth.canonical,
+    sthCanonical: canonical,
     ...(opts.publicKeyUrl ? { publicKeyUrl: opts.publicKeyUrl } : {}),
   };
   const submission = await submitCosignature(opts.url, submitBody);
@@ -243,6 +404,7 @@ async function runOnce(opts) {
   );
 
   const newState = {
+    logId: sth.logId,
     lastSize: sth.treeSize,
     lastRoot: sth.rootHash,
     lastTimestamp: sth.timestamp,
@@ -250,16 +412,12 @@ async function runOnce(opts) {
   };
   saveState(opts.statePath, newState);
 
-  if (opts.json === "true") {
-    process.stdout.write(
-      JSON.stringify({
-        verdict: "witnessed",
-        treeSize: sth.treeSize,
-        rootHash: sth.rootHash,
-        totalWitnesses: submission.witnessCount,
-      }) + "\n",
-    );
-  }
+  emit({
+    verdict: "witnessed",
+    treeSize: sth.treeSize,
+    rootHash: sth.rootHash,
+    totalWitnesses: submission.witnessCount,
+  });
   return { verdict: "witnessed", exit: 0 };
 }
 
@@ -271,9 +429,9 @@ async function runDaemon(opts) {
   while (true) {
     try {
       const r = await runOnce(opts);
-      if (r.verdict === "fork-detected") {
+      if (r.exit === 1) {
         process.stderr.write(
-          "[witness] daemon halting due to fork detection — operator action required\n",
+          `[witness] daemon halting: ${r.verdict} — operator action required\n`,
         );
         process.exit(1);
       }
@@ -302,6 +460,9 @@ async function main() {
     witnessId: flags["witness-id"],
     publicKeyUrl: flags["public-key-url"],
     privateKey: loadPrivateKey(flags.key),
+    logPublicKey: flags["log-public-key"]
+      ? loadLogPublicKey(flags["log-public-key"])
+      : undefined,
     statePath: flags.state ?? defaultStatePath(flags["witness-id"]),
     interval: flags.interval,
     json: flags.json,

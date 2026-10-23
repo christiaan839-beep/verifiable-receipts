@@ -92,7 +92,7 @@ Tree heads are returned unsigned; sign `canonicalizeSth(sth)` yourself.
 ```bash
 npx verifiable-receipts-sign --input body.json --key ed25519-private.pem [--mldsa-key mldsa65.b64] [--out receipt.json]
 npx verifiable-receipts verify --manifest MANIFEST.signed.json --pubkey ed25519.pem [--json]
-npx verifiable-receipts-witness --url https://log.example --key witness.pem --witness-id example-witness --once
+npx verifiable-receipts-witness --url https://log.example --key witness.pem --witness-id example-witness [--log-public-key log.pub.pem] --once
 ```
 
 - `verifiable-receipts-sign` drops `canonical`, `contentHash` and
@@ -104,6 +104,14 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   open the ZIP and it refuses `v3=` manifests.
 - `verifiable-receipts-witness` polls a log's tree head, checks a
   consistency proof from the last head it saw, and posts a signature.
+  Before it signs it checks each field's spelling, rebuilds the
+  canonical from the fields and requires the log's copy to match it
+  byte for byte (it signs the rebuilt one), refuses a different `logId`
+  from its state file and a different root at a size it already
+  signed. With `--log-public-key <pem>` it also verifies the log's
+  `v2=` signature and refuses `v3=` heads; without it, it prints that
+  the log signature was not checked. Exit 0 witnessed or no change,
+  1 the log misbehaved, 2 usage error or malformed head.
 
 ## Development
 
