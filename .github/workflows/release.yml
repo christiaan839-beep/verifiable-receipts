@@ -1,0 +1,267 @@
+# Publishes one package from its release tag:
+#   js-vX.Y.Z                              npm  @sovereign-matrix/verifiable-receipts
+#   py-vX.Y.Z                              PyPI sovereign-matrix-verifiable-receipts
+#   packages/verifiable-receipts-go/vX.Y.Z the Go module (fetched through proxy.golang.org)
+# The tag must match the package's version and must point at a commit on
+# main. The test workflow runs first; the build job attests the
+# provenance of what it built; publishing uses trusted publishing (OIDC,
+# no stored tokens) from the protected "release" environment. npm uploads
+# are staged (npm stage publish) and go live only when a maintainer
+# approves them with 2FA. RELEASING.md has the steps.
+#
+# Actions are pinned to full commit SHAs (the tag each SHA had when pinned
+# is in the comment). Every job starts with no token permissions and asks
+# only for what it uses.
+name: release
+on:
+  push:
+    tags:
+      - "js-v*"
+      - "py-v*"
+      - "packages/verifiable-receipts-go/v*"
+permissions: {}
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # read the manifests and main's history
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: plan
+        name: The tag names a package version that matches its manifest and is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            js-v*) kind=js; version="${TAG#js-v}"
+              have=$(node -p "require('./packages/verifiable-receipts/package.json').version") ;;
+            py-v*) kind=py; version="${TAG#py-v}"
+              have=$(python3 -c "import tomllib; print(tomllib.load(open('packages/verifiable-receipts-py/pyproject.toml','rb'))['project']['version'])") ;;
+            packages/verifiable-receipts-go/v*) kind=go; version="${TAG#packages/verifiable-receipts-go/v}"
+              have="$version" ;;
+            *) echo "::error::unrecognised release tag"; exit 1 ;;
+          esac
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z"; exit 1
+          fi
+          if [ "$have" != "$version" ]; then
+            echo "::error::tag says $version, the manifest says $have"; exit 1
+          fi
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::the tagged commit is not on main"; exit 1; }
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test
+    needs: plan
+    uses: $/.github/workflows/test.yml
+    permissions:
+      contents: read # check out the code to test
+
+  build-js:
+    name: Build the npm tarball
+    needs: [plan, test]
+    if: needs.plan.outputs.kind == 'js'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the code
+      id-token: write # sign the provenance attestation (Sigstore)
+      attestations: write # store the attestation on GitHub
+    defaults:
+      run:
+        working-directory: packages/verifiable-receipts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack --pack-destination "$RUNNER_TEMP/dist"
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dist/*.tgz
+      - name: Keep the attestation bundle next to the tarball
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "$RUNNER_TEMP/dist/attestation.sigstore.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+
+  build-py:
+    name: Build the Python sdist and wheel
+    needs: [plan, test]
+    if: needs.plan.outputs.kind == 'py'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # check out the code
+      id-token: write # sign the provenance attestation (Sigstore)
+      attestations: write # store the attestation on GitHub
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --require-hashes --no-deps -r .github/tools/python-build/requirements.txt
+      - run: python -m build --no-isolation --outdir "$RUNNER_TEMP/dist" packages/verifiable-receipts-py
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/dist/*
+      - name: Keep the attestation bundle outside the upload directory
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: mkdir -p "$RUNNER_TEMP/bundle" && cp "$BUNDLE" "$RUNNER_TEMP/bundle/attestation.sigstore.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: ${{ runner.temp }}/bundle/
+          if-no-files-found: error
+
+  publish-npm:
+    # Gated on a repository variable until the package exists on npm and has
+    # this workflow as its trusted publisher (RELEASING.md, first release).
+    name: Stage on npm
+    needs: build-js
+    if: vars.NPM_TRUSTED_PUBLISHING == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/@sovereign-matrix/verifiable-receipts
+    permissions:
+      contents: read # check out the pinned npm CLI's lockfile
+      id-token: write # npm trusted publishing (OIDC) and npm provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/tools/npm-cli
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install the npm CLI that supports staged publishing, from its lockfile
+        run: npm ci --prefix .github/tools/npm-cli --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - name: Stage the attested tarball's contents for approval on npm
+        run: |
+          set -euo pipefail
+          npm="$GITHUB_WORKSPACE/.github/tools/npm-cli/node_modules/.bin/npm"
+          "$npm" --version
+          tar -xzf dist/*.tgz
+          cd package
+          "$npm" stage publish --ignore-scripts
+
+  publish-pypi:
+    name: Publish on PyPI
+    needs: build-py
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: release
+      url: https://pypi.org/project/sovereign-matrix-verifiable-receipts/
+    permissions:
+      id-token: write # PyPI trusted publishing (OIDC) and PEP 740 attestations
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+
+  proxy-go:
+    name: Record the Go module version
+    needs: [plan, test]
+    if: needs.plan.outputs.kind == 'go'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Fetch the module version through the public proxy and checksum database
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          cd "$RUNNER_TEMP"
+          go mod init release-check
+          GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org \
+            go get "github.com/christiaan839-beep/verifiable-receipts/packages/verifiable-receipts-go@v${VERSION}"
+
+  github-release:
+    name: Create the GitHub release
+    needs: [plan, build-js, build-py, publish-npm, publish-pypi, proxy-go]
+    if: >-
+      always() && needs.plan.result == 'success' &&
+      !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write # create the release and upload its files
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - if: needs.plan.outputs.kind != 'go'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          KIND: ${{ needs.plan.outputs.kind }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/notes.md"
+          if [ "$KIND" = js ]; then
+            awk -v v="$VERSION" '
+              index($0, "## [" v "]") == 1 { on = 1; next }
+              on && /^## \[/ { exit }
+              on { print }' packages/verifiable-receipts/CHANGELOG.md > "$notes"
+          fi
+          args=(--verify-tag --title "$TAG")
+          if [ -s "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
+          if [ -d assets ]; then args+=(assets/*); fi
+          gh release create "$TAG" "${args[@]}"

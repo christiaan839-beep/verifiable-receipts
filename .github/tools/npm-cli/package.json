@@ -1,0 +1,8 @@
+{
+  "name": "release-npm-cli",
+  "private": true,
+  "description": "The npm CLI the release workflow stages packages with, installed from this lockfile.",
+  "dependencies": {
+    "npm": "11.21.0"
+  }
+}
