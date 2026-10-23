@@ -1,5 +1,7 @@
 # Ontology and schemas: implementation plan
 
+> Done. Review changed the result: exact lengths, `v3=` tree heads, closed tree-head and proof shapes, `maxItems` 53 (audit path) and 54 (consistency proof). `schemas/` and `docs/ontology.md` are authoritative.
+
 > **For agentic workers:** use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to carry out this plan task by task. Steps use checkboxes (`- [ ]`).
 
 **Goal:** add `docs/ontology.md` (every term defined once, with its relations and its RFC 9943 equivalent) and a JSON Schema for each wire object, and make CI fail when a conformance fixture stops fitting them.
