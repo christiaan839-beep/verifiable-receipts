@@ -30,17 +30,17 @@ def main() -> int:
     with open(cases_path, encoding="utf-8") as fh:
         for line in fh:
             case = json.loads(line)
-            result: dict[str, object] = {"id": case["id"]}
+            verdict: dict[str, object] = {"id": case["id"]}
             try:
                 value = json.loads(case["raw"])
             except ValueError:
-                result["ok"] = False
+                verdict["ok"] = False
             else:
                 try:
-                    result["ok"] = judge(case["kind"], value, pem)
+                    verdict["ok"] = judge(case["kind"], value, pem)
                 except Exception as err:  # noqa: BLE001 - recorded, and fails the run
-                    result.update(ok=False, threw=repr(err))
-            lines.append(json.dumps(result))
+                    verdict.update(ok=False, threw=repr(err))
+            lines.append(json.dumps(verdict))
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     return 0

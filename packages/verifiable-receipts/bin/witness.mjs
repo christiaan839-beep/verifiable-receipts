@@ -45,33 +45,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { verifyConsistencyProof } from "../dist/transparency.js";
-
-function fail(message, code = 2) {
-  process.stderr.write(`error: ${message}\n`);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const tok = argv[i];
-    if (!tok.startsWith("--")) continue;
-    const body = tok.slice(2);
-    const eq = body.indexOf("=");
-    if (eq >= 0) {
-      out[body.slice(0, eq)] = body.slice(eq + 1);
-    } else {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) {
-        out[body] = "true";
-      } else {
-        out[body] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { fail, parseArgs } from "./cli.mjs";
 
 function printHelp() {
   process.stdout.write(
@@ -107,7 +81,7 @@ function printHelp() {
   );
 }
 
-function sanitize(s) {
+function safeFileName(s) {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
 }
 
@@ -116,7 +90,7 @@ function defaultStatePath(witnessId) {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
-  return join(dir, sanitize(witnessId) + ".json");
+  return join(dir, safeFileName(witnessId) + ".json");
 }
 
 function loadState(path) {
@@ -263,9 +237,9 @@ async function runOnce(opts) {
     sthCanonical: sth.canonical,
     ...(opts.publicKeyUrl ? { publicKeyUrl: opts.publicKeyUrl } : {}),
   };
-  const result = await submitCosignature(opts.url, submitBody);
+  const submission = await submitCosignature(opts.url, submitBody);
   log(
-    `[witness] cosignature submitted — total witnesses on this STH: ${result.witnessCount}`,
+    `[witness] cosignature submitted — total witnesses on this STH: ${submission.witnessCount}`,
   );
 
   const newState = {
@@ -282,7 +256,7 @@ async function runOnce(opts) {
         verdict: "witnessed",
         treeSize: sth.treeSize,
         rootHash: sth.rootHash,
-        totalWitnesses: result.witnessCount,
+        totalWitnesses: submission.witnessCount,
       }) + "\n",
     );
   }
@@ -294,7 +268,6 @@ async function runDaemon(opts) {
   process.stdout.write(
     `[witness] daemon mode — polling ${opts.url} every ${intervalSec}s\n`,
   );
-  // Reject obvious finite values during tests (CI shouldn't run a daemon)
   while (true) {
     try {
       const r = await runOnce(opts);

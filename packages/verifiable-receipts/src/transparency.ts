@@ -8,8 +8,9 @@
  * gossip.
  *
  * The log is a Merkle tree built by appending leaf hashes one at a
- * time. The root at size N is committed in a Signed Tree Head (STH)
- * — an Ed25519 signature over (size, rootHash, timestamp, logId).
+ * time. A tree head records (logId, treeSize, rootHash, timestamp);
+ * `buildSth` returns it unsigned and the caller signs
+ * `canonicalizeSth()`.
  *
  * Two proof types:
  *   - Inclusion proof — "this leaf is in the tree at size N".
@@ -20,13 +21,13 @@
  *   leaf  = SHA-256(0x00 || leaf_bytes)
  *   inner = SHA-256(0x01 || left || right)
  *
- * Pure module — only `crypto.createHash`. No I/O, no platform
- * coupling. Caller owns leaf storage and STH signing.
+ * No I/O: the caller stores the leaves and signs the tree heads.
  *
  * @packageDocumentation
  */
 
 import { createHash } from "node:crypto";
+import { isHashHex } from "./hash.js";
 
 const LEAF_PREFIX = Buffer.from([0x00]);
 const INNER_PREFIX = Buffer.from([0x01]);
@@ -57,17 +58,6 @@ export function innerHash(leftHex: string, rightHex: string): string {
 
 // ── Tree-head root ────────────────────────────────────────────────────
 
-/**
- * Largest power of two strictly less than n. Required by RFC 6962
- * subtree decomposition.
- */
-/** A hash on the wire: 32 bytes, written as exactly 64 lowercase hex digits. */
-const HASH_HEX = /^[0-9a-f]{64}$/;
-
-function isHashHex(x: unknown): x is string {
-  return typeof x === "string" && HASH_HEX.test(x);
-}
-
 function isHashList(xs: unknown): xs is readonly string[] {
   return Array.isArray(xs) && xs.every(isHashHex);
 }
@@ -77,6 +67,10 @@ function isCount(n: unknown): n is number {
   return Number.isSafeInteger(n) && (n as number) >= 0;
 }
 
+/**
+ * Largest power of two strictly less than n, the split point of the
+ * RFC 6962 subtree decomposition.
+ */
 function largestPowerOfTwoLessThan(n: number): number {
   if (n < 2) throw new Error("requires n >= 2");
   let k = 1;
@@ -169,8 +163,7 @@ function onesCount(n: number): number {
  *
  * Algorithm: decomposed proof per the standard CT (RFC 6962) verifier
  * — an "inner" segment that walks the bits of `idx` and a "border"
- * segment of left-siblings up the right edge. Empirically the only
- * algorithm that gets every odd-tree-size right.
+ * segment of left-siblings up the right edge.
  */
 export function verifyInclusionProof(
   leafHashHex: string,
@@ -258,15 +251,6 @@ function subproof(
 }
 
 /**
- * Verify a consistency proof. Returns true iff:
- *   - the proof folds to the old root at the old size
- *   - the same proof folds to the new root at the new size
- *
- * Algorithm: RFC 6962 §2.1.2. Implementation walks the bit-pattern
- * of (oldSize-1) and the leaf-count delta to derive both roots from
- * the proof without re-hashing the whole tree.
- */
-/**
  * Recursive walker that mirrors the RFC 6962 §2.1.2 subproof builder
  * exactly. Returns the reconstructed (oldHash, newHash) at this level
  * of the tree along with the number of proof elements consumed.
@@ -335,6 +319,11 @@ function reconstructConsistency(
   };
 }
 
+/**
+ * Verify a consistency proof. Returns true iff the proof folds to the
+ * old root at the old size and to the new root at the new size
+ * (RFC 6962 §2.1.2).
+ */
 export function verifyConsistencyProof(
   oldSize: number,
   newSize: number,

@@ -106,7 +106,7 @@ ok = verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex)
 Measured on 23 October 2026: **66 passed** (pytest, Python 3.13).
 
 ```bash
-pip install pytest
+pip install "./verifiable-receipts/packages/verifiable-receipts-py[test]"
 python -m pytest verifiable-receipts/packages/verifiable-receipts-py/tests
 ```
 

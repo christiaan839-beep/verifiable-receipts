@@ -26,11 +26,11 @@ def main() -> int:
     with open(path, encoding="utf-8") as fh:
         receipt = json.load(fh)
     verify = verify_v2_receipt if kind == "receipt" else verify_guardian_attestation
-    result = verify(receipt, pem)
-    if result.ok:
+    verdict = verify(receipt, pem)
+    if verdict.ok:
         print("ok")
         return 0
-    print(f"rejected: {result.reason}")
+    print(f"rejected: {verdict.reason}")
     return 1
 
 

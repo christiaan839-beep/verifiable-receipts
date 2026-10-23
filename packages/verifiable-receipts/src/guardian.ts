@@ -3,15 +3,15 @@
  * evaluates them in parallel against a `GuardianContext` and collapses
  * the verdicts into a single signed attestation envelope.
  *
- * The verdict envelope is signed by a caller-supplied `sign()` callback
- * so this module stays free of Node-specific crypto coupling. Use any
- * signer: Node's crypto.sign(Ed25519), HMAC-SHA256, the pq-sign module
- * from this package, or an external KMS / HSM.
+ * The caller's `sign()` callback signs the canonical: Node's
+ * crypto.sign(Ed25519), the pq-sign module of this package, or a KMS or
+ * HSM.
  *
  * @packageDocumentation
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { sha256Hex } from "./hash.js";
 
 export type GuardianVerdict = "pass" | "warn" | "block";
 
@@ -73,12 +73,12 @@ export async function runGuardian(
     rules.map(async (rule) => {
       const t = Date.now();
       try {
-        const r = await rule.evaluate(ctx);
+        const outcome = await rule.evaluate(ctx);
         return {
           ruleId: rule.id,
-          verdict: r.verdict,
-          reason: r.reason,
-          evidence: r.evidence,
+          verdict: outcome.verdict,
+          reason: outcome.reason,
+          evidence: outcome.evidence,
           durationMs: Date.now() - t,
         };
       } catch (err) {
@@ -110,7 +110,7 @@ export async function runGuardian(
     rules: evaluated,
     issuedAt,
   });
-  const contentHash = sha256(canonical);
+  const contentHash = sha256Hex(canonical);
   const signature = sign(canonical);
 
   return {
@@ -126,17 +126,16 @@ export async function runGuardian(
 }
 
 /**
- * Re-verify a Guardian attestation envelope. Pure — re-derives
- * canonical, checks hash, validates signature via caller-supplied
- * verify().
+ * Re-derive the canonical from the attestation's fields, compare it with
+ * `canonical` and `contentHash`, and check the signature with the
+ * caller's `verify`.
  */
 export function verifyGuardianAttestation(
   attestation: GuardianAttestation,
   verify: (canonical: string, signature: string) => boolean,
 ): { ok: boolean; reason?: string } {
-  // Re-derive canonical from envelope fields. We extract the bound
-  // runId / agentSlug / tokenId from the stored canonical rather than
-  // separate envelope fields — those WERE bound at issuance.
+  // runId, agentSlug and tokenId are not envelope fields; they are read
+  // from the canonical, which bound them at issuance.
   let raw: unknown;
   try {
     raw = JSON.parse(attestation.canonical);
@@ -159,7 +158,7 @@ export function verifyGuardianAttestation(
   if (recomputed !== attestation.canonical) {
     return { ok: false, reason: "canonical-mismatch" };
   }
-  if (sha256(recomputed) !== attestation.contentHash) {
+  if (sha256Hex(recomputed) !== attestation.contentHash) {
     return { ok: false, reason: "hash-mismatch" };
   }
   if (!verify(recomputed, attestation.signature)) {
@@ -269,8 +268,4 @@ function canonicalize(input: {
       })),
     issuedAt: input.issuedAt,
   });
-}
-
-function sha256(s: string): string {
-  return createHash("sha256").update(s, "utf8").digest("hex");
 }

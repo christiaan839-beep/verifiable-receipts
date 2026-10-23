@@ -1,18 +1,9 @@
 /**
- * Regenerates the v2 signature fixtures + public-key.pem for the
- * cross-language conformance corpus (eight v2 fixtures).
- *
- * Why this exists: the corpus is only auditable if the verification
- * key ships with it. The original corpus was signed with a throwaway
- * keypair whose public half was never committed (the root .gitignore
- * `*.pem` rule swallowed it), which made every fresh clone fail the
- * TypeScript/Python/Go harnesses. This script makes the corpus
- * reproducible: one command regenerates the keypair, re-signs the v2
- * fixtures, and writes the public key next to them.
- *
- * The private key is intentionally discarded — verification needs
- * only the public half, and discarding the private key preserves the
- * "issuer-side signing is the only canonical path" property.
+ * Regenerates the v2 signature fixtures (v2-*.json) and public-key.pem
+ * of the cross-language conformance corpus: it makes a fresh key pair,
+ * signs the fixtures and writes the public key beside them. The
+ * private keys are never written; verification needs only the public
+ * key.
  *
  * Inclusion-proof fixtures (inclusion-*.json) are key-independent
  * and are NOT touched by this script.

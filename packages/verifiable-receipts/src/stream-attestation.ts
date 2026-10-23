@@ -14,8 +14,8 @@
  *   - Prove chunk N at position k was part of the original stream
  *     (inclusion proof against the signed Merkle root).
  *   - Prove the stream has exactly N chunks (the count is signed).
- *   - Prove the concatenated final output matches the chunk sequence
- *     (each chunk's content is committed separately).
+ *   - Holding every chunk, recompute the Merkle root and the
+ *     concatenation and compare them with the signed envelope.
  *
  * Wire format: a JSON envelope that the issuer signs with their
  * existing Ed25519 (v2) or dual (v3) key.
@@ -36,7 +36,7 @@
  * @packageDocumentation
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./hash.js";
 import {
   leafHash as transparencyLeafHash,
   treeRoot as transparencyTreeRoot,
@@ -96,8 +96,7 @@ export class StreamAttestationBuilder {
   /**
    * Add the next chunk. Throws if `chunk.index !== nextExpectedIndex`.
    * The chunk's content is hashed with RFC 9162 leaf-hash domain
-   * separation (0x00 || data) so the resulting tree composes with the
-   * platform's existing transparency-log primitives.
+   * separation (0x00 || data), the same leaf hash as ./transparency.
    */
   append(chunk: StreamChunk): void {
     if (chunk.index !== this.nextIndex) {
@@ -141,9 +140,7 @@ export class StreamAttestationBuilder {
       totalChunks: this.leafHexes.length,
       merkleRoot: transparencyTreeRoot(this.leafHexes),
       finalOutput,
-      finalOutputHash: createHash("sha256")
-        .update(finalOutput, "utf8")
-        .digest("hex"),
+      finalOutputHash: sha256Hex(finalOutput),
       finishedAt: finishedAt ?? new Date().toISOString(),
     };
   }
@@ -177,9 +174,8 @@ export class StreamAttestationBuilder {
  * Stable canonical projection of a StreamAttestation. The issuer signs
  * the UTF-8 bytes of this string with their existing Ed25519 key.
  *
- * Field order is fixed lexicographically (alphabetical). v2 (when
- * shipped) MUST switch to full RFC 8785; v1 carries no nested objects
- * so simple sort suffices.
+ * Keys are in alphabetical order. The envelope has no nested objects,
+ * so a fixed key order is the whole canonicalization.
  */
 export function canonicalizeStreamAttestation(
   attestation: StreamAttestation,
@@ -208,10 +204,6 @@ export interface ChunkInclusionOptions {
    *
    * Caller typically passes a closure that wraps `verifyDualSig()`
    * from ./pq-sign with the issuer's pubkey pre-bound.
-   *
-   * The signature precondition is mandatory in v0.2+. v0.1 callers
-   * that explicitly want the old behavior can pass `() => true`
-   * after acknowledging the risk in their threat model.
    */
   verifyEnvelopeSignature: (attestation: StreamAttestation) => boolean;
 }
@@ -225,11 +217,9 @@ export interface ChunkInclusionOptions {
  *   - sha256(0x00 || chunkContent) reconstructs the leaf hash
  *   - the inclusion proof verifies against attestation.merkleRoot
  *
- * Without the envelope-signature precondition the merkleRoot in the
- * envelope is just an attacker's claim — anyone who knows the chunk
- * content can forge an "inclusion proof" against an unsigned
- * envelope. v0.2+ enforces the precondition at the verifier API
- * boundary rather than relying on caller discipline.
+ * Without the signature check the merkleRoot is the presenter's claim:
+ * anyone who knows the chunk content can build an "inclusion proof"
+ * against an envelope of their own.
  */
 export function verifyChunkInclusion(
   attestation: StreamAttestation,
@@ -258,8 +248,5 @@ export function verifyChunkInclusion(
  * envelope where the hash and the output diverge.
  */
 export function verifyFinalOutputHash(attestation: StreamAttestation): boolean {
-  const actual = createHash("sha256")
-    .update(attestation.finalOutput, "utf8")
-    .digest("hex");
-  return actual === attestation.finalOutputHash;
+  return sha256Hex(attestation.finalOutput) === attestation.finalOutputHash;
 }

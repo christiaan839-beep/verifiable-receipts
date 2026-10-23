@@ -47,34 +47,9 @@ import {
   createPrivateKey,
   sign as edSign,
 } from "node:crypto";
-import { signMlDsa65 } from "../dist/pq-sign.js";
-
-function fail(message, code = 2) {
-  process.stderr.write(`error: ${message}\n`);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const tok = argv[i];
-    if (!tok.startsWith("--")) continue;
-    const body = tok.slice(2);
-    const eq = body.indexOf("=");
-    if (eq >= 0) {
-      out[body.slice(0, eq)] = body.slice(eq + 1);
-    } else {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) {
-        out[body] = "true";
-      } else {
-        out[body] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { canonicalJson } from "../dist/canonical-json.js";
+import { formatV3Wire, signMlDsa65 } from "../dist/pq-sign.js";
+import { fail, parseArgs, readStdin } from "./cli.mjs";
 
 function printHelp() {
   process.stdout.write(
@@ -115,24 +90,8 @@ function printHelp() {
   );
 }
 
-async function readStdin() {
-  let data = "";
-  for await (const chunk of process.stdin) data += chunk;
-  return data;
-}
-
-function sortKeysDeep(value) {
-  if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  // A null-prototype object keeps a "__proto__" key as an ordinary
-  // field; on a plain object the assignment would set the prototype
-  // and drop the key from the canonical.
-  const out = Object.create(null);
-  for (const k of Object.keys(value).sort()) {
-    out[k] = sortKeysDeep(value[k]);
-  }
-  return out;
-}
+/** FIPS 204 ML-DSA-65 secret key length in bytes. */
+const ML_DSA65_SECRET_KEY_BYTES = 4032;
 
 // Fields the signer writes; a body's own copies are dropped first.
 const SIGNER_FIELDS = ["canonical", "contentHash", "signature"];
@@ -141,10 +100,6 @@ function withoutSignerFields(receiptBody) {
   const copy = { ...receiptBody };
   for (const k of SIGNER_FIELDS) delete copy[k];
   return copy;
-}
-
-function canonicalize(fields) {
-  return JSON.stringify(sortKeysDeep(fields));
 }
 
 async function main() {
@@ -156,7 +111,6 @@ async function main() {
   const flags = parseArgs(argv);
   if (!flags.key) fail("--key is required (Ed25519 PEM)");
 
-  // Read the receipt body
   let rawInput;
   if (flags.input) {
     try {
@@ -181,7 +135,6 @@ async function main() {
     fail("input must be a JSON object");
   }
 
-  // Load Ed25519 private key
   let edPrivKey;
   try {
     const pem = readFileSync(flags.key, "utf8");
@@ -190,7 +143,6 @@ async function main() {
     fail(`could not load --key: ${err.message}`);
   }
 
-  // Optional: load ML-DSA-65 secret key for v3 dual-sign
   let mldsaSecret = null;
   if (flags["mldsa-key"]) {
     try {
@@ -199,27 +151,24 @@ async function main() {
     } catch (err) {
       fail(`could not load --mldsa-key: ${err.message}`);
     }
-    if (mldsaSecret.length < 32) {
-      fail("--mldsa-key looks too short for an ML-DSA-65 secret");
+    if (mldsaSecret.length !== ML_DSA65_SECRET_KEY_BYTES) {
+      fail(
+        `--mldsa-key must hold a ${ML_DSA65_SECRET_KEY_BYTES}-byte ML-DSA-65 secret key, got ${mldsaSecret.length} bytes`,
+      );
     }
   }
 
-  // Canonicalize + sign
   const fields = withoutSignerFields(body);
-  const canonical = canonicalize(fields);
+  const canonical = canonicalJson(fields);
   const canonicalBytes = Buffer.from(canonical, "utf8");
   const contentHash =
     "sha256:" + createHash("sha256").update(canonicalBytes).digest("hex");
   const edSigBytes = edSign(null, canonicalBytes, edPrivKey);
   const edB64 = edSigBytes.toString("base64");
 
-  let wire;
-  if (mldsaSecret) {
-    const mldsaSig = signMlDsa65(canonical, mldsaSecret);
-    wire = `v3=${edB64}.${mldsaSig}`;
-  } else {
-    wire = `v2=${edB64}`;
-  }
+  const wire = mldsaSecret
+    ? formatV3Wire(edB64, signMlDsa65(canonical, mldsaSecret))
+    : `v2=${edB64}`;
 
   const signedReceipt = { ...fields, canonical, contentHash, signature: wire };
   const out =
@@ -228,7 +177,7 @@ async function main() {
       : JSON.stringify(signedReceipt, null, 2);
 
   if (flags.out) {
-    writeFileSync(flags.out, out + (flags.json === "true" ? "\n" : "\n"));
+    writeFileSync(flags.out, out + "\n");
     process.stderr.write(
       `[sign] wrote ${signedReceipt.signature.slice(0, 24)}… to ${flags.out}\n`,
     );

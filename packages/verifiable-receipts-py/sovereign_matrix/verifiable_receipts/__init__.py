@@ -14,6 +14,7 @@ Public API:
     verify_v2_receipt(receipt, public_key_pem) -> VerifyResult
     verify_guardian_attestation(attestation, public_key_pem) -> VerifyResult
     verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex) -> bool
+    leaf_hash(data) -> bytes, inner_hash(left, right) -> bytes
 """
 
 from .sign import (

@@ -112,9 +112,8 @@ bytes `B`, which contain `att.canonical`. ∎
   Byzantine fault tolerance against half-of-issuers compromise.
 - **Pubkey resolution attacks.** If the verifier's `i → P_i`
   mapping is compromised (e.g. a malicious DNS rebind hijacks
-  `publicKeyUrl`), A2 fails. Mitigated by pinning the issuer
-  registry served at `/.well-known/sovereign-receipts/issuers.json`
-  and serving it over HTTPS with HSTS.
+  `publicKeyUrl`), A2 fails. Mitigated by pinning each issuer's
+  public key rather than fetching it at verification time.
 
 ## Reference implementation
 

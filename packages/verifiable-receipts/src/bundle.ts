@@ -1,23 +1,22 @@
 /**
- * Pure-Node ZIP writer + signed receipt bundle.
+ * A STORE-method ZIP writer (no compression) and a signed receipt
+ * bundle.
  *
- * STORE-method ZIP (no compression) in <200 LoC, zero dependencies.
- * Deterministic output bytes given the same inputs (zero-stamped
- * mtime, no extra fields). Caller supplies a sign() callback — the
- * bundle is then a self-contained tamper-evident archive.
- *
- * Use case: hand a set of receipts to a third party as one file. The
- * verifier recomputes the manifest hash and checks its signature
- * without unzipping.
+ * The same entries give the same bytes: modification times are zero
+ * and there are no extra fields. The caller's sign() callback signs the
+ * manifest hash, so a set of receipts can be handed over as one file
+ * whose manifest is checked without unzipping it.
  */
 
 import { createHash } from "node:crypto";
+import { canonicalJson } from "./canonical-json.js";
+import { sha256Hex } from "./hash.js";
 
 export interface ZipEntry {
   /** Path inside the archive (forward-slash separated). */
   path: string;
-  /** Content bytes. Strings are UTF-8 encoded. */
-  data: Buffer | string;
+  /** The file's bytes; a string is written as UTF-8. */
+  content: Buffer | string;
 }
 
 /** Build a STORE-method ZIP from a flat entry list. Returns a Buffer. */
@@ -31,8 +30,7 @@ export function buildZip(entries: ZipEntry[]): Buffer {
 
   for (const e of entries) {
     const nameBytes = Buffer.from(e.path, "utf8");
-    const data =
-      typeof e.data === "string" ? Buffer.from(e.data, "utf8") : e.data;
+    const data = entryBytes(e);
     if (data.length > 0xffff_ffff) {
       throw new Error(`buildZip: file too large: ${e.path}`);
     }
@@ -97,7 +95,7 @@ export function bundleDigest(entries: ZipEntry[]): string {
   for (const e of entries) {
     h.update(e.path, "utf8");
     h.update("\0");
-    h.update(typeof e.data === "string" ? Buffer.from(e.data, "utf8") : e.data);
+    h.update(entryBytes(e));
     h.update("\0");
   }
   return h.digest("hex");
@@ -133,8 +131,8 @@ export interface BundleManifest {
 }
 
 /**
- * Build a signed bundle. Caller supplies a sign(canonical) → signature
- * function so the bundle stays pure (no Node:crypto signing coupling).
+ * Build a signed bundle: three files per receipt and a
+ * MANIFEST.signed.json whose `manifestHash` the caller's `sign` signs.
  */
 export function buildSignedBundle(
   rows: BundleReceiptRow[],
@@ -144,13 +142,12 @@ export function buildSignedBundle(
   const entries: ZipEntry[] = [];
   for (const r of rows) {
     const id = sanitizePath(r.id);
-    const issuedAt =
-      r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt;
-    entries.push({ path: `receipts/${id}.canonical.txt`, data: r.canonical });
-    entries.push({ path: `receipts/${id}.signature.txt`, data: r.signature });
+    const issuedAt = isoString(r.createdAt);
+    entries.push({ path: `receipts/${id}.canonical.txt`, content: r.canonical });
+    entries.push({ path: `receipts/${id}.signature.txt`, content: r.signature });
     entries.push({
       path: `receipts/${id}.meta.json`,
-      data: JSON.stringify(
+      content: JSON.stringify(
         {
           id: r.id,
           agentName: r.agentName,
@@ -174,24 +171,22 @@ export function buildSignedBundle(
       id: r.id,
       agentName: r.agentName,
       modelUsed: r.modelUsed,
-      issuedAt:
-        r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+      issuedAt: isoString(r.createdAt),
       signature: r.signature,
     })),
   };
-  const manifestHash = sha256OfStable(body);
+  const manifestHash = sha256Hex(canonicalJson(body));
   const signature = sign(manifestHash);
   const manifest: BundleManifest = { ...body, manifestHash, signature };
   entries.push({
     path: "MANIFEST.signed.json",
-    data: JSON.stringify(manifest, null, 2),
+    content: JSON.stringify(manifest, null, 2),
   });
   return { zip: buildZip(entries), manifest };
 }
 
 /**
- * Verify a manifest. Pure — no unzip needed. Returns one of 4
- * failure modes when invalid.
+ * Verify a manifest's type, version, hash and signature.
  *
  * This checks the manifest only. It does not open the ZIP: to check
  * the files, recompute `bundleDigest()` over the archive's entries
@@ -224,7 +219,7 @@ export function verifyManifest(
     bundleDigest: manifest.bundleDigest,
     receipts: manifest.receipts,
   };
-  if (sha256OfStable(body) !== manifest.manifestHash) {
+  if (sha256Hex(canonicalJson(body)) !== manifest.manifestHash) {
     return { ok: false, reason: "hash-mismatch" };
   }
   if (!verify(manifest.manifestHash, manifest.signature)) {
@@ -235,23 +230,14 @@ export function verifyManifest(
 
 // ── Internals ─────────────────────────────────────────────────────────
 
-function sha256OfStable(v: unknown): string {
-  return createHash("sha256").update(stableStringify(v), "utf8").digest("hex");
+function entryBytes(entry: ZipEntry): Buffer {
+  return typeof entry.content === "string"
+    ? Buffer.from(entry.content, "utf8")
+    : entry.content;
 }
 
-function stableStringify(v: unknown): string {
-  return JSON.stringify(sortKeysDeep(v));
-}
-
-function sortKeysDeep(v: unknown): unknown {
-  if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(sortKeysDeep);
-  // Null prototype, so a "__proto__" key is kept as an own property.
-  const out = Object.create(null) as Record<string, unknown>;
-  for (const k of Object.keys(v).sort()) {
-    out[k] = sortKeysDeep((v as Record<string, unknown>)[k]);
-  }
-  return out;
+function isoString(date: Date | string): string {
+  return date instanceof Date ? date.toISOString() : date;
 }
 
 function sanitizePath(s: string): string {

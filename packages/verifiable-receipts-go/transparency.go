@@ -3,7 +3,7 @@ package vaos
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"math/bits"
 	"strings"
 )
 
@@ -77,27 +77,6 @@ type InclusionProof struct {
 	AuditPath []string
 }
 
-// bitsLen returns the number of bits required to represent n.
-// Equivalent to math/bits.Len + cast.
-func bitsLen(n int) int {
-	c := 0
-	for n > 0 {
-		c++
-		n >>= 1
-	}
-	return c
-}
-
-// onesCount returns the popcount of n.
-func onesCount(n int) int {
-	c := 0
-	for n > 0 {
-		c += n & 1
-		n >>= 1
-	}
-	return c
-}
-
 // VerifyInclusionProof returns true iff hashing the leaf with the
 // audit path siblings (per RFC 9162 §2.1.1) yields rootHashHex.
 //
@@ -132,8 +111,9 @@ func VerifyInclusionProof(proof InclusionProof, leafHashHex, rootHashHex string)
 	}
 
 	// RFC 9162 §2.1.1 inner/border decomposition.
-	inner := bitsLen(proof.LeafIndex ^ (proof.TreeSize - 1))
-	border := onesCount(proof.LeafIndex >> inner)
+	// Both operands are non-negative here, so the uint conversions are exact.
+	inner := bits.Len(uint(proof.LeafIndex ^ (proof.TreeSize - 1)))
+	border := bits.OnesCount(uint(proof.LeafIndex >> inner))
 	if len(proof.AuditPath) != inner+border {
 		return false
 	}
@@ -169,7 +149,3 @@ func VerifyInclusionProof(proof InclusionProof, leafHashHex, rootHashHex string)
 
 	return current == rootHashHex
 }
-
-// ErrEmptyAuditPath is returned only when an explicit assertion is
-// requested via VerifyInclusionProofStrict.
-var ErrEmptyAuditPath = errors.New("vaos: empty audit path on multi-leaf tree")
