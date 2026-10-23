@@ -1,5 +1,7 @@
 # verifiable-receipts
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/christiaan839-beep/verifiable-receipts/badge)](https://scorecard.dev/viewer/?uri=github.com/christiaan839-beep/verifiable-receipts)
+
 Sign a record of what an AI agent did, and let anyone with the issuer's
 public key check it later.
 
