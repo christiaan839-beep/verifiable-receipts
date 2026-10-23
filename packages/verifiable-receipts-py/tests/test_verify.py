@@ -17,14 +17,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
 )
-
 from sovereign_matrix.verifiable_receipts import (
     VerifyResult,
-    verify_v2_receipt,
+    inner_hash,
+    leaf_hash,
     verify_guardian_attestation,
     verify_inclusion_proof,
-    leaf_hash,
-    inner_hash,
+    verify_v2_receipt,
 )
 
 
@@ -91,7 +90,7 @@ class TestVerifyV2Receipt:
         receipt = {
             "canonical": canonical,
             "signature": _sign_v2(priv, canonical),
-            "contentHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "contentHash": "sha256:" + "0" * 64,
         }
         result = verify_v2_receipt(receipt, pub_pem)
         assert result.ok is False
@@ -367,7 +366,6 @@ class TestRfc9162InclusionProof:
     def test_rejects_wrong_root(self) -> None:
         a = leaf_hash(b"a")
         b = leaf_hash(b"b")
-        root = inner_hash(a, b)
         proof = {
             "leafIndex": 0,
             "treeSize": 2,

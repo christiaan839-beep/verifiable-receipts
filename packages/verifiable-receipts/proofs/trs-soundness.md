@@ -2,11 +2,18 @@
 
 **Claim.** If `verifyThresholdAttestation(att, opts)` returns `ok = true`,
 then **at least `m` of the `n` issuers in `att.authorizedIssuers`
-have each signed the exact bytes `att.canonical` under their own
-secret key**, where `m = att.threshold.m` and `n = att.threshold.n`.
+have each signed the bytes `B = trsSigningBytes(att.canonical,
+att.threshold, att.authorizedIssuers)` under their own secret key**,
+where `m = att.threshold.m ≥ 1` and `n = att.threshold.n`. `B`
+contains `att.canonical`, `m`, `n` and the sorted issuer list, so
+each of those issuers agreed to this canonical under this policy.
 
-Equivalently: an OK result on a TRS envelope cannot be produced
-without ≥ m honest cosigners signing the same bytes.
+**Scope.** `m` and `A` are read from the envelope. The claim says the
+envelope's own policy was met; it does not say that policy is the one
+the relying party wants. A relying party MUST compare `m` and `A`
+with its own policy. (Before 0.4.0 the verifier did not check that
+`m ≥ 1`, so an envelope with `m = 0` returned `ok = true` with no
+signatures; the claim was false for such envelopes.)
 
 ## Notation
 
@@ -14,10 +21,11 @@ without ≥ m honest cosigners signing the same bytes.
 - Let `A = att.authorizedIssuers` (set of n distinct issuer ids).
 - Let `K_i` be the secret key of issuer i ∈ A. Let `P_i` be the
   corresponding public key.
-- Let `Sig_i(C)` denote a string `"v2=" + base64(Ed25519.sign(K_i, C))`.
-- Let `V(C, s, i)` denote the verifier callback
-  `opts.verifyIssuerSignature(C, s, i)` — returns true iff `s`
-  decodes to bytes σ with `Ed25519.verify(P_i, C, σ) = true`.
+- Let `B = trsSigningBytes(C, {m, n}, A)`.
+- Let `Sig_i(B)` denote a string `"v2=" + base64(Ed25519.sign(K_i, B))`.
+- Let `V(B, s, i)` denote the verifier callback
+  `opts.verifyIssuerSignature(B, s, i)` — returns true iff `s`
+  decodes to bytes σ with `Ed25519.verify(P_i, B, σ) = true`.
 
 ## Assumptions
 
@@ -39,10 +47,12 @@ Let `verifyThresholdAttestation(att, opts) = { ok: true, ... }`.
 
 By the implementation in `src/threshold.ts`:
 
-**Step 1 — Scheme + contentHash gate.** Verification can only
-return ok = true if:
+**Step 1 — Scheme, policy and contentHash gate.** Verification can
+only return ok = true if:
 
 - `att.scheme === "trs1"`, AND
+- `m` and `n` are integers with `1 ≤ m ≤ n`, and `A` lists exactly
+  `n` distinct ids, AND
 - `sha256(att.canonical) === att.contentHash`.
 
 The contentHash check eliminates the case where `C` was tampered
@@ -55,28 +65,28 @@ only if:
 
 - `c.issuerId ∈ A` (authorizedIssuers set membership), AND
 - `c.issuerId ∉ seen` (no duplicate), AND
-- `V(C, c.signature, c.issuerId) = true`.
+- `V(B, c.signature, c.issuerId) = true`.
 
 By A2, the third condition implies `c.signature` was produced under
-`K_{c.issuerId}` over the exact bytes `C`. □ (authentic-signer
+`K_{c.issuerId}` over the exact bytes `B`. □ (authentic-signer
 bound)
 
 **Step 3 — Cardinality.** Let `verifying = { c.issuerId : c was
 counted as verifying }`. By the duplicate-rejection in Step 2,
 `|verifying|` equals the count of distinct issuer ids that
 verified. The implementation returns `ok = true` iff
-`|verifying| ≥ m`. □ (threshold bound)
+`|verifying| ≥ m`, and `m ≥ 1` by Step 1. □ (threshold bound)
 
 **Combining the three bounds.** OK = true implies there exist at
 least m distinct issuer ids `i_1, …, i_m ∈ A` such that each
-`Sig_{i_k}(C)` is a valid signature under `P_{i_k}`. By A2, each
+`Sig_{i_k}(B)` is a valid signature under `P_{i_k}`. By A2, each
 of those signatures must have been produced by a process holding
 `K_{i_k}`. By A1, the only such process is the legitimate issuer
 i_k (or a holder of i_k's secret key, which we collapse into
 "i_k is honest" by definition).
 
 Therefore at least m of the n authorized issuers signed the exact
-bytes `att.canonical`. ∎
+bytes `B`, which contain `att.canonical`. ∎
 
 ## What this rules out
 
@@ -108,9 +118,11 @@ bytes `att.canonical`. ∎
 
 ## Reference implementation
 
-`packages/verifiable-receipts/src/threshold.ts` lines 174–254.
+`verifyThresholdAttestation` and `thresholdPolicyError` in
+`packages/verifiable-receipts/src/threshold.ts`.
 `packages/verifiable-receipts/tests/threshold.test.ts` exercises
 every clause: insufficient-count → ok=false; rogue-cosigner →
 rejected; duplicate-cosigner → counted once + reported as
 rejected; canonical-tamper → contentHash failure; unknown-scheme
-→ ok=false.
+→ ok=false. `tests/core.test.ts` checks that `m = 0`, `m > n` and a
+short issuer list are rejected.

@@ -2,7 +2,7 @@
 
 **Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.3.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
-**Contact:** sovereign.systems007@gmail.com
+**Contact:** an issue on the repository; security reports through a private GitHub security advisory (`SECURITY.md`).
 
 VAOS-RSA defines a **Merkle-rooted commitment over the full chunk
 sequence of an LLM stream**, enabling auditors to prove "chunk N
@@ -16,15 +16,15 @@ interoperability and is forbidden in v1.x.
 
 ## 1. Why this exists
 
-Most agent platforms today sign only the **final** output of an LLM
-stream. That misses the tampering surface that matters most: an
-attacker (or buggy proxy, or malicious middlebox) can inject, drop,
-or modify tokens mid-stream and the final-output signature still
-verifies, because it commits only to the concatenated bytes the
-issuer saw last.
+A signature over the final output of a stream commits to the
+concatenated text but not to the chunks it arrived in. A consumer
+that holds one chunk cannot show it was part of the signed stream
+without the whole output.
 
-VAOS-RSA fixes this by signing the **Merkle root** of all chunk
-hashes alongside the final concatenated output:
+VAOS-RSA signs the **Merkle root** of the chunk hashes alongside the
+final concatenated output. ("RSA" here stands for Receipt Streaming
+Attestation, not the RSA algorithm; the envelope is signed with
+Ed25519 or Ed25519 + ML-DSA-65.)
 
 ```
 chunk_0 ─┐
@@ -40,8 +40,9 @@ An auditor can then:
 - Prove **chunk N at position k** was part of the original stream
   (inclusion proof against the signed Merkle root).
 - Prove the stream had exactly N chunks (the count is signed).
-- Prove the concatenated final output matches the chunk sequence
-  (each chunk's content is committed separately via Merkle leaf).
+- Given every chunk, recompute both the root and the concatenation
+  and compare them with the envelope. The package has no single
+  function for this check; `verifyChunkInclusion` checks one chunk.
 
 This composes with the existing transparency log: the same
 RFC 9162 leaf/inner hash primitives already in
@@ -158,9 +159,10 @@ auditor re-deriving the full tree from chunk archives.
 
 In scope:
 
-- An attacker injecting, dropping, or modifying tokens mid-stream
-  → caught because the chunk leaf hashes would diverge, the Merkle
-  root would diverge, the signature would fail.
+- An attacker between the issuer and the consumer injecting,
+  dropping, or modifying chunks → the chunk no longer matches a
+  leaf under the signed root. An attacker between the model and the
+  issuer is not caught: the issuer signs what it received.
 - A tampered envelope where `finalOutputHash` and `finalOutput`
   drift → caught by `verifyFinalOutputHash()`.
 - A re-ordering of chunks → caught because the Merkle tree is
@@ -186,7 +188,7 @@ Apache 2.0:
   finalizer, inclusion-proof builder, canonical projection,
   verifier helpers.
 - `packages/verifiable-receipts/tests/stream-attestation.test.ts` —
-  18 tests covering: builder invariants (empty streamId, empty
+  tests covering: builder invariants (empty streamId, empty
   finalize, out-of-order chunks); envelope shape; Merkle root
   determinism + order-sensitivity; inclusion proof for every
   chunk in single-chunk + 4-chunk streams; tampered-chunk
@@ -224,4 +226,4 @@ Apache 2.0 © Sovereign Matrix.
 
 This specification is **frozen with this package version**. A wire
 envelope minted today verifies under any future verifier that
-retains v1 support. The math is the contract.
+retains v1 support.

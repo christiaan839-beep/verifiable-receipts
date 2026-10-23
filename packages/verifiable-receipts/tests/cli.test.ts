@@ -3,12 +3,6 @@
  *
  * Spawns the actual bin/verify.mjs as a subprocess against a real
  * Ed25519-signed manifest and asserts the exit code + output shape.
- * This is the elite-tier test for the CLI — anything less (mocking
- * the spawn, faking exit codes) would let real regressions slip
- * through.
- *
- * Tests cover every path a regulator hits in 2040 when they have
- * the package, a public key, and a manifest.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
@@ -73,7 +67,7 @@ beforeAll(() => {
     {
       id: "rcpt_cli_test_001",
       agentName: "echo",
-      modelUsed: "nim-nemotron",
+      modelUsed: "example-model",
       durationMs: 42,
       createdAt: "2026-05-17T00:00:00.000Z",
       signature: "v2=AAAA",
@@ -82,7 +76,7 @@ beforeAll(() => {
     {
       id: "rcpt_cli_test_002",
       agentName: "echo",
-      modelUsed: "nim-nemotron",
+      modelUsed: "example-model",
       durationMs: 73,
       createdAt: "2026-05-17T00:01:00.000Z",
       signature: "v2=BBBB",
@@ -264,5 +258,37 @@ describe("verifiable-receipts CLI — usage errors", () => {
     const r = runCli(["unknown-cmd"]);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/unknown subcommand/);
+  });
+});
+
+describe("verifiable-receipts CLI — signature forms", () => {
+  function resigned(signature: string): string {
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      signature: string;
+    };
+    m.signature = signature;
+    const p = join(tmp, `manifest-${signature.slice(0, 3)}.json`);
+    writeFileSync(p, JSON.stringify(m));
+    return p;
+  }
+
+  it("refuses a v3= manifest instead of checking its Ed25519 half alone", () => {
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      signature: string;
+    };
+    const p = resigned(`v3=${m.signature.slice(3)}.AAAA`);
+    const r = runCli(["verify", "--manifest", p, "--pubkey", pemPath]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/v3= manifests are not supported/);
+  });
+
+  it("rejects a signature without the v2= prefix", () => {
+    const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      signature: string;
+    };
+    const p = resigned(m.signature.slice(3));
+    const r = runCli(["verify", "--manifest", p, "--pubkey", pemPath, "--json"]);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toEqual({ ok: false, reason: "signature-mismatch" });
   });
 });

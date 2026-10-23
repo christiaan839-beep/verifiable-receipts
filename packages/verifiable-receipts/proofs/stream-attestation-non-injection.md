@@ -15,6 +15,11 @@ purported chunk sequence will either (a) reject the inclusion
 proof, or (b) detect a divergence between `finalOutputHash` and
 the actual hash of the concatenation.
 
+**Scope.** The adversary sits between the issuer and the verifier
+and does not hold the issuer's key. Changes made before the issuer
+built the tree (between the model and the issuer) are signed along
+with everything else and are not detectable by this mechanism.
+
 ## Notation
 
 - `c_i`: the chunk content at position i (0-indexed).

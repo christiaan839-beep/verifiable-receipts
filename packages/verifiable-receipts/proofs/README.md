@@ -1,12 +1,12 @@
-# Mathematical proofs corpus
+# Proof sketches
 
 **License:** Apache 2.0 (free to republish, re-derive, or formalize in Lean / Coq / Isabelle).
 
-This directory contains plain-text formal-ish proofs of the
-security properties our reference implementation claims. They are
-**verifier-grade**: an auditor, regulator, or external cryptographer
-can read them and convince themselves the math is sound without
-running our code.
+Informal, hand-written proof sketches of the security properties
+the implementation claims. They are not machine-checked. Two had
+errors that were found and corrected in 0.4.0 (see the notes in
+`trs-soundness.md` and `vaos-v2-non-malleability.md`); read them as
+arguments to check, not as guarantees.
 
 Each proof follows the structure:
 
@@ -18,33 +18,26 @@ Each proof follows the structure:
 5. **What this rules out** — concrete attack scenarios this proof
    forecloses
 
-These are intentionally **not Lean / Coq files**. The receipt-layer
-audience is regulators + procurement teams, not formal-methods
-researchers. The arguments are tight enough that a domain-competent
-reader can mechanically check each step, but informal enough to
-read in 5–10 minutes per proof.
+They are not Lean or Coq files.
 
 ## Proofs in this corpus
 
 | File                                                                           | Property proved                                                                                    |
 | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| [`trs-soundness.md`](./trs-soundness.md)                                       | TRS threshold check is sound — verification returning OK implies ≥ m honest cosigners signed.      |
+| [`trs-soundness.md`](./trs-soundness.md)                                       | TRS threshold check is sound — OK implies ≥ m authorized issuers signed under the envelope's policy. |
 | [`rfc9162-inclusion-completeness.md`](./rfc9162-inclusion-completeness.md)     | RFC 9162 inclusion proof is complete — every honest leaf is provable.                              |
-| [`vaos-v2-non-malleability.md`](./vaos-v2-non-malleability.md)                 | VAOS v2 wire format is non-malleable — no signature-respelling produces a different valid receipt. |
+| [`vaos-v2-non-malleability.md`](./vaos-v2-non-malleability.md)                 | VAOS v2 signatures are non-malleable, given strict base64 decoding.                                |
 | [`vapt-replay-resistance.md`](./vapt-replay-resistance.md)                     | VAPT lifetime + singleUse constraints bound replay risk to a 1-hour window.                        |
-| [`stream-attestation-non-injection.md`](./stream-attestation-non-injection.md) | VAOS-RSA Merkle root commitment makes mid-stream injection detectable.                             |
+| [`stream-attestation-non-injection.md`](./stream-attestation-non-injection.md) | A chunk not in the signed stream has no valid inclusion proof under the signed root.               |
 
 ## Why a corpus, not a single doc
 
-Each property is independent. A reviewer auditing only the TRS spec
-can read `trs-soundness.md` without context from any other proof.
-This matches how procurement scrutiny actually works — different
-questions go to different specialists.
+Each property is independent. A reviewer of the TRS spec can read
+`trs-soundness.md` without the others.
 
 ## License
 
 Apache 2.0 © Sovereign Matrix. Republish, formalize, fork.
 
-If you find a flaw in any proof, please email
-`sovereign.systems007@gmail.com` before public disclosure. We treat
-proof flaws as security issues.
+If you find a flaw in a proof, report it as a security issue
+(`SECURITY.md`): through a private GitHub security advisory.

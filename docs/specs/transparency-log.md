@@ -1,9 +1,9 @@
-# AI Receipt Transparency Log — design + threat model
+# Receipt Transparency Log — design + threat model
 
 | Field       | Value                                                                       |
 | ----------- | --------------------------------------------------------------------------- |
 | Version     | 0.1                                                                         |
-| Status      | Draft — primitives shipped in `@sovereign-matrix/verifiable-receipts@0.1.x` |
+| Status      | Draft — primitives in `@sovereign-matrix/verifiable-receipts` (`transparency`, `log-store`) |
 | Editor      | Sovereign Matrix — `sovereign.systems007@gmail.com`                         |
 | License     | CC0 1.0 (public domain)                                                     |
 | Inspired by | RFC 6962 / RFC 9162 (Certificate Transparency)                              |
@@ -14,18 +14,15 @@
 
 ## 1. Problem
 
-Today a regulator who wants to audit an AI vendor's decisions must
-trust the vendor's logs are intact. The vendor can — in principle —
-rewrite history, suppress a problematic decision, or fork its own
-record between what it shows the regulator and what it shows the
-courts.
+A party that checks an issuer's receipts has to trust that the
+issuer's own records are complete: an issuer could drop a receipt,
+rewrite its history, or show different records to different parties.
 
 VAOS 2.0 / 3.0 (`docs/specs/vaos-2.0.md`, `docs/specs/vaos-3.0.md`)
-solve the per-receipt integrity question: the math says "this
-receipt was signed by this issuer over this canonical projection".
-But VAOS does not say "this receipt was published". A vendor that
-signs a receipt and then quietly destroys it is still in possession
-of mathematically valid bytes — they just don't appear in any audit.
+answer "was this receipt signed by this issuer over these bytes?".
+They do not answer "was this receipt published?". A receipt the
+issuer signs and then withholds is still a valid receipt; it just
+never reaches an auditor.
 
 Certificate Transparency solved the analogous problem for SSL/TLS
 in 2013: every certificate authority must submit issued certificates
@@ -34,8 +31,7 @@ since 2018) refuse certificates not embedded in such a log. The
 public log + independent witnesses make CA misissuance detectable
 even when the CA itself is compromised.
 
-The AI Receipt Transparency Log applies the same architecture to AI
-agent receipts.
+This log applies the same Merkle structure to receipt hashes.
 
 ## 2. Roles
 
@@ -176,14 +172,14 @@ parties) or one of them publishes a fork notice.
 
 | Threat                                 | Mitigation                                                                                                                                                                                                                                                                                            |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Issuer rewrites history                | Append-only Merkle structure: any rewrite invalidates the consistency proof between the rewritten STH and any prior STH a witness signed.                                                                                                                                                             |
-| Issuer forks the log                   | Witnesses see only one STH at each point in time. A second, divergent STH at the same `treeSize` from the same `logId` triggers a fork notice.                                                                                                                                                        |
-| Witness collusion                      | Use ≥ 3 witnesses, ideally cross-jurisdictional (one in EU, one in US, one in Africa). Collusion among ≥ 2 of them is detectable as long as the monitor talks to all 3.                                                                                                                               |
-| Compromised issuer signing key         | Out of scope at the log layer — STHs signed by the new key are visible at the witness layer; the audit can attribute issued receipts to the pre- or post-compromise window.                                                                                                                           |
-| Compromised log operator               | Same as above. The log's STH signing key is independent of the issuer's receipt signing key. A compromised log operator can sign forks, but witnesses + a monitor will detect them in the next sync.                                                                                                  |
-| Censorship / receipt-suppression       | The log layer does not prevent an issuer from refusing to issue a receipt in the first place. It only proves that issued receipts cannot be unilaterally suppressed afterward. Procurement contracts SHOULD require that every decision in scope produces a receipt; that contract claim is separate. |
-| Post-quantum forgery of STH signatures | STHs SHOULD be signed under VAOS 3.0 (Ed25519 + ML-DSA-65 dual-sign) so the log remains verifiable across the post-quantum transition.                                                                                                                                                                |
-| Leaf-data inference (PII leak)         | The log stores only `leafHash`, not the canonical projection. The issuer MUST publish only hashes of PII-redacted projections; raw PII MUST NOT enter the log.                                                                                                                                        |
+| Issuer rewrites history                | Detected by any witness holding an earlier signed STH: no valid consistency proof leads from it to the rewritten tree. Not detected by parties that never saw an earlier STH.                                                                                                                       |
+| Issuer forks the log                   | Detected only when two parties compare STHs and find two different roots for the same `treeSize` and `logId`. This package has no gossip or fork-notice mechanism; deployments must provide one.                                                                                                   |
+| Witness collusion                      | Use several independent witnesses. Colluding witnesses can cosign a fork; detection then depends on a party that talks to an honest witness.                                                                                                                                                        |
+| Compromised issuer signing key         | Out of scope at the log layer. Receipts logged and witnessed before the compromise can be told apart from later ones by their position in the log; unlogged receipts cannot.                                                                                                                        |
+| Compromised log operator               | The log's STH key is separate from the receipt key. A compromised operator can sign a fork; it is detected under the conditions in the fork row.                                                                                                                                                   |
+| Censorship / receipt-suppression       | The log does not prevent an issuer from never issuing or never logging a receipt. It makes removal of a logged receipt detectable by parties that hold a later STH. Requiring that every decision in scope produces a logged receipt is a matter for contracts, not this format.                 |
+| Post-quantum forgery of STH signatures | STHs MAY be signed as VAOS 3.0 (`v3=`); the downgrade caveat of VAOS 3.0 §9 applies.                                                                                                                                                                                                               |
+| Leaf-data inference (PII leak)         | The log stores only `leafHash`, not the canonical projection. The issuer MUST publish only hashes of PII-redacted projections; raw PII MUST NOT enter the log.                                                                                                                                     |
 
 ## 7. Reference implementation
 
@@ -203,39 +199,35 @@ import {
 } from "@sovereign-matrix/verifiable-receipts/transparency";
 ```
 
-A full append-only server, witness API, and monitor UI are out of
-scope for v0.1 — the primitives are the foundation that downstream
-implementations build on. The reference implementation passes 184
-test cases including exhaustive (oldSize, newSize) consistency
-verification for all pairs in 0..16.
+A log server, a witness API and a monitor are out of scope: the
+package provides the hashes, proofs, unsigned tree heads, an
+append-only file store (`FileLogStore`) and a witness CLI that polls
+a log over HTTP. The tests (`tests/transparency.test.ts`) check
+consistency proofs for every (oldSize, newSize) pair up to 16 and
+inclusion proofs against shared fixtures in TypeScript, Python and
+Go.
 
 ## 8. Comparison to RFC 6962 / 9162
 
-| Aspect              | RFC 9162 (CT)                                  | This spec (ART-Log)                                     |
+| Aspect              | RFC 9162 (CT)                                  | This spec                                               |
 | ------------------- | ---------------------------------------------- | ------------------------------------------------------- |
 | Leaf content        | X.509 certificate or pre-certificate           | VAOS-canonical receipt hash                             |
 | Browser enforcement | Chrome / Safari refuse non-CT certificates     | Out of scope — adoption is contract-driven, not browser |
-| Witness model       | RFC 9162 Annex B (Tessera-style witnesses)     | Same model; witness implementations TBD                 |
+| Witness model       | Gossip and witnessing left to deployments      | A witness cosigns tree heads (`bin/witness.mjs`)        |
 | Signature           | ECDSA-P256 / RSA on the SCT                    | Ed25519 (v2) or Ed25519 + ML-DSA-65 (v3)                |
 | Hash domains        | 0x00 leaf / 0x01 inner (SHA-256)               | Identical                                               |
 | Sunlight            | Public log audited by Google, Cloudflare, etc. | Federated — issuer-operated logs + N-of-M witnesses     |
 
-The architecture is deliberately compatible with the CT ecosystem.
-Tooling that audits CT logs (CTGo, ct-tools, Trillian) operates on
-the same hash domains and proof shapes, so an organization that
-already runs CT infrastructure can host an ART-Log with minimal
-incremental work.
+The hash domains and proof algorithms are those of RFC 6962 / RFC
+9162, so their proofs can be checked by code written for CT. The
+tree-head format and leaf contents are not CT's, so CT log software
+does not serve this log as is.
 
 ## 9. Roadmap
 
-- v0.1 (shipped) — primitives in the OSS package, 184 conformance tests.
-- v0.2 — append-only server reference implementation (file-backed).
-- v0.3 — witness API + N-witness aggregator.
-- v0.4 — public monitor UI at `/transparency` on `sovereignmatrix.agency`.
-- v1.0 — first regulated-vertical pilot using witnessed receipts in
-  a procurement contract clause.
+- Done: the primitives, a file-backed store and a witness CLI.
+- Not built: a log server, a multi-witness aggregator, a monitor.
 
 ## 10. Contact
 
-`sovereign.systems007@gmail.com` — editorial feedback and security disclosures. Start a security report's subject with
-`[security]`, and please don't open a public issue for one.
+Editorial feedback: an issue on the repository. Security reports: a private GitHub security advisory (see `SECURITY.md`).

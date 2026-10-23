@@ -2,13 +2,8 @@
  * Receipt Streaming Attestation — Merkle-rooted commitment over the
  * full chunk sequence of an LLM stream.
  *
- * Most agent platforms today sign only the FINAL output. That misses
- * the tampering surface that matters most: an attacker (or buggy
- * proxy, or malicious middlebox) can inject, drop, or modify tokens
- * mid-stream and the final-output signature still verifies because
- * it commits only to the concatenated bytes the issuer saw last.
- *
- * Streaming Attestation fixes this by:
+ * A signature over the final output alone says nothing about how the
+ * output was split into chunks. This module commits to each chunk:
  *
  *   1. Hashing every chunk as the stream emits it.
  *   2. Building an RFC 9162-style Merkle tree over the chunk hashes.

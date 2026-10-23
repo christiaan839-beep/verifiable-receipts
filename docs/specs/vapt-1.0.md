@@ -2,12 +2,11 @@
 
 **Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.2.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
-**Contact:** sovereign.systems007@gmail.com
+**Contact:** an issue on the repository; security reports through a private GitHub security advisory (`SECURITY.md`).
 
-VAPT is a wire-format primitive for **transaction-scoped tokens minted
-by autonomous AI agents under verified human authority**. It is the
-open-source analogue of Mastercard Agent Pay and Visa Agentic Commerce
-— same security model, no vendor lock-in.
+VAPT is a wire format for **short-lived, transaction-scoped tokens
+that a user (or the user's delegate key) signs to let an AI agent make
+a bounded payment**.
 
 The token cryptographically binds:
 
@@ -16,10 +15,9 @@ The token cryptographically binds:
 3. A bounded transaction envelope (`maxAmount`, `currency`, `merchantAllowlist`)
 4. A bounded validity window (`issuedAt`, `expiresAt` — max 1 hour)
 
-A merchant accepting a VAPT settles against it without ever seeing the
-user's underlying payment credentials. The transaction layer (Stripe,
-Adyen, PayPal, UPI) accepts a verified VAPT as evidence of authorized
-intent, then issues its own settlement.
+A merchant that accepts a VAPT checks it before settling through its
+own payment processor; the agent never holds the user's payment
+credentials. No payment processor is known to accept VAPTs today.
 
 This document is the **frozen wire spec**. Any deviation breaks
 interoperability and is forbidden in v1.x.
@@ -28,12 +26,10 @@ interoperability and is forbidden in v1.x.
 
 ## 1. Why this exists
 
-Gemini's 2026 "Agentic Transition" research correctly identifies
-identity attribution as the primary security failure of the early
-agentic era. A naive deployment hands an agent the user's full Stripe
-key or bank API token — single compromised agent = total user loss.
+An agent that holds a user's full payment credential can spend
+without limit if it is compromised.
 
-The fix is a token that:
+A VAPT is a token that:
 
 - carries **only the authority the agent actually needs** (scope to
   one or a few merchants, amount, currency, expiry),
@@ -41,11 +37,12 @@ The fix is a token that:
   keypair under explicit pre-authorization),
 - can be **independently verified by the merchant** without consulting
   the issuing platform,
-- is **single-use by default** (replay protection at the merchant +
-  settlement layer).
+- is marked **single-use** (`singleUse`); rejecting a replay is the
+  settlement layer's job.
 
-VAPT defines this primitive in the public domain so every regulated-AI
-vendor can adopt it without licensing fees.
+VAPT does not move money, and the reference verifier does not track
+single use: the settlement layer records `vaptHash(token)` and rejects
+a second redemption.
 
 ---
 
@@ -155,7 +152,7 @@ Properties NOT provided in v1:
 
 - **Threshold approval** — adding m-of-n co-signers is a v2 candidate.
 - **Per-spend tracking** — verifiers know `maxAmount`, not historical spend. The settlement layer aggregates.
-- **Post-quantum** — Ed25519 only. ML-DSA-65 dual-sign extension lands in v1.1 once a pure-Python ML-DSA verifier ships.
+- **Post-quantum security** — Ed25519 only.
 
 ---
 

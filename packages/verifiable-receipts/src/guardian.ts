@@ -1,8 +1,7 @@
 /**
- * Guardian rule runner — the pure-OSS half of the Sovereign Matrix
- * Guardian SDK (Wave 17). Customers compose rules into a pack; the
- * runner evaluates them in parallel against a `GuardianContext` and
- * collapses verdicts into a single attestation envelope.
+ * Guardian rule runner. The caller passes a list of rules; the runner
+ * evaluates them in parallel against a `GuardianContext` and collapses
+ * the verdicts into a single signed attestation envelope.
  *
  * The verdict envelope is signed by a caller-supplied `sign()` callback
  * so this module stays free of Node-specific crypto coupling. Use any
@@ -22,7 +21,7 @@ export interface GuardianContext {
   tokenId?: string;
   input: unknown;
   output: unknown;
-  /** Optional model lineage. Used by traceability rules (e.g. MAS FEAT §F.4). */
+  /** Optional identifier of the model that produced the output. Not signed. */
   modelUsed?: string;
 }
 
@@ -138,11 +137,16 @@ export function verifyGuardianAttestation(
   // Re-derive canonical from envelope fields. We extract the bound
   // runId / agentSlug / tokenId from the stored canonical rather than
   // separate envelope fields — those WERE bound at issuance.
-  const parsed = JSON.parse(attestation.canonical) as {
-    runId: string;
-    agentSlug: string;
-    tokenId?: string | null;
-  };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(attestation.canonical);
+  } catch {
+    return { ok: false, reason: "canonical-mismatch" };
+  }
+  if (raw === null || typeof raw !== "object") {
+    return { ok: false, reason: "canonical-mismatch" };
+  }
+  const parsed = raw as { runId: string; agentSlug: string; tokenId?: string | null };
   const recomputed = canonicalize({
     verdictId: attestation.verdictId,
     runId: parsed.runId,
@@ -221,10 +225,7 @@ export function forbiddenSubstringRule(
   };
 }
 
-/**
- * Require a JIT identity token on every run (Wave-16 invariant from
- * Sovereign Matrix; bring your own token issuance scheme to compose).
- */
+/** Block runs that carry no `tokenId` (bring your own token issuance). */
 export const requireTokenRule: GuardianRule = {
   id: "require-token",
   description: "Block runs that did not carry a JIT identity token",
@@ -260,7 +261,7 @@ function canonicalize(input: {
     overall: input.overall,
     rules: input.rules
       .slice()
-      .sort((a, b) => a.ruleId.localeCompare(b.ruleId))
+      .sort((a, b) => (a.ruleId < b.ruleId ? -1 : a.ruleId > b.ruleId ? 1 : 0))
       .map((r) => ({
         ruleId: r.ruleId,
         verdict: r.verdict,

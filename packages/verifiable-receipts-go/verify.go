@@ -143,7 +143,9 @@ func VerifyV2Receipt(r Receipt, pub ed25519.PublicKey) VerifyResult {
 	if !strings.HasPrefix(r.Signature, "v2=") {
 		return VerifyResult{OK: false, Reason: "signature is not v2 (expected 'v2=<base64>')"}
 	}
-	sigBytes, err := base64.StdEncoding.DecodeString(r.Signature[3:])
+	// Strict: reject non-zero padding bits, so one signature has
+	// exactly one valid string form.
+	sigBytes, err := base64.StdEncoding.Strict().DecodeString(r.Signature[3:])
 	if err != nil {
 		return VerifyResult{OK: false, Reason: "signature base64 invalid: " + err.Error()}
 	}

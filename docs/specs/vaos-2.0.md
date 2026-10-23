@@ -41,20 +41,16 @@ encouraged.
 
 ## 2. Motivation
 
-A 2026 regulated buyer asks: "if your AI made a decision that ends
-up in front of a judge, what evidence can you hand the court that
-the decision was defensible at the moment it was made?"
-
-VAOS 1.0 already answers that question for parties who share a
-secret with the issuer. VAOS 2.0 answers it for parties who do not:
+VAOS 1.0 lets parties who share a secret with the issuer check a
+receipt. VAOS 2.0 lets parties who do not:
 
 - **Auditors** who must independently re-derive the math without
   trusting the issuer's infrastructure.
 - **Counterparties** in a multi-party workflow (insurer ↔ broker ↔
   reinsurer) where a single shared secret is not appropriate.
-- **Long-term retention** scenarios (7–25 year regulatory horizons)
-  where the issuer's HMAC key may have rotated multiple times but
-  the original Ed25519 public key remains on file.
+- **Long-term retention**, where the issuer's HMAC key may have
+  rotated several times but the original Ed25519 public key remains
+  on file.
 
 ---
 
@@ -235,8 +231,11 @@ bytes) MAY be cached, mirrored, or pinned by any verifier without
 restriction. It is, by construction, a public key.
 
 The secret key MUST NOT be transmitted, logged, or stored outside
-the issuer's signing infrastructure. Compromise of the secret key
-invalidates every receipt signed under that key. Issuers SHOULD
+the issuer's signing infrastructure. Whoever holds a compromised key
+can sign new receipts with any `issuedAt`, so after a compromise a
+receipt under that key is only as trustworthy as independent evidence
+of when it was made (for example, a witnessed transparency-log entry
+from before the compromise). Issuers SHOULD
 publish a key-rotation manifest at
 `https://<issuer>/.well-known/sovereign-receipts/keys.json` listing
 the active and retired public keys with their `not_before` /
@@ -254,8 +253,8 @@ For VAOS 2.0 specifically:
 | Forged signature without secret key | Cryptographically infeasible (≥ 128-bit security level against classical adversaries).                                  |
 | Issuer secret-key exfiltration      | Out of scope — store the secret key in a KMS / HSM and rotate it. The VAOS-2.0 layer signs whatever the host hands it.  |
 | Cross-protocol confusion (v1 ↔ v2)  | The `v1=` / `v2=` prefix MUST be a hard branch in the verifier. Implementations MUST NOT attempt fallback verification. |
-| Quantum cryptanalysis (CRQC)        | Ed25519 is broken under a sufficiently large quantum computer. Migrate to VAOS 3.0 (dual-sign with ML-DSA-65) before    |
-|                                     | retention horizons cross the projected quantum-adversary timeline. See §10.                                             |
+| Quantum cryptanalysis (CRQC)        | Ed25519 is broken under a sufficiently large quantum computer. Migrate to VAOS 3.0 (dual-sign with ML-DSA-65) and stop  |
+|                                     | accepting `v2=` from that issuer; a `v3=` signature contains a valid `v2=` signature. See VAOS 3.0 §9.                 |
 | Canonicalization drift              | Implementations MUST share the projection code path with VAOS 1.0. The reference impl in                                |
 |                                     | `@sovereign-matrix/verifiable-receipts` is the conformance test.                                                        |
 
@@ -270,8 +269,8 @@ implementation MAY accept multiple major versions concurrently.
 
 Future versions:
 
-- **VAOS 3.0** — Ed25519 + ML-DSA-65 dual-signing for post-quantum
-  forward security. See `docs/specs/vaos-3.0.md`.
+- **VAOS 3.0** — Ed25519 + ML-DSA-65 dual signature. See
+  `docs/specs/vaos-3.0.md`.
 - **VAOS 4.0+** — reserved for a future signature primitive when
   ML-DSA-65 itself is deprecated. The wire prefix `v4=` is
   reserved.
@@ -287,7 +286,7 @@ Future versions:
   "v": 1,
   "id": "rcpt_test_001",
   "agentName": "echo",
-  "modelUsed": "nim-nemotron",
+  "modelUsed": "example-model",
   "input": { "prompt": "hello" },
   "output": { "text": "hello" },
   "safetyResult": { "passed": true, "score": 1.0 },
@@ -299,7 +298,7 @@ Future versions:
 Canonical projection (UTF-8 bytes), keys sorted at every depth per §5:
 
 ```
-{"agentName":"echo","createdAt":"2026-01-01T00:00:00.000Z","durationMs":42,"id":"rcpt_test_001","input":{"prompt":"hello"},"modelUsed":"nim-nemotron","output":{"text":"hello"},"safetyResult":{"passed":true,"score":1},"v":1}
+{"agentName":"echo","createdAt":"2026-01-01T00:00:00.000Z","durationMs":42,"id":"rcpt_test_001","input":{"prompt":"hello"},"modelUsed":"example-model","output":{"text":"hello"},"safetyResult":{"passed":true,"score":1},"v":1}
 ```
 
 (Corrected 16 October 2026: earlier copies printed the keys in body
@@ -309,10 +308,9 @@ produces this string from the body as shown. The Python
 `canonicalize()` in this repository refuses the float `1.0` (§5), and
 produces the same string when `score` is written as `1`.
 
-(Reference implementations: see the `signRun()` and
-`canonicalizeRun()` helpers in `src/lib/agent-runs.ts` of the
-Sovereign Matrix repository, and the `verifyManifest()` helper in
-`@sovereign-matrix/verifiable-receipts`.)
+(Reference implementations in this repository: the
+`verifiable-receipts-sign` CLI, the Python `sign_v2_receipt`, and the
+Python and Go `verify_v2_receipt` / `VerifyV2Receipt`.)
 
 ### 11.2 Vector B — tampered payload rejection
 
@@ -337,5 +335,4 @@ VAOS 2.0 is informed by the design of:
 
 ## 13. Contact
 
-`sovereign.systems007@gmail.com`, for editorial feedback and for security disclosures. Start a security report's subject with
-`[security]`, and please don't open a public issue for one.
+Editorial feedback: an issue on the repository. Security reports: a private GitHub security advisory (see `SECURITY.md`).

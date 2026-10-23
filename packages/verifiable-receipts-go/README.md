@@ -1,9 +1,6 @@
 # sovereign-matrix verifiable-receipts (Go)
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Go 1.22+](https://img.shields.io/badge/go-1.22+-blue.svg)](https://go.dev/)
-
-**Pure-Go verifier for VAOS receipts** — the Go counterpart to
+**Go verifier for VAOS receipts** — the Go counterpart to
 [`@sovereign-matrix/verifiable-receipts`](../verifiable-receipts)
 (TypeScript) and
 [`sovereign-matrix-verifiable-receipts`](../verifiable-receipts-py)
@@ -11,14 +8,9 @@
 
 Verify Ed25519-signed receipts (VAOS 2.0), check Guardian attestation
 envelopes, and walk RFC 9162 transparency-log inclusion proofs from
-any Go process. Measured on 16 October 2026: 36 tests passed
+any Go process. Measured on 23 October 2026: 36 tests passed
 (`go test ./...`, Go 1.24), one of them with a subtest per conformance
-fixture. Zero external dependencies — pure Go stdlib
-(`crypto/ed25519`, `crypto/sha256`).
-
-Built for cloud / SRE / regulator tooling where Go is the lingua
-franca and pulling in a Node toolchain just to verify a receipt is
-absurd.
+fixture. Standard library only (`crypto/ed25519`, `crypto/sha256`).
 
 ## Install
 
@@ -67,7 +59,7 @@ func main() {
 `VerifyV2Receipt` checks, in this order:
 
 1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
-   followed by standard base64.
+   followed by canonical standard base64 (padding bits zero).
 2. If `ContentHash` is set, it equals the hex SHA-256 of `Canonical`
    (the `sha256:` prefix is optional).
 3. The Ed25519 signature verifies over the bytes of `Canonical`, exactly
@@ -113,13 +105,10 @@ fmt.Println(ok) // true if leaf provably appears in the tree
   signs. The round trip in
   [`../verifiable-receipts/conformance/roundtrip/`](../verifiable-receipts/conformance/roundtrip)
   checks that in CI.
-- **Not a ML-DSA-65 verifier in v0.1.** Post-quantum verification
-  requires a non-stdlib dependency (`cloudflare/circl` ships Go-native
-  Dilithium); that lands in v0.2.
+- **Not an ML-DSA-65 verifier.** It does not check `v3=` signatures;
+  that would need a dependency outside the standard library.
 
 ## License
 
-Apache 2.0 © Sovereign Matrix; see [LICENSE](./LICENSE).
-
-Bug in verification math? Report to `sovereign.systems007@gmail.com`
-before public disclosure.
+Apache-2.0; see [LICENSE](./LICENSE). Report a suspected vulnerability
+privately, as the repository's [SECURITY.md](../../SECURITY.md) says.

@@ -1,6 +1,6 @@
 [project]
 name = "sovereign-matrix-verifiable-receipts"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python signer and verifier for VAOS v2 receipts (Ed25519), and RFC 9162 inclusion-proof verifier"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -13,9 +13,8 @@ dependencies = [
 ]
 keywords = ["vaos", "verifiable-receipts", "ed25519", "transparency-log", "rfc9162", "ai-audit"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Intended Audience :: Legal Industry",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -27,10 +26,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://sovereignmatrix.agency"
+Homepage = "https://github.com/christiaan839-beep/verifiable-receipts"
 Source = "https://github.com/christiaan839-beep/verifiable-receipts/tree/main/packages/verifiable-receipts-py"
 Spec = "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-2.0.md"
-Security = "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/packages/verifiable-receipts/SPEC.md#contact"
+Security = "https://github.com/christiaan839-beep/verifiable-receipts/security/advisories/new"
 
 [build-system]
 requires = ["hatchling>=1.18.0"]

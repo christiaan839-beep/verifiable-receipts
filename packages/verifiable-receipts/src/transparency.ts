@@ -1,12 +1,11 @@
 /**
- * AI Receipt Transparency Log — RFC 6962-style append-only Merkle tree.
+ * Receipt transparency log: an RFC 6962 / RFC 9162 Merkle tree.
  *
- * Solves the trust gap between regulators and AI vendors: today a
- * regulator must believe each vendor's audit logs are intact. With a
- * transparency log + independent witnesses, the vendor's claim "we
- * signed receipt X at time T" is checkable against a public,
- * append-only structure the vendor doesn't control. Forks and rewrites
- * are mathematically detectable.
+ * With tree heads cosigned by independent witnesses, an issuer that
+ * rewrites or forks its log after a witness has seen a tree head is
+ * caught by a failing consistency proof. Detection needs the witnesses
+ * to compare what they saw; this module provides the proofs, not the
+ * gossip.
  *
  * The log is a Merkle tree built by appending leaf hashes one at a
  * time. The root at size N is committed in a Signed Tree Head (STH)

@@ -8,13 +8,12 @@
  * can fraud the receipt because at least `m-1` independent parties
  * would need to collude.
  *
- * This is the receipt-layer analogue of:
- *   - Bitcoin multisig (m-of-n on transaction outputs)
- *   - TLS notary federations (Convergence, Perspectives)
- *   - Certificate Transparency cross-witness (RFC 9162 §4)
- *
- * Why this matters: even Mastercard Agent Pay and Visa Agentic
- * Commerce don't ship m-of-n cosigning. We do, in Apache 2.0.
+ * The envelope carries its own policy (m, n, authorizedIssuers), and
+ * each cosigner signs `trsSigningBytes()`, which binds that policy.
+ * The verifier checks that the policy is well formed, but whether m
+ * and the issuer list are the ones the relying party expects is the
+ * caller's decision: compare them with your own policy before
+ * trusting `ok`.
  *
  * Wire format extension:
  *
@@ -133,7 +132,7 @@ export function trsSigningBytes(
  * Assemble a threshold envelope from a canonical projection + a set of
  * cosigner contributions. Does NOT verify signatures here — that's the
  * verifier's job. The assembler may be the issuer aggregator service,
- * or a regulator collecting cosignatures out-of-band.
+ * or any party collecting cosignatures out of band.
  *
  * Throws on malformed inputs (negative m, m > n, duplicate issuerIds,
  * etc.) — these are programmer errors, not adversarial inputs.
@@ -205,6 +204,10 @@ export function assembleThresholdAttestation(args: {
  * in `rejected` but do NOT cause verification failure on their own —
  * verification fails only if the COUNT falls below m.
  *
+ * The threshold itself must be well formed: integers with
+ * 1 <= m <= n, and exactly n unique authorizedIssuers. An envelope
+ * with m = 0 would otherwise verify with no signatures at all.
+ *
  * Caller-supplied `verifyIssuerSignature` does the cryptographic work
  * + issuer-id → pubkey resolution. This module is verifier-side only.
  */
@@ -217,7 +220,19 @@ export async function verifyThresholdAttestation(
   if (attestation.scheme !== "trs1") {
     return {
       ok: false,
-      reason: `unknown scheme "${attestation.scheme}"`,
+      reason: `unknown scheme "${String(attestation.scheme)}"`,
+      validSignatureCount: 0,
+      required: 0,
+      verifyingIssuers: [],
+      rejected,
+    };
+  }
+
+  const policyError = thresholdPolicyError(attestation);
+  if (policyError) {
+    return {
+      ok: false,
+      reason: policyError,
       validSignatureCount: 0,
       required: 0,
       verifyingIssuers: [],
@@ -305,6 +320,30 @@ export async function verifyThresholdAttestation(
     verifyingIssuers: verifying,
     rejected,
   };
+}
+
+function thresholdPolicyError(a: ThresholdAttestation): string | null {
+  const t = a.threshold as { m?: unknown; n?: unknown } | undefined;
+  if (
+    !t ||
+    !Number.isInteger(t.m) ||
+    !Number.isInteger(t.n) ||
+    (t.m as number) < 1 ||
+    (t.m as number) > (t.n as number)
+  ) {
+    return "threshold must have integers 1 <= m <= n";
+  }
+  if (
+    !Array.isArray(a.authorizedIssuers) ||
+    a.authorizedIssuers.length !== t.n ||
+    new Set(a.authorizedIssuers).size !== a.authorizedIssuers.length
+  ) {
+    return "authorizedIssuers must list exactly n unique issuers";
+  }
+  if (typeof a.canonical !== "string" || !Array.isArray(a.cosigners)) {
+    return "malformed envelope";
+  }
+  return null;
 }
 
 function sha256Hex(s: string): string {

@@ -9,18 +9,18 @@
  * Usage:
  *
  *   # One-shot: check once and exit
- *   npx @sovereign-matrix/verifiable-receipts witness \
- *     --url https://sovereignmatrix.agency \
+ *   npx verifiable-receipts-witness \
+ *     --url https://log.example \
  *     --key ./witness-ed25519.pem \
- *     --witness-id "EU Witness · Berlin" \
+ *     --witness-id "example-witness" \
  *     --public-key-url https://eu-witness.example/key.pem \
  *     --once
  *
  *   # Daemon: poll every N seconds (default: 3600)
- *   npx @sovereign-matrix/verifiable-receipts witness \
- *     --url https://sovereignmatrix.agency \
+ *   npx verifiable-receipts-witness \
+ *     --url https://log.example \
  *     --key ./witness-ed25519.pem \
- *     --witness-id "EU Witness · Berlin" \
+ *     --witness-id "example-witness" \
  *     --interval 3600
  *
  * State file at ~/.sovereign-witness/<sanitized-witness-id>.json:
@@ -76,7 +76,7 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(
     [
-      "verifiable-receipts-witness — Sovereign Matrix",
+      "verifiable-receipts-witness",
       "",
       "Polls a transparency log STH, verifies append-only consistency since",
       "the last witnessed STH, signs the canonical bytes, and submits the",
@@ -86,7 +86,7 @@ function printHelp() {
       "  verifiable-receipts-witness --url <base> --key <pem> --witness-id <name> [flags]",
       "",
       "Required:",
-      "  --url <base>          Transparency log base URL (e.g. https://sovereignmatrix.agency)",
+      "  --url <base>          Transparency log base URL (e.g. https://log.example)",
       "  --key <path>          Path to your Ed25519 private key (PEM)",
       "  --witness-id <name>   Display name for your witness",
       "",

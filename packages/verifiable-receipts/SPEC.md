@@ -1,244 +1,177 @@
-# SPEC.md — Frozen wire specification
+# Wire formats of `@sovereign-matrix/verifiable-receipts` 0.4
 
-This file ships **with every published version of
-`@sovereign-matrix/verifiable-receipts`**. The package version is the
-authoritative reference: if you `npm install @sovereign-matrix/verifiable-receipts@0.1.0`
-in 2040, this file describes exactly what wire formats that version
-emits and accepts.
+This file ships with the package and describes the formats this
+version emits and accepts. The full specifications are in the
+repository's [`docs/specs/`](https://github.com/christiaan839-beep/verifiable-receipts/tree/main/docs/specs):
+[VAOS 2.0](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-2.0.md)
+(Ed25519 receipts), [VAOS 3.0](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-3.0.md)
+(dual signature), [the transparency log](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/transparency-log.md),
+[VAOS-RSA 1.0](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-rsa-1.0.md)
+(stream attestation) and [VAPT 1.0](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vapt-1.0.md)
+(payment tokens). Where this file and the code disagree, the code is
+right and this file has a bug.
 
-The canonical, version-tracked spec lives in the source repository:
-[`docs/specs/`](https://github.com/christiaan839-beep/verifiable-receipts/tree/main/docs/specs).
-This SPEC.md is a snapshot at publication time.
-
-> The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHOULD**, **MAY**, **OPTIONAL** are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) / [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174).
+> The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) / [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174).
 
 ---
 
 ## Quick reference
 
-| Wire prefix | Algorithm           | Sig bytes | Verifier                                     |
-| ----------- | ------------------- | --------- | -------------------------------------------- |
-| `v1=`       | HMAC-SHA256         | 32        | Shared secret — issuer trusts only itself.   |
-| `v2=`       | Ed25519 (RFC 8032)  | 64        | Public-key — anyone with the PEM can verify. |
-| `v3=`       | Ed25519 + ML-DSA-65 | 64 + 3293 | Dual — post-quantum forward security.        |
+| Wire prefix | Algorithm                     | Signature bytes | Produced by                                 |
+| ----------- | ----------------------------- | --------------- | ------------------------------------------- |
+| `v2=`       | Ed25519 (RFC 8032)            | 64              | `verifiable-receipts-sign`, Python signer   |
+| `v3=`       | Ed25519 + ML-DSA-65 (FIPS 204) | 64 + 3309       | `verifiable-receipts-sign --mldsa-key`      |
 
-`v1=` is supported for ecosystem compatibility (VAOS 1.0). New
-deployments SHOULD emit `v2=` at minimum and SHOULD emit `v3=` for
-any record with a retention horizon longer than five years.
+`v1=` (HMAC-SHA256, VAOS 1.0) is not produced or verified by this
+package; the Python and Go verifiers reject it.
 
 ---
 
-## Receipt canonical projection
+## Receipt
 
-Both signature versions sign **the same bytes**: the UTF-8
-byte-stringification of the receipt JSON with keys sorted at every
-depth.
+A signed receipt is a JSON object with three fields the signer adds:
 
-```ts
-function sortKeysDeep(v: unknown): unknown {
-  if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(sortKeysDeep);
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-    out[k] = sortKeysDeep((v as Record<string, unknown>)[k]);
-  }
-  return out;
-}
-const canonical = JSON.stringify(sortKeysDeep(receipt));
-```
+- `canonical`: the exact UTF-8 string that was signed;
+- `contentHash`: `sha256:` followed by the lowercase hex SHA-256 of
+  `canonical`;
+- `signature`: `v2=<base64>` or `v3=<base64>.<base64>`, standard
+  base64 alphabet with padding (RFC 4648 §4).
 
-The projection MUST be byte-stable across implementations. The
-reference is `stableStringify()` in `dist/bundle.js`.
+Every other field of the receipt repeats a field of the parsed
+`canonical`. Verifiers check `canonical` as given and do not rebuild
+it; they reject a receipt whose other fields disagree with the parsed
+`canonical` or are missing from it (VAOS 2.0 §5 and §7).
 
-A receipt carries the signed string as `canonical`. Verifiers check
-that string as given; they do not re-derive it from the receipt's other
-fields, and they reject a receipt whose other fields disagree with the
-parsed `canonical` or are missing from it. See
-[`docs/specs/vaos-2.0.md`](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vaos-2.0.md)
-§5 and §7 (clarified 16 October 2026).
+### Canonical projection
 
----
+`verifiable-receipts-sign` builds `canonical` from a JSON body:
 
-## v2 wire format — Ed25519
+1. Drop `canonical`, `contentHash` and `signature` from the body.
+2. Sort object keys at every depth (JavaScript `Array.prototype.sort`,
+   which orders by UTF-16 code unit). A `__proto__` key is kept as an
+   ordinary key.
+3. `JSON.stringify` with no whitespace.
 
-```
-v2=<base64-of-64-byte-Ed25519-signature>
-```
-
-The base64 alphabet is RFC 4648 §4 (standard, NOT URL-safe).
-
-### Sign
-
-```ts
-import { sign } from "node:crypto";
-const sig = sign(null, Buffer.from(canonical, "utf8"), ed25519SecretKey);
-const wire = "v2=" + sig.toString("base64");
-```
-
-### Verify
-
-```ts
-import { verify } from "node:crypto";
-const sig = Buffer.from(wire.slice(3), "base64");
-const ok = verify(null, Buffer.from(canonical, "utf8"), ed25519PublicKey, sig);
-```
-
-The Ed25519 verification key is published at:
-
-```
-https://<issuer-domain>/.well-known/sovereign-receipts/ed25519.pem
-```
-
-`Content-Type: application/x-pem-file`, `Access-Control-Allow-Origin: *`.
+The Python `canonicalize` sorts by code point and refuses floats. The
+two agree on keys made only of characters in the Basic Multilingual
+Plane and on bodies whose numbers are integers; outside that, sign
+with one implementation and verify the `canonical` string as given.
 
 ---
 
-## v3 wire format — Ed25519 + ML-DSA-65 dual-sign
+## `v2=`: Ed25519
 
 ```
-v3=<base64-ed25519>.<base64-mldsa65>
+v2=<base64 of the 64-byte Ed25519 signature over canonical>
 ```
-
-The literal `.` is the only valid separator. Each half is
-independently base64-decoded (standard alphabet).
-
-### Sign
 
 ```ts
-import { sign as edSign } from "node:crypto";
-import { signMlDsa65 } from "@sovereign-matrix/verifiable-receipts/pq-sign";
-
-const bytes = Buffer.from(canonical, "utf8");
-const edSig = edSign(null, bytes, ed25519SecretKey);
-const pqSig = signMlDsa65(canonical, mldsa65SecretKeyBytes);
-const wire = `v3=${edSig.toString("base64")}.${pqSig}`;
+import { sign, verify } from "node:crypto";
+const wire = "v2=" + sign(null, Buffer.from(canonical, "utf8"), privateKey).toString("base64");
+const ok = verify(null, Buffer.from(canonical, "utf8"), publicKey, Buffer.from(wire.slice(3), "base64"));
 ```
 
-`signMlDsa65()` returns a raw base64 string. The host must
-concatenate it after the Ed25519 half.
+---
 
-### Verify
+## `v3=`: Ed25519 + ML-DSA-65
+
+```
+v3=<base64 Ed25519 signature>.<base64 ML-DSA-65 signature>
+```
+
+Both halves sign the same `canonical` bytes. ML-DSA-65 is pure
+ML-DSA (FIPS 204 ML-DSA.Sign) with an empty context string, as
+implemented by `@noble/post-quantum` 0.6. The literal `.` is the only
+separator.
 
 ```ts
-import { verifyDualSig } from "@sovereign-matrix/verifiable-receipts/pq-sign";
+import { sign, verify } from "node:crypto";
+import { signMlDsa65, verifyDualSig, formatV3Wire } from "@sovereign-matrix/verifiable-receipts/pq-sign";
 
-const verdict = verifyDualSig(
-  canonical,
-  wire,
-  ed25519PublicKey,
-  mldsa65PublicKeyBytes,
-  (b, k, s) => crypto.verify(null, b, k, s), // host Ed25519 primitive
+const ed = sign(null, Buffer.from(canonical, "utf8"), edPrivateKey).toString("base64");
+const wire = formatV3Wire(ed, signMlDsa65(canonical, mldsaSecretKey));
+
+const verdict = verifyDualSig(canonical, wire, mldsaPublicKey, (c, sig) =>
+  sig.startsWith("v2=") &&
+  verify(null, Buffer.from(c, "utf8"), edPublicKey, Buffer.from(sig.slice(3), "base64")),
 );
-
-// verdict = { ok: boolean, ed25519: boolean, mldsa65: boolean }
+// { ok, ed25519, mldsa65 }: ok is true only when both halves verify.
 ```
 
-Asymmetric outcomes are a feature, not a bug. A verifier in 2040
-running against a quantum-broken Ed25519 will see
-`{ ok: false, ed25519: false, mldsa65: true }` and SHOULD treat the
-receipt as authentic under §7.1 of VAOS 3.0.
+`verifyDualSig` rejects a half that is not canonical padded base64,
+an Ed25519 half that is not 64 bytes and an ML-DSA-65 half that is
+not 3309 bytes.
 
-### Public-key endpoints
-
-| Key              | URL                                           | Encoding             |
-| ---------------- | --------------------------------------------- | -------------------- |
-| Ed25519 public   | `/.well-known/sovereign-receipts/ed25519.pem` | PEM (RFC 7468)       |
-| ML-DSA-65 public | `/.well-known/sovereign-receipts/mldsa65.b64` | base64 of 1952 bytes |
-
-Both endpoints MUST set `Access-Control-Allow-Origin: *` so any
-third-party verifier (browser-based or server-side) can fetch them
-without a CORS proxy.
+**Downgrade.** The Ed25519 half of a `v3=` signature is itself a
+valid `v2=` signature over the same `canonical`. The dual signature
+protects against a broken Ed25519 only if the verifier refuses `v2=`
+receipts from an issuer that signs with ML-DSA-65. The format cannot
+enforce this; the relying party's policy must.
 
 ---
 
-## Signed receipt bundle — `MANIFEST.signed.json`
+## Signed bundle: `MANIFEST.signed.json`
 
-A bundle is a zip of N receipts plus a top-level signed manifest:
+`buildSignedBundle` writes a STORE-method ZIP with three files per
+receipt (`receipts/<id>.canonical.txt`, `.signature.txt`,
+`.meta.json`) and a manifest:
 
 ```jsonc
 {
   "v": 1,
   "type": "verifiable-receipt-bundle",
   "generatedAt": "2026-05-17T00:00:00.000Z",
-  "receiptCount": 137,
-  "bundleDigest": "<sha256 of concatenated entry hashes>",
-  "receipts": [{ "id": "rcpt_...", "hash": "<sha256>" }, ...],
-  "manifestHash": "<sha256 of the above object, canonicalized>",
-  "signature": "v2=...  or  v3=...  or  v1=..."
+  "receiptCount": 2,
+  "bundleDigest": "<hex sha256 over each entry's path, NUL, bytes, NUL>",
+  "receipts": [
+    { "id": "…", "agentName": "…", "modelUsed": "…", "issuedAt": "…", "signature": "v2=…" }
+  ],
+  "manifestHash": "<hex sha256 of the fields above, keys sorted at every depth>",
+  "signature": "<the caller's signature over manifestHash>"
 }
 ```
 
-Verifier algorithm (idempotent, no network):
+`verifyManifest` and the `verifiable-receipts verify` CLI:
 
-1. Strip `manifestHash` and `signature` from the manifest.
-2. Recompute `manifestHash` via `sha256(stableStringify(rest))`.
-3. If recomputed `manifestHash !== stored manifestHash` →
-   `{ ok: false, reason: "hash-mismatch" }`.
-4. Verify `signature` against `manifestHash` using the wire-format
-   rules above.
-5. If signature verifies → `{ ok: true }`.
-   Else → `{ ok: false, reason: "signature-mismatch" }`.
+1. check `type` and `v`;
+2. recompute `manifestHash` over every field except `manifestHash` and
+   `signature`, and compare;
+3. check `signature` over the `manifestHash` string with the caller's
+   verifier (the CLI uses Ed25519 `v2=`).
 
-The CLI in `bin/verify.mjs` is the reference implementation. Run it
-against any manifest with:
+They do not open the ZIP: recompute `bundleDigest` over the archive's
+entries to check the files. They do not check each receipt's own
+signature. Receipt ids are mapped to file names by replacing every
+character outside `[A-Za-z0-9_-]` with `_`, so two ids can collide.
 
-```bash
-npx @sovereign-matrix/verifiable-receipts verify \
-  --manifest ./MANIFEST.signed.json \
-  --pubkey ./ed25519.pem
-```
-
-Exit code 0 = valid; 1 = invalid; 2 = usage error. JSON output is
-available via `--json`.
+The CLI exits 0 when the manifest verifies, 1 when it does not and 2
+on a usage error; `--json` prints a JSON result.
 
 ---
 
-## Forward compatibility
+## Other formats
 
-A receipt signed by this version of the package can be verified by:
-
-- the same version of this package, in perpetuity (this is the
-  guarantee — the math is the contract);
-- any future version of this package that retains v2/v3 verifiers
-  (no retirement is currently planned for either);
-- any implementation in any language that verifies the signature over
-  the receipt's `canonical` string per §3 / §4 against the published
-  keys, and checks the receipt's other fields against it.
-
-If a future major version of this package deprecates v2 or v3 in
-favour of `v4=`, this SPEC.md (frozen with version 0.1.0) is still
-correct for receipts signed under 0.1.0. Verifiers SHOULD pin
-package versions for long-retention archives.
-
----
-
-## Conformance
-
-A library is **VAOS 3.0 conformant** iff:
-
-1. It can produce the canonical projection of §2 byte-for-byte
-   identically to this package's `stableStringify()`.
-2. It can sign with Ed25519 per RFC 8032 §5.1.6.
-3. It can sign with ML-DSA-65 per FIPS 204 §6.
-4. Its verifier returns `false` when either signature half fails,
-   AND surfaces the per-primitive result so a v3.0 verifier can
-   apply the forward-compatibility rule of §7.1.
-5. It rejects unknown wire prefixes.
-
-Run the test vectors in `docs/specs/vaos-2.0.md` and
-`docs/specs/vaos-3.0.md` against your implementation. A diff is a
-spec violation; please open an issue.
+- **Guardian attestation** (`runGuardian`): `canonical` is
+  `{"v":1,"type":"guardian-verdict",verdictId,runId,agentSlug,tokenId,overall,rules,issuedAt}`
+  with `rules` sorted by `ruleId` (UTF-16 code unit) and reduced to
+  `{ruleId, verdict, reason}`; `contentHash` is the bare hex SHA-256.
+- **Transparency log**: RFC 6962 §2.1 hashing (`0x00` leaf prefix,
+  `0x01` inner prefix), RFC 9162 §2.1.3 inclusion and §2.1.4
+  consistency proofs. Tree heads are returned unsigned.
+- **Threshold envelope** (`trs1`): each cosigner signs
+  `trsSigningBytes(canonical, {m, n}, authorizedIssuers)`.
+- **Stream attestation** (`rsa1`) and **VAPT** (`vapt1.`): see their
+  specs in `docs/specs/`.
 
 ---
 
 ## License
 
-This specification is in the public domain (CC0 1.0). The reference
-implementation is Apache-2.0. Use both, fork both, ship both.
-
----
+The specifications are CC0 1.0. The code is Apache-2.0.
 
 ## Contact
 
-`sovereign.systems007@gmail.com`, for editorial feedback and for security reports. Start a security report's subject with
-`[security]`, and please don't open a public issue for one.
+Report a suspected vulnerability through a private GitHub security
+advisory on
+[christiaan839-beep/verifiable-receipts](https://github.com/christiaan839-beep/verifiable-receipts/security/advisories/new).
+See `SECURITY.md` in the repository.

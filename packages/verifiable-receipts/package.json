@@ -1,7 +1,7 @@
 {
   "name": "@sovereign-matrix/verifiable-receipts",
-  "version": "0.3.1",
-  "description": "Pure-TypeScript primitives for cryptographically-signed AI agent receipts. Ed25519 + ML-DSA-65 (Dilithium3) dual-signing, ZIP-bundle export with signed manifest, Guardian verdict envelopes, post-quantum forward-secure verification. Zero platform coupling — drop into any AI agent runtime.",
+  "version": "0.4.0",
+  "description": "Sign receipts for AI agent actions and verify them later: Ed25519 and ML-DSA-65 signatures, an RFC 9162 Merkle transparency log, m-of-n co-signing, stream attestation and signed ZIP bundles.",
   "license": "Apache-2.0",
   "author": "Christiaan de Wet <sovereign.systems007@gmail.com>",
   "homepage": "https://github.com/christiaan839-beep/verifiable-receipts/tree/main/packages/verifiable-receipts",
@@ -12,25 +12,18 @@
   },
   "bugs": "https://github.com/christiaan839-beep/verifiable-receipts/issues",
   "keywords": [
-    "ai",
-    "agents",
-    "agentic",
-    "cryptographic-receipts",
-    "verifiable-ai",
+    "receipts",
+    "signatures",
     "ed25519",
-    "ml-dsa-65",
-    "dilithium3",
-    "post-quantum",
-    "audit-grade",
-    "compliance",
-    "hipaa",
-    "sr-11-7",
-    "naic",
-    "dscsa",
-    "csrd",
-    "sovereign-matrix"
+    "ml-dsa",
+    "fips-204",
+    "merkle-tree",
+    "transparency-log",
+    "rfc9162",
+    "ai-agents"
   ],
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -55,10 +48,6 @@
       "types": "./dist/bundle.d.ts",
       "import": "./dist/bundle.js"
     },
-    "./packs": {
-      "types": "./dist/packs.d.ts",
-      "import": "./dist/packs.js"
-    },
     "./transparency": {
       "types": "./dist/transparency.d.ts",
       "import": "./dist/transparency.js"
@@ -66,23 +55,40 @@
     "./log-store": {
       "types": "./dist/log-store.d.ts",
       "import": "./dist/log-store.js"
-    }
+    },
+    "./threshold": {
+      "types": "./dist/threshold.d.ts",
+      "import": "./dist/threshold.js"
+    },
+    "./stream-attestation": {
+      "types": "./dist/stream-attestation.d.ts",
+      "import": "./dist/stream-attestation.js"
+    },
+    "./vapt": {
+      "types": "./dist/vapt.d.ts",
+      "import": "./dist/vapt.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "bin",
     "SPEC.md",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint .",
     "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run build && npm test",
     "prepare": "node -e \"if(!require('node:fs').existsSync('dist'))require('node:child_process').execSync('tsc -p tsconfig.json',{stdio:'inherit'})\"",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run check"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "publishConfig": {
     "access": "public",
@@ -92,8 +98,11 @@
     "@noble/post-quantum": "^0.6.1"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.39.5",
     "typescript": "^5",
-    "vitest": "^3"
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
   }
 }

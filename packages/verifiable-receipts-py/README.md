@@ -1,8 +1,8 @@
 # sovereign-matrix-verifiable-receipts (Python)
 
-Python signer and verifier for Sovereign Matrix receipts, the counterpart
+Python signer and verifier for VAOS receipts, the counterpart
 to the TypeScript library in [`../verifiable-receipts`](../verifiable-receipts).
-Version 0.2.0, Apache-2.0 (see [LICENSE](./LICENSE)).
+Version 0.2.1, Apache-2.0 (see [LICENSE](./LICENSE)).
 
 It signs and verifies Ed25519 (`v2=`) receipts, verifies Guardian
 attestations from the TypeScript `runGuardian`, and verifies RFC 9162
@@ -68,7 +68,7 @@ print(result.reason)  # None, or why it failed
 `verify_v2_receipt` checks, in this order:
 
 1. `canonical` and `signature` are non-empty strings, and `signature` is
-   `v2=` followed by standard base64.
+   `v2=` followed by canonical standard base64 (padding bits zero).
 2. If `contentHash` is present, it equals the hex SHA-256 of the UTF-8
    bytes of `canonical` (the `sha256:` prefix is optional).
 3. The Ed25519 signature verifies over the UTF-8 bytes of `canonical`,
@@ -103,7 +103,7 @@ ok = verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex)
 
 ## Tests
 
-Measured on 16 October 2026: **66 passed** (pytest, Python 3.13).
+Measured on 23 October 2026: **66 passed** (pytest, Python 3.13).
 
 ```bash
 pip install pytest
@@ -113,13 +113,11 @@ python -m pytest verifiable-receipts/packages/verifiable-receipts-py/tests
 The cross-language conformance suite, which runs this verifier against the
 shared fixtures, is
 [`../verifiable-receipts/conformance/conformance.py`](../verifiable-receipts/conformance/conformance.py)
-(15 passed on the same day). The round trip in
+(16 passed on the same day). The round trip in
 [`../verifiable-receipts/conformance/roundtrip/`](../verifiable-receipts/conformance/roundtrip)
 signs with this package and checks the result in Go and node.
 
 ## License
 
-Apache-2.0; see [LICENSE](./LICENSE). Report suspected bugs in the
-verification code privately to `sovereign.systems007@gmail.com` (the
-security contact in
-[SPEC.md](../verifiable-receipts/SPEC.md#contact)) before disclosing them.
+Apache-2.0; see [LICENSE](./LICENSE). Report a suspected vulnerability
+privately, as the repository's [SECURITY.md](../../SECURITY.md) says.

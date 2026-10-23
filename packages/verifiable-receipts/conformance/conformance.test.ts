@@ -90,8 +90,9 @@ describe("Cross-language conformance — TypeScript verifier", () => {
         );
         expect(result).toBe(fixture.expected.ok);
       } else {
+        const name = (fixture as { __filename: string }).__filename;
         throw new Error(
-          `unknown fixture shape in ${fixture.__filename} — must contain "receipt" or "leafHashHex"`,
+          `unknown fixture shape in ${name} — must contain "receipt" or "leafHashHex"`,
         );
       }
     });

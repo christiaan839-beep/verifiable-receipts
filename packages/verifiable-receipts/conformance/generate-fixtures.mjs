@@ -60,6 +60,17 @@ const { privateKey: wrongKey } = generateKeyPairSync("ed25519");
 const signWith = (key) =>
   "v2=" + sign(null, Buffer.from(CANONICAL, "utf8"), key).toString("base64");
 
+// The same signature spelled differently: a 64-byte value ends in a
+// base64 character with four unused bits; set one. Lenient decoders
+// return the same bytes, so only a strict decoder rejects it.
+const ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function respell(wire) {
+  const b64 = wire.slice(3);
+  const last = ALPHABET.indexOf(b64[b64.length - 3]);
+  return `v2=${b64.slice(0, -3)}${ALPHABET[last ^ 1]}==`;
+}
+
 const fixtures = {
   "v2-valid-001.json": {
     description: "v2 valid — well-formed Guardian attestation",
@@ -93,6 +104,16 @@ const fixtures = {
     receipt: {
       canonical: CANONICAL,
       signature: "v2=!!!notbase64!!!",
+    },
+    expected: { ok: false, reasonContains: "base64" },
+  },
+  "v2-invalid-noncanonical-base64.json": {
+    description:
+      "v2 invalid — signature base64 is not canonical (non-zero padding bits; decodes to the valid signature's bytes)",
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: respell(signWith(privateKey)),
     },
     expected: { ok: false, reasonContains: "base64" },
   },

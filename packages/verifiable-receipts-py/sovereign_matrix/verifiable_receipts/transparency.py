@@ -16,8 +16,7 @@ All hex inputs are case-insensitive but compared lowercase.
 from __future__ import annotations
 
 import hashlib
-from typing import Mapping
-
+from collections.abc import Mapping
 
 _LEAF_PREFIX = b"\x00"
 _INNER_PREFIX = b"\x01"

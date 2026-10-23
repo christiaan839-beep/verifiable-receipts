@@ -74,6 +74,10 @@ export function verifyV2Receipt(receipt, publicKey) {
     return { ok: false, reason: "signature base64 invalid" };
   }
   const sigBytes = Buffer.from(signature.slice(3), "base64");
+  // Reject non-canonical spellings (non-zero padding bits).
+  if (sigBytes.toString("base64") !== signature.slice(3)) {
+    return { ok: false, reason: "signature base64 invalid: not canonical" };
+  }
   const canonicalBytes = Buffer.from(canonical, "utf8");
 
   if (contentHash != null && typeof contentHash !== "string") {

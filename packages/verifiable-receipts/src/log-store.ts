@@ -1,18 +1,18 @@
 /**
- * Append-only log store for the AI Receipt Transparency Log.
+ * Append-only log store for the receipt transparency log.
  *
  * A `LogStore` is a sequence of leaf hashes that supports only
  * `append` and `read`. Combined with the Merkle primitives in
- * `transparency.ts`, this is the v0.2 reference server for the
- * ART-Log design (see `docs/specs/transparency-log.md`).
+ * `transparency.ts`, it is the storage layer of the log described
+ * in `docs/specs/transparency-log.md`.
  *
  * Two implementations ship:
  *
  *   - InMemoryLogStore — pure-RAM array. For tests + ephemeral demos.
  *   - FileLogStore — append-only file. Each line is exactly 65 chars:
- *     64 lowercase hex + a `\n`. Crash-safe via O_APPEND + fsync on
- *     every append; recoverable by line-count without a separate
- *     index file.
+ *     64 lowercase hex + a `\n`. O_APPEND + fsync on every append;
+ *     one writer per file; recoverable by line count without a
+ *     separate index file.
  *
  * The `TransparencyLog` class wraps a store and exposes the proof
  * APIs an HTTP server / CLI tool will surface. Signing the STH is the
@@ -46,7 +46,7 @@ import {
 
 /**
  * Append-only sequence of leaf hashes. The store NEVER deletes or
- * mutates a leaf — that's the foundational guarantee of the log.
+ * mutates a leaf.
  */
 export interface LogStore {
   /** Append a leaf hash (lowercase hex). Returns the new leaf's index. */
@@ -129,10 +129,9 @@ export class FileLogStore implements LogStore {
     if (!/^[0-9a-f]{64}$/.test(leafHashHex)) {
       throw new Error("leafHashHex must be 64 lowercase hex characters");
     }
-    // O_APPEND + fsync — POSIX guarantees the write is atomic and durable
-    // before the call returns. The line below uses Node's appendFileSync
-    // (O_APPEND) then opens for fsync separately because Node's API
-    // doesn't expose fsync on the appendFileSync code path.
+    // Append with O_APPEND, then fsync before returning. The store
+    // keeps its leaves in memory and takes no file lock: use one
+    // FileLogStore per file, in one process.
     appendFileSync(this.filePath, leafHashHex + "\n", { mode: 0o600 });
     const fd = openSync(this.filePath, "r+");
     try {
