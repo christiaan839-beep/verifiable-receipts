@@ -32,7 +32,7 @@ three, and the shared fixtures decide whether they agree.
 # Python
 pip install --require-hashes --no-deps -r .github/tools/python-ci/requirements.txt
 ruff check .
-PYTHONPATH=packages/verifiable-receipts-py python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py
+PYTHONPATH=packages/verifiable-receipts-py python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py schemas
 # Go
 (cd packages/verifiable-receipts-go && test -z "$(gofmt -l .)" && go vet ./... && go test ./...)
 # All three together

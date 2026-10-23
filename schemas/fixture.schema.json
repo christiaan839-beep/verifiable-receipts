@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/fixture.schema.json",
+  "title": "Conformance fixture",
+  "description": "One test vector in packages/verifiable-receipts/conformance/fixtures. Its inputs may be malformed on purpose, so this schema constrains only the fixture's frame; expected.ok says whether every verifier must accept it.",
+  "type": "object",
+  "required": ["description", "expected"],
+  "properties": {
+    "description": { "type": "string", "minLength": 1 },
+    "expected": {
+      "type": "object",
+      "required": ["ok"],
+      "properties": { "ok": { "type": "boolean" }, "reasonContains": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    { "required": ["receipt"], "properties": { "receipt": { "type": "object" } } },
+    { "required": ["leafHashHex", "leafIndex", "treeSize", "auditPath", "rootHashHex"] }
+  ]
+}

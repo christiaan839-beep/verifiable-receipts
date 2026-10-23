@@ -1,0 +1,6 @@
+{
+  "witnessId": "w1",
+  "sthCanonical": "{\"logId\":\"example-log\",\"rootHash\":\"983cb57c04cddd52634edab38a7bef85708a974f114bbd9aa9ec5d4ce6656b4b\",\"timestamp\":\"2026-10-23T12:00:00.000Z\",\"treeSize\":2,\"v\":1}",
+  "signature": "v2=AATu6RejNeHxufR/Jlu5ITwSmElUxyqaU6zZjsWnx0xflfDqx6DrFHBuyuhEhi0qV95O6xnjj9JVyUrR+vl/Ag==",
+  "publicKeyUrl": "https://witness.example/w1.pem"
+}

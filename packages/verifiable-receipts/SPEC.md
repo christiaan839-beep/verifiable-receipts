@@ -10,6 +10,8 @@ repository's [`docs/specs/`](https://github.com/christiaan839-beep/verifiable-re
 (stream attestation) and [VAPT 1.0](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/specs/vapt-1.0.md)
 (payment tokens). Where this file and the code disagree, the code is
 right and this file has a bug.
+Terms are defined in
+[`docs/ontology.md`](https://github.com/christiaan839-beep/verifiable-receipts/blob/main/docs/ontology.md).
 
 > The key words **MUST**, **MUST NOT**, **SHOULD** and **MAY** are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) / [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174).
 
