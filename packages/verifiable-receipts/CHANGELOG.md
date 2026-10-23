@@ -18,6 +18,10 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`queryReceipts`, `parseQuery`) and `src/c2pa-bridge.ts`
   (`toC2PAManifest`, `fromC2PAManifest`), with their tests. Nothing in
   the signing, verification or log code used them.
+- `TransparencyLog.rootHash()`: it returned `currentSth().rootHash`,
+  which stays.
+- `ZipEntry.data` is renamed `ZipEntry.content`, the name
+  `StreamChunk` uses for the same thing.
 
 ### Security
 
@@ -95,6 +99,20 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Python package (0.2.1) and the Go module apply the same strict
   base64 rule; the Python code is lint-clean under the new root
   `ruff.toml`.
+- `verifiable-receipts-sign` requires `--mldsa-key` to decode to an
+  ML-DSA-65 secret key, exactly 4032 bytes; it used to accept anything
+  of 32 bytes or more.
+- The Go module drops `ErrEmptyAuditPath`, which nothing returned (its
+  doc named a `VerifyInclusionProofStrict` that does not exist).
+- Doc comments that described what the code does not do are corrected:
+  TRS cosigners sign `trsSigningBytes()`, not the bare VAOS 2.0
+  canonical; `verifyVapt` does not act on `singleUse`, `userId` or
+  `agentId`; `FileLogStore` appends are not crash-atomic, but a torn
+  last line is rejected on load.
+- The three CLIs share their argument parsing (`bin/cli.mjs`), and
+  `verifiable-receipts-sign` and `buildSignedBundle` share one
+  key-sorting canonicalizer (`src/canonical-json.ts`); neither is
+  exported.
 
 ## [0.3.1] — 2026-10-16
 

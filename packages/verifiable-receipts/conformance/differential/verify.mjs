@@ -14,7 +14,7 @@ import { verifyInclusionProof } from "../../dist/transparency.js";
 
 const [keyPath, casesPath, outPath] = process.argv.slice(2);
 const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
-const out = [];
+const verdicts = [];
 for (const line of readFileSync(casesPath, "utf8").split("\n")) {
   if (line === "") continue;
   const { id, kind, raw } = JSON.parse(line);
@@ -22,7 +22,7 @@ for (const line of readFileSync(casesPath, "utf8").split("\n")) {
   try {
     value = JSON.parse(raw);
   } catch {
-    out.push({ id, ok: false });
+    verdicts.push({ id, ok: false });
     continue;
   }
   try {
@@ -30,9 +30,9 @@ for (const line of readFileSync(casesPath, "utf8").split("\n")) {
       kind === "receipt"
         ? verifyV2Receipt(value, publicKey).ok
         : verifyInclusionProof(value.leafHashHex, value.leafIndex, value.treeSize, value.auditPath, value.rootHashHex);
-    out.push({ id, ok });
+    verdicts.push({ id, ok });
   } catch (err) {
-    out.push({ id, ok: false, threw: String(err) });
+    verdicts.push({ id, ok: false, threw: String(err) });
   }
 }
-writeFileSync(outPath, out.map((r) => JSON.stringify(r)).join("\n") + "\n");
+writeFileSync(outPath, verdicts.map((v) => JSON.stringify(v)).join("\n") + "\n");

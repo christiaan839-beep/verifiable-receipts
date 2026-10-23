@@ -14,23 +14,17 @@
  *   vapt1.<base64url(canonical_json)>.<base64url(ed25519_signature)>
  *
  * Canonical JSON keys are sorted lexicographically. The signed bytes
- * are the UTF-8 encoding of the canonical JSON. Signature is Ed25519
- * over the canonical bytes by the *user's* (or user's delegate's)
- * keypair — proves the agent acted under verified user authority.
+ * are the UTF-8 encoding of the canonical JSON, signed with Ed25519 by
+ * the user's (or the user's delegate's) key.
  *
- * Constraints enforced at verification:
- *   - `expiresAt`: short-lived, max 1h from issuance
- *   - `maxAmount`: absolute spend ceiling for this token
- *   - `currency`: ISO 4217 three-letter code
- *   - `merchantAllowlist`: optional list of accepted merchant ids
- *   - `singleUse`: idempotency hint to settlement layer
- *   - `userId`: opaque user identifier
- *   - `agentId`: opaque agent identifier
+ * `verifyVapt` enforces the signature, the validity window (at most one
+ * hour), `maxAmount`, `currency` and `merchantAllowlist`. It does not
+ * act on `singleUse`, `userId` or `agentId`.
  *
  * See docs/specs/vapt-1.0.md for the frozen wire-format spec.
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./hash.js";
 
 /**
  * The data signed inside a VAPT. Field order in this interface is
@@ -79,10 +73,8 @@ export interface VerifyVaptOptions {
   /** Verifier's current wall-clock time. Defaults to now. */
   now?: Date;
   /**
-   * Verifier function. Takes (canonicalBytes, signatureBytes,
-   * publicKeyMaterial) and returns true if the signature verifies.
-   * Caller supplies their own primitive — Node `crypto.verify`,
-   * @noble/ed25519, KMS HSM, whatever.
+   * Returns true when `signature` verifies over `canonical` under
+   * `publicKeyMaterial`: Node's `crypto.verify`, @noble/ed25519 or a KMS.
    */
   verifySignature: (
     canonical: string,
@@ -103,10 +95,9 @@ export interface VaptVerifyResult {
 const VAPT_PREFIX = "vapt1.";
 
 /**
- * Stable lexicographic JSON canonicalization. JS JSON.stringify with
- * a key-sorting replacer is sufficient because we don't carry nested
- * objects whose key order would also matter. (If we add nested
- * objects in v2, replace this with a full RFC 8785 implementation.)
+ * The payload as JSON with its top-level keys sorted and undefined
+ * fields dropped. The payload's only nested value is a string array,
+ * so sorting the top level is the whole canonicalization.
  */
 function canonicalize(payload: VaptPayload): string {
   const keys = Object.keys(payload).sort() as Array<keyof VaptPayload>;
@@ -136,9 +127,8 @@ function base64UrlDecode(s: string): Buffer {
 /**
  * Mint a VAPT wire token from a payload + a sign function.
  *
- * The caller's `sign` callback is responsible for whatever cryptographic
- * primitive they have available (Node crypto.sign, @noble/ed25519, KMS
- * remote sign). The signature is bound to the canonical bytes.
+ * The caller's `sign` callback signs the canonical payload (Node's
+ * crypto.sign, @noble/ed25519 or a KMS).
  */
 export function mintVapt(
   payload: Omit<VaptPayload, "scheme">,
@@ -311,12 +301,12 @@ export function verifyVapt(
 }
 
 /**
- * SHA-256 hash of the canonical bytes. Useful for idempotency keys on
- * the settlement layer — a verifier records `vaptHash(token)` to
- * detect replay across distributed processes.
+ * Hex SHA-256 of the token's canonical payload, for the settlement
+ * layer to record and so reject a replayed token. Returns "" for a
+ * token `parseVapt` cannot parse.
  */
 export function vaptHash(token: string): string {
   const parsed = parseVapt(token);
   if (!parsed) return "";
-  return createHash("sha256").update(parsed.canonical, "utf8").digest("hex");
+  return sha256Hex(parsed.canonical);
 }

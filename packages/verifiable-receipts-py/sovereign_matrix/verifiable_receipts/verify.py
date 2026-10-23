@@ -68,7 +68,7 @@ def _decode_v2_signature(signature: str) -> bytes:
     raw = signature[3:]
     try:
         decoded = base64.b64decode(raw, validate=True)
-    except (ValueError, base64.binascii.Error) as exc:  # type: ignore[attr-defined]
+    except ValueError as exc:  # binascii.Error is a ValueError
         raise ValueError(f"signature base64 invalid: {exc}") from exc
     # Reject non-canonical spellings (non-zero padding bits), so one
     # signature has exactly one valid string form.

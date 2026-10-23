@@ -96,7 +96,8 @@ type VerifyResult struct {
 }
 
 // LoadEd25519PublicKeyFromPEM parses a PEM-encoded Ed25519 public key
-// (the same format served at /.well-known/sovereign-receipts/ed25519.pem).
+// (the format VAOS 2.0 §6.3 publishes at
+// /.well-known/sovereign-receipts/ed25519.pem).
 //
 // Returns an error if the PEM is not Ed25519 or is malformed.
 func LoadEd25519PublicKeyFromPEM(pemBytes []byte) (ed25519.PublicKey, error) {

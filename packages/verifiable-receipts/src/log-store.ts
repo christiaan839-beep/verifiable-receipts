@@ -11,17 +11,10 @@
  *   - InMemoryLogStore — pure-RAM array. For tests + ephemeral demos.
  *   - FileLogStore — append-only file. Each line is exactly 65 chars:
  *     64 lowercase hex + a `\n`. O_APPEND + fsync on every append;
- *     one writer per file; recoverable by line count without a
- *     separate index file.
+ *     one writer per file; the line count is the leaf count.
  *
- * The `TransparencyLog` class wraps a store and exposes the proof
- * APIs an HTTP server / CLI tool will surface. Signing the STH is the
- * caller's responsibility — the Log returns unsigned envelopes so the
- * deployment can choose Ed25519 (v2) or Ed25519 + ML-DSA-65 (v3) at
- * its discretion.
- *
- * Pure module — only `node:fs` for FileLogStore. No platform
- * coupling, no HTTP, no database.
+ * `TransparencyLog` wraps a store, builds proofs and returns unsigned
+ * tree heads; the caller signs them (`v2=` or `v3=`).
  */
 
 import {
@@ -31,10 +24,9 @@ import {
   openSync,
   fsyncSync,
   closeSync,
-  writeSync,
 } from "node:fs";
+import { isHashHex } from "./hash.js";
 import {
-  treeRoot,
   inclusionProof,
   consistencyProof,
   buildSth,
@@ -64,9 +56,7 @@ export class InMemoryLogStore implements LogStore {
   private leaves: string[] = [];
 
   append(leafHashHex: string): number {
-    if (!/^[0-9a-f]{64}$/.test(leafHashHex)) {
-      throw new Error("leafHashHex must be 64 lowercase hex characters");
-    }
+    assertLeafHash(leafHashHex);
     this.leaves.push(leafHashHex);
     return this.leaves.length - 1;
   }
@@ -76,12 +66,7 @@ export class InMemoryLogStore implements LogStore {
   }
 
   get(idx: number): string {
-    if (idx < 0 || idx >= this.leaves.length) {
-      throw new Error(
-        `leaf idx ${idx} out of range (count=${this.leaves.length})`,
-      );
-    }
-    return this.leaves[idx];
+    return leafAtIndex(this.leaves, idx);
   }
 
   snapshot(): readonly string[] {
@@ -92,13 +77,13 @@ export class InMemoryLogStore implements LogStore {
 /**
  * Append-only file-backed store. Each line is `<64-hex-chars>\n` so:
  *
- *   - Append is a single O_APPEND write followed by fsync — atomic under
- *     POSIX even across crashes.
- *   - Recovery is trivial: line count = leaf count.
- *   - Snapshot reads the whole file once at construction and keeps an
- *     in-memory mirror. For typical regulated workloads (≤ millions
- *     of leaves) this fits comfortably in memory; if it doesn't, swap
- *     in a different LogStore impl backed by a real DB.
+ *   - Append is one O_APPEND write followed by fsync. A crash during
+ *     the write can leave a short last line, which the constructor
+ *     rejects.
+ *   - The line count is the leaf count.
+ *   - The constructor reads the whole file and keeps every leaf in
+ *     memory (65 bytes of file per leaf). For a log too large for
+ *     that, implement `LogStore` over a database.
  */
 export class FileLogStore implements LogStore {
   private leaves: string[];
@@ -114,7 +99,7 @@ export class FileLogStore implements LogStore {
       // line aborts construction; the operator MUST inspect manually
       // rather than silently truncate.
       for (const [i, line] of this.leaves.entries()) {
-        if (!/^[0-9a-f]{64}$/.test(line)) {
+        if (!isHashHex(line)) {
           throw new Error(
             `FileLogStore: line ${i + 1} of ${filePath} is not a valid leaf hash`,
           );
@@ -126,9 +111,7 @@ export class FileLogStore implements LogStore {
   }
 
   append(leafHashHex: string): number {
-    if (!/^[0-9a-f]{64}$/.test(leafHashHex)) {
-      throw new Error("leafHashHex must be 64 lowercase hex characters");
-    }
+    assertLeafHash(leafHashHex);
     // Append with O_APPEND, then fsync before returning. The store
     // keeps its leaves in memory and takes no file lock: use one
     // FileLogStore per file, in one process.
@@ -148,17 +131,25 @@ export class FileLogStore implements LogStore {
   }
 
   get(idx: number): string {
-    if (idx < 0 || idx >= this.leaves.length) {
-      throw new Error(
-        `leaf idx ${idx} out of range (count=${this.leaves.length})`,
-      );
-    }
-    return this.leaves[idx];
+    return leafAtIndex(this.leaves, idx);
   }
 
   snapshot(): readonly string[] {
     return this.leaves.slice();
   }
+}
+
+function assertLeafHash(leafHashHex: string): void {
+  if (!isHashHex(leafHashHex)) {
+    throw new Error("leafHashHex must be 64 lowercase hex characters");
+  }
+}
+
+function leafAtIndex(leaves: readonly string[], idx: number): string {
+  if (idx < 0 || idx >= leaves.length) {
+    throw new Error(`leaf idx ${idx} out of range (count=${leaves.length})`);
+  }
+  return leaves[idx];
 }
 
 // ── TransparencyLog ───────────────────────────────────────────────────
@@ -229,11 +220,6 @@ export class TransparencyLog {
     return this.store.count();
   }
 
-  /** Current Merkle root (hex). */
-  rootHash(): string {
-    return treeRoot(this.store.snapshot());
-  }
-
   /** Get the leaf hash at idx. */
   leafAt(idx: number): string {
     return this.store.get(idx);
@@ -276,6 +262,3 @@ export class TransparencyLog {
     return consistencyProof(oldSize, this.store.snapshot().slice(0, n));
   }
 }
-
-// Silence unused-import lint when only the type is referenced.
-void writeSync;

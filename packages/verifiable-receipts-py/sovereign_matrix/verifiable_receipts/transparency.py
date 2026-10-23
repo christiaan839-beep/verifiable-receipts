@@ -1,10 +1,9 @@
 """
 RFC 9162 transparency-log inclusion-proof verifier (Python port).
 
-Mirror of `verifyInclusionProof()` from the TypeScript package's
-transparency.ts. The math is the contract — Python re-derives the
-Merkle path by hashing leaf → audit-path → root and compares to the
-published Signed Tree Head's rootHash.
+The same checks as `verifyInclusionProof()` in the TypeScript package's
+transparency.ts: fold the leaf hash with the audit path and compare the
+result with the tree head's rootHash.
 
 Hash domain separation per RFC 9162 §2:
     leaf_hash(data) = SHA-256(0x00 || data)

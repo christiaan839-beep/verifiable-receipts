@@ -26,33 +26,7 @@
 import { readFileSync } from "node:fs";
 import { createPublicKey, verify as nodeVerify } from "node:crypto";
 import { verifyManifest } from "../dist/index.js";
-
-function fail(message, code = 2) {
-  process.stderr.write(`error: ${message}\n`);
-  process.exit(code);
-}
-
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const tok = argv[i];
-    if (!tok.startsWith("--")) continue;
-    const body = tok.slice(2);
-    const eq = body.indexOf("=");
-    if (eq >= 0) {
-      out[body.slice(0, eq)] = body.slice(eq + 1);
-    } else {
-      const next = argv[i + 1];
-      if (next === undefined || next.startsWith("--")) {
-        out[body] = "true";
-      } else {
-        out[body] = next;
-        i++;
-      }
-    }
-  }
-  return out;
-}
+import { fail, parseArgs, readStdin } from "./cli.mjs";
 
 function printHelp() {
   process.stdout.write(
@@ -67,10 +41,10 @@ function printHelp() {
       "  --manifest <path>   Path to a MANIFEST.signed.json file",
       "  --pubkey <path>     Path to an Ed25519 public key (PEM)",
       "  --json              Emit a JSON envelope on success/failure",
+      "  --help              This message",
       "",
       "Checks the manifest hash and an Ed25519 v2= signature. It does not",
       "open the ZIP or check each receipt, and it refuses v3= manifests.",
-      "  --help              This message",
       "",
       "Exit codes:",
       "  0  Manifest is intact and signature verifies",
@@ -79,12 +53,6 @@ function printHelp() {
       "",
     ].join("\n"),
   );
-}
-
-async function readStdin() {
-  let data = "";
-  for await (const chunk of process.stdin) data += chunk;
-  return data;
 }
 
 async function main() {
@@ -101,9 +69,7 @@ async function main() {
   const flags = parseArgs(argv.slice(1));
   if (!flags.pubkey) fail("--pubkey is required");
 
-  // Pubkey: support PEM only for now. Base64-encoded raw key support
-  // can land in a follow-up; PEM is what /.well-known/sovereign-receipts/
-  // already serves so it's the canonical input shape.
+  // PEM, the format VAOS 2.0 §6.3 publishes the issuer key in.
   let pemBytes;
   try {
     pemBytes = readFileSync(flags.pubkey, "utf8");
@@ -160,10 +126,10 @@ async function main() {
     }
   };
 
-  const result = verifyManifest(manifest, verifyFn);
+  const verdict = verifyManifest(manifest, verifyFn);
   const emitJson = flags.json === "true";
 
-  if (result.ok) {
+  if (verdict.ok) {
     if (emitJson) {
       process.stdout.write(
         JSON.stringify({
@@ -190,17 +156,16 @@ async function main() {
     process.exit(0);
   }
 
-  // Verification failed — surface the reason cleanly.
   if (emitJson) {
     process.stdout.write(
-      JSON.stringify({ ok: false, reason: result.reason }) + "\n",
+      JSON.stringify({ ok: false, reason: verdict.reason }) + "\n",
     );
   } else {
     process.stdout.write(
       [
         "✗ MANIFEST VERIFICATION FAILED",
         "",
-        `  reason: ${result.reason}`,
+        `  reason: ${verdict.reason}`,
         "",
         "  hash-mismatch       The recomputed manifestHash differs from the stored value.",
         "                      Likely tampering or a transcription error.",

@@ -1,12 +1,9 @@
 /**
  * Threshold Receipt Signatures (TRS) — m-of-n issuer co-signing.
  *
- * A receipt under TRS is canonical only when at least `m` of `n`
- * designated issuers have independently signed the same canonical
- * bytes. The trust model flips from "trust this one issuer" to
- * "trust the m-quorum of the n-issuer registry" — no single issuer
- * can fraud the receipt because at least `m-1` independent parties
- * would need to collude.
+ * A TRS envelope verifies only when at least `m` of its `n` authorized
+ * issuers have signed the same bytes, so forging one takes `m` issuers'
+ * keys rather than one.
  *
  * The envelope carries its own policy (m, n, authorizedIssuers), and
  * each cosigner signs `trsSigningBytes()`, which binds that policy.
@@ -15,28 +12,21 @@
  * caller's decision: compare them with your own policy before
  * trusting `ok`.
  *
- * Wire format extension:
- *
- *   The threshold envelope is layered ON TOP of the existing canonical
- *   projection used by VAOS v2/v3 — it does NOT modify the bytes that
- *   each individual issuer signs. Each issuer signs the same canonical
- *   exactly as in VAOS 2.0; the envelope simply aggregates their
- *   signatures into a single document.
+ * The receipt's `canonical` is the VAOS 2.0 projection, unchanged.
+ * Cosigners do not sign it directly: they sign `trsSigningBytes()`,
+ * which wraps it with the policy, so a VAOS 2.0 signature over the
+ * same canonical does not count as a cosignature.
  *
  * @packageDocumentation
  */
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "./hash.js";
 
-/**
- * The threshold-signed envelope. Wire format is the JSON serialization
- * of this interface; canonical bytes are the UTF-8 of the `canonical`
- * field, identical to VAOS 2.0.
- */
+/** The threshold-signed envelope; its wire format is this object as JSON. */
 export interface ThresholdAttestation {
   /** Stable schema version. Verifiers MUST tolerate additive fields. */
   scheme: "trs1";
-  /** Canonical projection — exactly the bytes each cosigner signs. */
+  /** The receipt's VAOS 2.0 canonical projection, wrapped by `trsSigningBytes()` for signing. */
   canonical: string;
   /** sha256(canonical) for cross-check. */
   contentHash: string;
@@ -72,9 +62,8 @@ export interface ThresholdVerifyOptions {
   /**
    * Verifier callback: given (canonical, signature, issuerId), return
    * true if the signature verifies under that issuer's public key.
-   * Caller supplies the cryptographic primitive (Node crypto, KMS, etc.)
-   * and the issuer-id → pubkey resolution (typically by hitting the
-   * issuer registry from /.well-known/sovereign-receipts/issuers.json).
+   * The caller supplies the signature check and the mapping from issuer
+   * id to public key.
    */
   verifyIssuerSignature: (
     canonical: string,
@@ -129,10 +118,8 @@ export function trsSigningBytes(
 }
 
 /**
- * Assemble a threshold envelope from a canonical projection + a set of
- * cosigner contributions. Does NOT verify signatures here — that's the
- * verifier's job. The assembler may be the issuer aggregator service,
- * or any party collecting cosignatures out of band.
+ * Assemble a threshold envelope from a canonical projection and the
+ * cosigners' signatures. It does not verify the signatures.
  *
  * Throws on malformed inputs (negative m, m > n, duplicate issuerIds,
  * etc.) — these are programmer errors, not adversarial inputs.
@@ -194,11 +181,11 @@ export function assembleThresholdAttestation(args: {
 
 /**
  * Verify a threshold attestation. Returns ok=true only when:
- *   - The envelope schema is intact (scheme === "trs1")
+ *   - scheme is "trs1"
+ *   - the policy is well formed (below)
  *   - contentHash matches sha256(canonical)
- *   - Every cosigner in the cosigners list whose issuerId is in
- *     authorizedIssuers has a verifying signature
- *   - The count of valid, authorized, unique signatures ≥ threshold.m
+ *   - at least threshold.m distinct authorized cosigners have a
+ *     signature that verifies over `trsSigningBytes()`
  *
  * Cosigners with unknown issuerIds or invalid signatures are reported
  * in `rejected` but do NOT cause verification failure on their own —
@@ -208,8 +195,7 @@ export function assembleThresholdAttestation(args: {
  * 1 <= m <= n, and exactly n unique authorizedIssuers. An envelope
  * with m = 0 would otherwise verify with no signatures at all.
  *
- * Caller-supplied `verifyIssuerSignature` does the cryptographic work
- * + issuer-id → pubkey resolution. This module is verifier-side only.
+ * The caller's `verifyIssuerSignature` checks each signature.
  */
 export async function verifyThresholdAttestation(
   attestation: ThresholdAttestation,
@@ -344,8 +330,4 @@ function thresholdPolicyError(a: ThresholdAttestation): string | null {
     return "malformed envelope";
   }
   return null;
-}
-
-function sha256Hex(s: string): string {
-  return createHash("sha256").update(s, "utf8").digest("hex");
 }

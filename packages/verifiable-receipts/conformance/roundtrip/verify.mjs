@@ -23,7 +23,7 @@ if (!keyPath || !path || (kind !== "receipt" && kind !== "guardian")) {
 const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
 const receipt = JSON.parse(readFileSync(path, "utf8"));
 
-const result =
+const verdict =
   kind === "receipt"
     ? verifyV2Receipt(receipt, publicKey)
     : verifyGuardianAttestation(receipt, (canonical, signature) => {
@@ -36,9 +36,9 @@ const result =
         );
       });
 
-if (result.ok) {
+if (verdict.ok) {
   console.log("ok");
 } else {
-  console.log(`rejected: ${result.reason}`);
+  console.log(`rejected: ${verdict.reason}`);
   process.exit(1);
 }

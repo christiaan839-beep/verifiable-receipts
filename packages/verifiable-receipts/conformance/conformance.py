@@ -1,9 +1,9 @@
 """
 Cross-language conformance harness — Python verifier side.
 
-Reads the JSON fixtures from ../conformance/fixtures/ and asserts the
-Python reference implementation agrees with the TypeScript reference
-implementation on every fixture's expected outcome.
+Runs the Python verifiers over every fixture in fixtures/ and checks
+each outcome against the fixture's `expected`, the same outcomes the
+TypeScript and Go harnesses check.
 
 Run from the repo root:
     cd packages/verifiable-receipts-py
@@ -37,13 +37,13 @@ PUBLIC_KEY_PEM = (HERE / "public-key.pem").read_bytes()
 
 
 def _load_fixtures() -> list[dict]:
-    out = []
+    fixtures = []
     for path in sorted(FIXTURES_DIR.glob("*.json")):
         with path.open(encoding="utf-8") as fh:
             fixture = json.load(fh)
         fixture["__filename"] = path.name
-        out.append(fixture)
-    return out
+        fixtures.append(fixture)
+    return fixtures
 
 
 @pytest.fixture(scope="module")
@@ -61,16 +61,16 @@ def test_fixture_outcome_matches(fixture: dict) -> None:
 
     if "receipt" in fixture:
         receipt = fixture["receipt"]
-        result = verify_v2_receipt(receipt, PUBLIC_KEY_PEM)
-        assert result.ok is expected_ok, (
+        verdict = verify_v2_receipt(receipt, PUBLIC_KEY_PEM)
+        assert verdict.ok is expected_ok, (
             f"{fixture['__filename']}: expected ok={expected_ok}, "
-            f"got ok={result.ok} reason={result.reason}"
+            f"got ok={verdict.ok} reason={verdict.reason}"
         )
         reason_contains = fixture["expected"].get("reasonContains")
-        if reason_contains and not result.ok:
-            assert re.search(reason_contains, result.reason or "", re.IGNORECASE), (
+        if reason_contains and not verdict.ok:
+            assert re.search(reason_contains, verdict.reason or "", re.IGNORECASE), (
                 f"{fixture['__filename']}: expected reason to match "
-                f"{reason_contains!r}, got {result.reason!r}"
+                f"{reason_contains!r}, got {verdict.reason!r}"
             )
     elif "leafHashHex" in fixture:
         proof = {
