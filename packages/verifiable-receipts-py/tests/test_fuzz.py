@@ -268,8 +268,9 @@ class TestVerifyInclusionProof:
         assert isinstance(ok, bool)
         if ok:
             assert not verify_inclusion_proof(proof, leaf, root + "00")
-            # One spelling: what passes is ints and 64 lowercase hex digits.
-            assert type(leaf_index) is int and type(tree_size) is int
+            # What passes is integer values and 64 lowercase hex digits.
+            for n in (leaf_index, tree_size):
+                assert type(n) in (int, float) and float(n).is_integer()
             for h in [leaf, root, *audit_path]:
                 assert isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h)
 

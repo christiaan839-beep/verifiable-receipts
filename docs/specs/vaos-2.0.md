@@ -190,7 +190,14 @@ Given a receipt and the issuer's verification key, a verifier:
    object has no such key or holds a different value under it. Values
    compare as JSON values: the same type, numbers by numeric value,
    strings by code points, arrays element by element, objects key by
-   key regardless of key order.
+   key regardless of key order. A number of magnitude 2^53 or more,
+   anywhere in the field's value or in the canonical's value for the
+   same key, MUST make the comparison fail, even against an equal
+   number: JavaScript's `JSON.parse` reads 2^53 + 1 as 2^53, so a
+   verifier that compared such numbers would disagree with one that
+   cannot. Issuers that need larger integers repeat them as strings, or
+   leave them in `canonical` only. Consumers MUST read values from
+   `canonical`; the fields beside it are a convenience copy.
 7. Returns true iff the primitive returned true and every check
    passed.
 

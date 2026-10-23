@@ -60,6 +60,15 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   raised `OverflowError` on an infinite index and read `true`, `"1"` and
   `1.5` as 1. Seven new fixtures (23 in all); the rules are in
   `docs/specs/transparency-log.md` §3.6.
+- A differential run (`conformance/differential/`) gives the three
+  verifiers the same random receipts and proofs and fails on any
+  disagreement; CI runs it on every pull request and nightly. Its first
+  runs found two: the Python and Go proof verifiers accepted tree sizes
+  above 2^53 − 1 (now rejected, as TypeScript did), and envelope fields
+  holding an integer of 2^53 or more compared differently (TypeScript
+  reads 2^53 + 1 as 2^53). Such a number in a repeated field now fails
+  the comparison in all three (`docs/specs/vaos-2.0.md` §7 step 6). An
+  index or size written as `284.0` is the integer 284 in all three.
 
 ### Changed
 

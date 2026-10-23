@@ -49,6 +49,27 @@ func TestVerifyInclusionProof_SingleLeaf(t *testing.T) {
 	}
 }
 
+// Leaf 0's siblings are all on the right, so one path proves it in trees
+// of 2^53 - 1 and 2^53 leaves; only the size bound differs.
+func TestVerifyInclusionProof_RejectsTreeSizeBeyond2To53Minus1(t *testing.T) {
+	leaf := LeafHash([]byte("x"))
+	path := make([]string, 53)
+	root := leaf
+	for i := range path {
+		path[i] = LeafHash([]byte{byte(i)})
+		root, _ = InnerHash(root, path[i])
+	}
+	for _, c := range []struct {
+		size int
+		ok   bool
+	}{{1<<53 - 1, true}, {1 << 53, false}} {
+		proof := InclusionProof{LeafIndex: 0, TreeSize: c.size, AuditPath: path}
+		if VerifyInclusionProof(proof, leaf, root) != c.ok {
+			t.Fatalf("size %d: expected ok=%v", c.size, c.ok)
+		}
+	}
+}
+
 func TestVerifyInclusionProof_TwoLeafLeft(t *testing.T) {
 	a := LeafHash([]byte("a"))
 	b := LeafHash([]byte("b"))

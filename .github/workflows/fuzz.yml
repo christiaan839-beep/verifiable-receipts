@@ -1,7 +1,9 @@
-# Fuzzing beyond the property tests that run with every test suite:
-# on pull requests and pushes, each Go fuzz target runs for 15 seconds;
-# every night (and on demand) each Go target runs for 5 minutes, and the
-# fast-check and Hypothesis properties run with 20,000 cases each. The Go
+# Fuzzing beyond the property tests that run with every test suite.
+# On pull requests and pushes: each Go fuzz target for 15 seconds, and
+# the differential run (all three verifiers judge the same 20,000 cases).
+# Every night, and on demand: each Go target for 5 minutes, the
+# differential run with a million cases and a new seed, and the
+# fast-check and Hypothesis properties with 20,000 cases each. The Go
 # corpus and the Hypothesis database are cached between runs. A failing
 # input is uploaded as an artifact.
 name: fuzz
@@ -58,6 +60,45 @@ jobs:
         with:
           name: go-fuzz-crashers
           path: packages/verifiable-receipts-go/testdata/fuzz/
+          if-no-files-found: ignore
+
+  differential:
+    name: Differential run (TypeScript, Python, Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # check out the code
+    env:
+      LONG: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.24"
+          cache: false
+      - name: Build the TypeScript package
+        working-directory: packages/verifiable-receipts
+        run: npm ci && npm run build
+      - run: python -m pip install ./packages/verifiable-receipts-py
+      - name: Every case judged alike by all three verifiers
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$LONG" = true ]; then cases=1000000; seed="$RUN_ID"; else cases=20000; seed=1; fi
+          bash packages/verifiable-receipts/conformance/differential/run.sh "$cases" "$seed" "$RUNNER_TEMP/differential"
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: differential-disagreements
+          path: ${{ runner.temp }}/differential/
           if-no-files-found: ignore
 
   properties:

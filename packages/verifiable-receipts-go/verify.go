@@ -23,7 +23,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"io"
-	"math/big"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -276,33 +276,29 @@ func jsonEqual(a, b any) bool {
 	}
 }
 
-// numbersEqual compares two JSON number literals by value. Integer
-// literals compare exactly; a literal with a fraction or exponent is
-// read as an IEEE 754 double, as JSON parsers in JavaScript and Python
-// read it, and compared exactly with the other number.
+// numbersEqual compares two JSON number literals by value (1 equals
+// 1.0). A number of magnitude 2^53 or more equals nothing: a double, the
+// only number type JavaScript's JSON.parse has, cannot tell 2^53 from
+// 2^53 + 1, so every verifier rejects such a number in a repeated field
+// rather than disagree about it. Below 2^53 every integer is exact as a
+// double, and comparing the doubles is exact comparison.
 func numbersEqual(a, b json.Number) bool {
 	x, okA := numberValue(a)
 	y, okB := numberValue(b)
 	if !okA || !okB {
-		return a == b
+		return false
 	}
-	return x.Cmp(y) == 0
+	return math.Abs(x) < 1<<53 && math.Abs(y) < 1<<53 && x == y
 }
 
-func numberValue(n json.Number) (*big.Float, bool) {
-	s := string(n)
-	if !strings.ContainsAny(s, ".eE") {
-		i, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			return nil, false
-		}
-		return new(big.Float).SetInt(i), true
-	}
-	f, err := strconv.ParseFloat(s, 64)
+// numberValue reads n as the nearest double; a literal out of range
+// reads as an infinity, as JSON.parse reads it.
+func numberValue(n json.Number) (float64, bool) {
+	f, err := strconv.ParseFloat(string(n), 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
-		return nil, false
+		return 0, false
 	}
-	return new(big.Float).SetFloat64(f), true
+	return f, true
 }
 
 // VerifyGuardianAttestation verifies a signed Guardian attestation from
