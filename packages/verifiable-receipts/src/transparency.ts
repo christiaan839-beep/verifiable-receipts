@@ -61,6 +61,22 @@ export function innerHash(leftHex: string, rightHex: string): string {
  * Largest power of two strictly less than n. Required by RFC 6962
  * subtree decomposition.
  */
+/** A hash on the wire: 32 bytes, written as exactly 64 lowercase hex digits. */
+const HASH_HEX = /^[0-9a-f]{64}$/;
+
+function isHashHex(x: unknown): x is string {
+  return typeof x === "string" && HASH_HEX.test(x);
+}
+
+function isHashList(xs: unknown): xs is readonly string[] {
+  return Array.isArray(xs) && xs.every(isHashHex);
+}
+
+/** A leaf index or tree size: a whole number that a double holds exactly. */
+function isCount(n: unknown): n is number {
+  return Number.isSafeInteger(n) && (n as number) >= 0;
+}
+
 function largestPowerOfTwoLessThan(n: number): number {
   if (n < 2) throw new Error("requires n >= 2");
   let k = 1;
@@ -146,6 +162,11 @@ function onesCount(n: number): number {
  * Verify an inclusion proof. Returns true iff folding `leafHash` with
  * `proof` along the bit-pattern of `idx` reproduces `rootHash`.
  *
+ * Returns false, never throws, for malformed input: `idx` and
+ * `treeSize` must be safe integers with 0 <= idx < treeSize, and every
+ * hash must be 64 lowercase hex digits (32 bytes), so a hash has one
+ * spelling and a longer "leaf" cannot stand in for two hashes.
+ *
  * Algorithm: decomposed proof per the standard CT (RFC 6962) verifier
  * — an "inner" segment that walks the bits of `idx` and a "border"
  * segment of left-siblings up the right edge. Empirically the only
@@ -158,11 +179,17 @@ export function verifyInclusionProof(
   proof: readonly string[],
   rootHashHex: string,
 ): boolean {
-  if (idx < 0 || idx >= treeSize) return false;
+  if (!isCount(idx) || !isCount(treeSize)) return false;
+  if (idx >= treeSize) return false;
+  if (!isHashHex(leafHashHex) || !isHashHex(rootHashHex) || !isHashList(proof)) {
+    return false;
+  }
   if (treeSize === 1) {
     return proof.length === 0 && leafHashHex === rootHashHex;
   }
-  const inner = bitsLen(idx ^ (treeSize - 1));
+  // BigInt: `^` on numbers truncates to 32 bits, which breaks trees of
+  // 2^31 leaves or more.
+  const inner = bitsLen(Number(BigInt(idx) ^ BigInt(treeSize - 1)));
   const border = onesCount(Math.floor(idx / Math.pow(2, inner)));
   if (proof.length !== inner + border) return false;
 
@@ -315,6 +342,12 @@ export function verifyConsistencyProof(
   newRootHex: string,
   proof: readonly string[],
 ): boolean {
+  // Malformed input returns false, never throws: sizes must be safe
+  // integers and every hash 64 lowercase hex digits.
+  if (!isCount(oldSize) || !isCount(newSize)) return false;
+  if (!isHashHex(oldRootHex) || !isHashHex(newRootHex) || !isHashList(proof)) {
+    return false;
+  }
   if (oldSize > newSize) return false;
   if (oldSize === newSize) {
     return proof.length === 0 && oldRootHex === newRootHex;

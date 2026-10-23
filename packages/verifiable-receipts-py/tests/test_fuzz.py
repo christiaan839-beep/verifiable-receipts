@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -241,11 +242,10 @@ def _audit_path(idx: int, leaves: list[bytes]) -> list[bytes]:
 
 
 _hex32 = st.binary(min_size=32, max_size=32).map(bytes.hex)
-# Infinities are left out: int(float("inf")) raises OverflowError.
 _size = (
     st.integers(min_value=-4, max_value=70)
     | st.integers()
-    | st.floats(allow_infinity=False)
+    | st.floats()
     | st.text()
     | st.none()
     | st.booleans()
@@ -268,6 +268,11 @@ class TestVerifyInclusionProof:
         assert isinstance(ok, bool)
         if ok:
             assert not verify_inclusion_proof(proof, leaf, root + "00")
+            # What passes is integer values and 64 lowercase hex digits.
+            for n in (leaf_index, tree_size):
+                assert type(n) in (int, float) and float(n).is_integer()
+            for h in [leaf, root, *audit_path]:
+                assert isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h)
 
     @given(
         n=st.integers(min_value=1, max_value=64),

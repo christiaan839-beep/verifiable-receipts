@@ -167,11 +167,19 @@ Given a receipt and the issuer's verification key, a verifier:
 
 1. Parses `signature`. If the prefix is `v1=`, fall back to VAOS 1.0
    §8. If the prefix is `v2=`, continue. Any other prefix → reject.
-2. Strips the `v2=` prefix and base64-decodes the remainder.
+2. Strips the `v2=` prefix and base64-decodes the remainder. The
+   remainder MUST be canonical padded standard base64 (RFC 4648 §4):
+   only characters of the standard alphabet and `=` padding (no
+   whitespace, CR or LF anywhere), the padding present, and the unused
+   bits of the last character zero. Equivalently, re-encoding the
+   decoded bytes MUST give back the remainder exactly. Any other
+   spelling → reject, even when a lenient decoder would return the same
+   bytes, so a signature has exactly one valid string form.
 3. Takes the receipt's `canonical` string as the signed message: its
    UTF-8 bytes, exactly as given. When the receipt carries
-   `contentHash`, checks that it equals `sha256:` followed by the hex
-   SHA-256 of those bytes (the `sha256:` prefix is optional).
+   `contentHash`, checks that it equals `sha256:` followed by the
+   lowercase hex SHA-256 of those bytes (the `sha256:` prefix is
+   optional; uppercase hex → reject).
 4. Calls the host's Ed25519 verification primitive
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the
@@ -182,7 +190,14 @@ Given a receipt and the issuer's verification key, a verifier:
    object has no such key or holds a different value under it. Values
    compare as JSON values: the same type, numbers by numeric value,
    strings by code points, arrays element by element, objects key by
-   key regardless of key order.
+   key regardless of key order. A number of magnitude 2^53 or more,
+   anywhere in the field's value or in the canonical's value for the
+   same key, MUST make the comparison fail, even against an equal
+   number: JavaScript's `JSON.parse` reads 2^53 + 1 as 2^53, so a
+   verifier that compared such numbers would disagree with one that
+   cannot. Issuers that need larger integers repeat them as strings, or
+   leave them in `canonical` only. Consumers MUST read values from
+   `canonical`; the fields beside it are a convenience copy.
 7. Returns true iff the primitive returned true and every check
    passed.
 

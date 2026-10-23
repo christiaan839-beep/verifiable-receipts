@@ -129,6 +129,36 @@ Verifier algorithm: recursive walk that mirrors RFC 6962 §2.1.2's
 subproof structure. See `verifyConsistencyProof()` in the reference
 implementation.
 
+### 3.6 Encoding of proof inputs
+
+These rules give every input one valid spelling. A verifier MUST check
+them before it hashes anything, and MUST answer "invalid" (not raise or
+throw) when one fails.
+
+- Every hash (a leaf hash, a root hash, each audit-path entry, each
+  consistency-proof entry) MUST be exactly 64 lowercase hexadecimal
+  digits (`[0-9a-f]{64}`, 32 bytes). Uppercase digits, a `0x` or
+  `sha256:` prefix, and any other length MUST be rejected. Without the
+  length rule a 64-byte "leaf" made of two hashes joined, with an empty
+  audit-path entry, folds to the root of the two-leaf tree.
+- `leafIndex`, `treeSize` and the sizes of a consistency proof MUST be
+  integer values from 0 to 2^53 − 1 (the integers a double holds
+  exactly). A JSON number is a value, so `284` and `284.0` are the same
+  integer; fractions, booleans, strings, NaN and infinities MUST be
+  rejected. An inclusion proof also needs `treeSize` ≥ 1 and
+  `leafIndex` < `treeSize`.
+- Index arithmetic MUST be exact over that whole range: 32-bit
+  operations accept a proof for a small tree as a proof for a tree of
+  2^32 + 2 leaves.
+
+Test vectors: `packages/verifiable-receipts/conformance/fixtures/`.
+`inclusion-uppercase-hex.json`, `inclusion-0x-prefix.json`,
+`inclusion-oversized-leaf.json`, `inclusion-fractional-index.json`,
+`inclusion-boolean-index.json` and `inclusion-huge-treesize.json` MUST
+be rejected; `inclusion-2leaf-idx1.json`, the valid proof the last one
+is built from, MUST be accepted. The TypeScript, Python and Go
+verifiers are checked against every fixture.
+
 ## 4. Append protocol
 
 1. Issuer computes the canonical projection of a receipt.

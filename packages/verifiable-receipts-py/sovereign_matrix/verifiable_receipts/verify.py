@@ -100,19 +100,27 @@ def _parse_canonical(canonical: str) -> Any:
         raise ValueError("canonical is not valid JSON") from exc
 
 
+# Numbers this large or larger are not compared (see _json_equal).
+_UNSAFE = 2**53
+
+
 def _json_equal(a: Any, b: Any) -> bool:
     """Deep JSON-value equality.
 
     Same JSON type and same value: numbers by numeric value (1 equals
     1.0), strings by code points, arrays element by element, objects
     key by key regardless of key order. Booleans never equal numbers.
+    A number of magnitude 2**53 or more equals nothing: a double, the
+    only number type JavaScript's JSON.parse has, cannot tell 2**53 from
+    2**53 + 1, so every verifier rejects such a number in a repeated
+    field rather than disagree about it.
     """
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
     if a is None or b is None:
         return a is None and b is None
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return a == b
+        return abs(a) < _UNSAFE and abs(b) < _UNSAFE and a == b
     if isinstance(a, str) or isinstance(b, str):
         return isinstance(a, str) and isinstance(b, str) and a == b
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):

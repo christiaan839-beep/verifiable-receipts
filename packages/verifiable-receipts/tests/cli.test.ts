@@ -262,12 +262,14 @@ describe("verifiable-receipts CLI — usage errors", () => {
 });
 
 describe("verifiable-receipts CLI — signature forms", () => {
+  // A counter, not part of the signature: base64 can contain "/".
+  let written = 0;
   function resigned(signature: string): string {
     const m = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       signature: string;
     };
     m.signature = signature;
-    const p = join(tmp, `manifest-${signature.slice(0, 3)}.json`);
+    const p = join(tmp, `manifest-resigned-${++written}.json`);
     writeFileSync(p, JSON.stringify(m));
     return p;
   }

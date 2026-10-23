@@ -261,8 +261,8 @@ func testAuditPath(idx int, leaves []string) []string {
 func FuzzVerifyInclusionProof(f *testing.F) {
 	for _, raw := range fixtureFiles(f, "inclusion-") {
 		var fixture inclusionFixture
-		if err := json.Unmarshal(raw, &fixture); err != nil {
-			f.Fatalf("unmarshal inclusion fixture: %v", err)
+		if json.Unmarshal(raw, &fixture) != nil {
+			continue // an index that is not an int (1.5, true) never reaches the verifier
 		}
 		f.Add(fixture.LeafIndex, fixture.TreeSize, fixture.LeafHashHex, fixture.RootHashHex,
 			strings.Join(fixture.AuditPath, ","))

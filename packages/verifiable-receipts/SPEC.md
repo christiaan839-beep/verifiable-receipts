@@ -157,7 +157,9 @@ on a usage error; `--json` prints a JSON result.
   `{ruleId, verdict, reason}`; `contentHash` is the bare hex SHA-256.
 - **Transparency log**: RFC 6962 §2.1 hashing (`0x00` leaf prefix,
   `0x01` inner prefix), RFC 9162 §2.1.3 inclusion and §2.1.4
-  consistency proofs. Tree heads are returned unsigned.
+  consistency proofs. Tree heads are returned unsigned. Every hash is
+  64 lowercase hex digits and every index or size a safe integer;
+  anything else is rejected (`docs/specs/transparency-log.md` §3.6).
 - **Threshold envelope** (`trs1`): each cosigner signs
   `trsSigningBytes(canonical, {m, n}, authorizedIssuers)`.
 - **Stream attestation** (`rsa1`) and **VAPT** (`vapt1.`): see their

@@ -76,8 +76,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 23 October 2026: TypeScript 16 passed,
-Python 17 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 23 October 2026: TypeScript 23 passed,
+Python 24 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -92,11 +92,15 @@ Fixtures cover:
   object's keys in another order) accept · a field that disagrees with
   it (`overall` fail against pass) reject · a field it does not contain
   reject
-- RFC 9162 inclusion proof: single-leaf · 4-leaf (idx 1) · 7-leaf
-  asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) · tampered-root
-  reject · out-of-range index
+- RFC 9162 inclusion proof: single-leaf · 2-leaf (idx 1) · 4-leaf
+  (idx 1) · 7-leaf asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) ·
+  tampered-root reject · out-of-range index
+- Proof input encoding (`docs/specs/transparency-log.md` §3.6), each
+  reject: uppercase hex · `0x` prefix · a 64-byte leaf with an empty
+  audit-path entry (folds to the 2-leaf root) · leafIndex 1.5 ·
+  leafIndex `true` · the 2-leaf proof at treeSize 2^32 + 2
 
-16 fixtures, each checked by all 3 verifiers.
+23 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
@@ -145,6 +149,30 @@ bash packages/verifiable-receipts/conformance/roundtrip/run.sh
 
 It needs node, python with `cryptography`, and go; it reads the Python
 package from the working tree.
+
+## Differential run
+
+`differential/run.sh` gives the TypeScript, Python and Go verifiers the
+same random receipts and inclusion proofs and fails if they disagree on
+any of them or if one raises. `gen.py` signs fresh receipts with a
+throwaway key and builds valid inclusion proofs for arbitrary indexes and
+tree sizes (by folding a random audit path), then mutates most cases
+once or twice: signature spellings (line breaks, padding bits, the
+URL-safe alphabet, prefixes), `contentHash` forms, canonical text,
+envelope fields and their numbers, duplicate keys, hex case and
+prefixes, and index and size edge values. Each verifier parses each case
+with its own language's JSON parser, as a caller would.
+
+```bash
+bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
+```
+
+The arguments are the number of cases and the seed. The `fuzz` workflow
+runs 20,000 cases with seed 1 on every pull request and a million with a
+new seed every night; disagreements are uploaded as an artifact. Its
+first runs found the Python and Go proof verifiers accepting tree sizes
+above 2^53 − 1, and the three receipt verifiers comparing integers above
+2^53 in envelope fields differently; both are fixed and in the specs.
 
 ## Stability
 
