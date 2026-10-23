@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/receipt.schema.json",
-  "title": "Receipt (v2)",
-  "description": "An issuer's signed record of an action (a SCITT Signed Statement). The schema checks shape only: a verifier checks the signature, the content hash and that every repeated field equals the same field of the parsed canonical.",
+  "title": "Receipt",
+  "description": "An issuer's signed record of an action (a SCITT Signed Statement), signed v2= (VAOS 2.0) or v3= (VAOS 3.0). The schema checks shape only: a verifier checks the signature, the content hash and that every repeated field equals the same field of the parsed canonical. Other fields are allowed, since each repeats a field of the canonical (VAOS 2.0 section 7).",
   "type": "object",
   "required": ["canonical", "signature"],
   "properties": {
@@ -12,10 +12,16 @@
       "minLength": 2
     },
     "contentHash": {
-      "description": "SHA-256 of canonical, optionally prefixed with sha256:.",
+      "description": "SHA-256 of canonical, optionally prefixed with sha256: (VAOS 2.0 section 7): 64 or 71 characters.",
       "type": ["string", "null"],
-      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+      "pattern": "^(sha256:)?[0-9a-f]{64}$",
+      "anyOf": [{ "minLength": 64, "maxLength": 64 }, { "minLength": 71, "maxLength": 71 }]
     },
-    "signature": { "$ref": "defs.schema.json#/$defs/v2Signature" }
+    "signature": {
+      "anyOf": [
+        { "$ref": "defs.schema.json#/$defs/v2Signature" },
+        { "$ref": "defs.schema.json#/$defs/v3Signature" }
+      ]
+    }
   }
 }

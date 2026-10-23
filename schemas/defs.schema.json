@@ -2,11 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/defs.schema.json",
   "title": "Shared definitions",
-  "description": "Encodings with one valid spelling each (docs/specs/vaos-2.0.md section 7 and docs/specs/transparency-log.md section 3.6).",
+  "description": "Encodings with one valid spelling each (docs/specs/vaos-2.0.md section 7, docs/specs/vaos-3.0.md section 6.2 and docs/specs/transparency-log.md section 3.6). Every pattern has an exact length beside it, because in some regex engines $ also matches before a final newline.",
   "$defs": {
     "hash": {
       "description": "A SHA-256 hash: 32 bytes as exactly 64 lowercase hex digits.",
       "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
       "pattern": "^[0-9a-f]{64}$"
     },
     "count": {
@@ -16,9 +18,18 @@
       "maximum": 9007199254740991
     },
     "v2Signature": {
-      "description": "v2= and a 64-byte Ed25519 signature in canonical padded standard base64: 86 characters, the last with zero padding bits, then ==.",
+      "description": "v2= and a 64-byte Ed25519 signature in canonical padded standard base64: 86 characters, the last with zero padding bits, then ==; 91 characters in all.",
       "type": "string",
+      "minLength": 91,
+      "maxLength": 91,
       "pattern": "^v2=[A-Za-z0-9+/]{85}[AQgw]==$"
+    },
+    "v3Signature": {
+      "description": "v3=, a 64-byte Ed25519 signature in canonical padded standard base64 (88 characters, as in v2=), a literal . and a 3309-byte ML-DSA-65 signature in standard base64 (4412 characters with no padding, since 3309 is a multiple of 3); 4504 characters in all.",
+      "type": "string",
+      "minLength": 4504,
+      "maxLength": 4504,
+      "pattern": "^v3=[A-Za-z0-9+/]{85}[AQgw]==\\.[A-Za-z0-9+/]{4412}$"
     }
   }
 }

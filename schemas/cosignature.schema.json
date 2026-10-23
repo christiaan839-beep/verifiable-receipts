@@ -2,13 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/cosignature.schema.json",
   "title": "Cosignature",
-  "description": "A witness's signature over a tree head's canonical text. A witness issues one only for a tree head that extends the last one it cosigned.",
+  "description": "A witness's signature over a tree head's canonical text. A witness issues one only for a tree head that extends the last one it cosigned. Other fields are allowed: receipts-log serves each cosignature with treeSize, rootHash, timestamp and receivedAt beside these (its API.md).",
   "type": "object",
   "required": ["witnessId", "sthCanonical", "signature"],
   "properties": {
     "witnessId": { "type": "string", "minLength": 1 },
     "sthCanonical": { "type": "string", "minLength": 2 },
     "signature": { "$ref": "defs.schema.json#/$defs/v2Signature" },
-    "publicKeyUrl": { "type": "string", "pattern": "^https://" }
+    "publicKeyUrl": {
+      "description": "An https URL with no whitespace, a final newline included.",
+      "type": "string",
+      "pattern": "^https://(?!.*\\s).+"
+    }
   }
 }
