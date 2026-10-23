@@ -7,9 +7,10 @@ is not verified here.
 What ``verify_v2_receipt`` checks, in this order:
   1. ``canonical`` and ``signature`` are non-empty strings.
   2. ``signature`` is "v2=<base64>" with standard base64.
-  3. ``contentHash``, when present and not null, is a string; when
-     non-empty, it equals the hex SHA-256 of the UTF-8 bytes of
-     ``canonical`` ("sha256:" prefix optional).
+  3. ``contentHash``, when present and not null, is a string equal to
+     the hex SHA-256 of the UTF-8 bytes of ``canonical`` ("sha256:"
+     prefix optional); an empty string is a mismatch, not an absent
+     field.
   4. The Ed25519 signature verifies over the UTF-8 bytes of
      ``canonical``, exactly as given.
   5. ``canonical`` parses as a JSON object.
@@ -202,7 +203,7 @@ def verify_v2_receipt(
     content_hash = receipt.get("contentHash")
     if content_hash is not None and not isinstance(content_hash, str):
         return VerifyResult(False, "contentHash must be a string")
-    if content_hash:
+    if content_hash is not None:
         actual = hashlib.sha256(canonical_bytes).hexdigest()
         expected = content_hash.removeprefix("sha256:")
         if actual != expected:

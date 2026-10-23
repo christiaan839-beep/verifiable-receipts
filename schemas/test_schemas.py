@@ -30,6 +30,7 @@ EXAMPLES = SCHEMAS / "examples"
 REJECTED_BY_SCHEMA = {
     "v2-invalid-bad-base64.json",
     "v2-invalid-crlf-base64.json",
+    "v2-invalid-empty-contenthash.json",
     "v2-invalid-noncanonical-base64.json",
     "v2-invalid-wrong-version.json",
     "inclusion-0x-prefix.json",
