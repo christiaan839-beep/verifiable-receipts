@@ -4,6 +4,29 @@ All notable changes to `@sovereign-matrix/verifiable-receipts` are documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `verifiable-receipts-witness` cosigns only the tree head it checked.
+  It rebuilds the canonical from the fields and signs that, after
+  requiring the log's `canonical` to match it byte for byte; before,
+  a log could pass the consistency proof with one root and have the
+  witness sign a canonical naming another. It also refuses: a field
+  with more than one spelling, or a field the schema does not allow;
+  an empty tree whose root is not SHA-256 of no bytes; a `logId` with
+  control characters, one that differs from its state file, or one
+  that differs from the new `--log-id`; a different root at a size it
+  already signed; and, with the new `--log-public-key`, a log
+  signature that does not verify, or a `v3=` head. It saves the new
+  head atomically before the signature leaves the process, so a log
+  that stores a cosignature but answers an error cannot get a second
+  one on another root at that size; a failed submission is resubmitted
+  for the same head. A state file that exists but cannot be read or is
+  malformed is refused instead of treated as a first run. Requests time
+  out (`--timeout`, default 30 s), bodies over 1 MiB are refused, and
+  log-supplied strings are printed JSON-quoted.
+
 ## [0.4.0] — 2026-10-23
 
 ### Removed (breaking)

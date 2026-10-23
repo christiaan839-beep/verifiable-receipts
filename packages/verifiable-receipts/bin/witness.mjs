@@ -39,25 +39,41 @@
  *
  * State file at ~/.sovereign-witness/<sanitized-witness-id>.json:
  *   { logId, lastSize, lastRoot, lastTimestamp, lastSubmittedAt }
- * A state file without logId (written by an earlier version) still
- * loads; the logId is added the next time the state is saved. A state
- * file that exists but cannot be read or parsed, or whose fields are
- * malformed, is refused (exit 2) rather than treated as absent.
+ * or, while a cosignature is in flight,
+ *   { logId, lastSize, lastRoot, lastTimestamp, pending: true }
+ * The new head is saved (written to <path>.tmp, fsynced, renamed over
+ * the file, directory fsynced) BEFORE the signature leaves the
+ * process, so a log that keeps the cosignature but answers an error,
+ * or a crash after the POST, can never get a second cosignature on
+ * another root at that size. A pending head is resubmitted on the next
+ * poll. A state file without logId (written by an earlier version)
+ * still loads; the logId is added the next time the state is saved. A
+ * state file that exists but cannot be read or parsed, or whose fields
+ * are malformed, is refused (exit 2) rather than treated as absent.
  *
  * Exit codes (--once mode):
  *   0  Witnessed successfully OR no change since last poll
  *   1  The log misbehaved: fork or rewrite, a canonical that does not
  *      match the fields, another logId, or a bad log signature.
  *      Operator MUST investigate
- *   2  Usage error (bad flags, network failure, malformed STH, a bad
- *      state file, a v3= STH with --log-public-key)
+ *   2  Usage error (bad flags, network failure or timeout, malformed
+ *      STH, a bad state file or one that cannot be saved, a failed
+ *      submission, a v3= STH with --log-public-key)
+ *
+ * Every request has a timeout (--timeout, default 30 s) and a 1 MiB
+ * response-body limit (see MAX_BODY_BYTES).
  */
 
 import {
   readFileSync,
-  writeFileSync,
   existsSync,
   mkdirSync,
+  openSync,
+  writeSync,
+  fsyncSync,
+  closeSync,
+  renameSync,
+  unlinkSync,
 } from "node:fs";
 import {
   createPrivateKey,
@@ -65,11 +81,43 @@ import {
   sign as edSign,
   verify as edVerify,
 } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { canonicalizeSth, verifyConsistencyProof } from "../dist/transparency.js";
+import {
+  canonicalizeSth,
+  treeRoot,
+  verifyConsistencyProof,
+} from "../dist/transparency.js";
 import { isHashHex } from "../dist/hash.js";
 import { fail, parseArgs } from "./cli.mjs";
+
+/** Root of the empty tree: SHA-256 of no bytes (RFC 6962 section 2.1). */
+const EMPTY_ROOT = treeRoot([]);
+
+/**
+ * Control characters, and the JSON/JS line separators U+2028/U+2029.
+ * A logId may not contain them: it is printed on [witness] lines.
+ */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/**
+ * Default per-request timeout. The witness polls at most hourly and
+ * makes three small requests a poll; 30 s is far above the latency of
+ * a working log, and stops a log that stalls a response from holding
+ * the witness (or a daemon poll) forever.
+ */
+const DEFAULT_TIMEOUT_SEC = 30;
+
+/**
+ * Largest response body read. The biggest legitimate body is small:
+ * a v3= STH is under 5 KB plus its logId, and a consistency proof for
+ * a tree of up to 2^53 - 1 leaves has at most about 2 * 53 entries of
+ * 66 bytes (under 8 KB). 1 MiB leaves two orders of magnitude of
+ * headroom and still bounds the memory a hostile log can make the
+ * witness use.
+ */
+const MAX_BODY_BYTES = 1024 * 1024;
 
 function printHelp() {
   process.stdout.write(
@@ -90,6 +138,11 @@ function printHelp() {
       "",
       "Optional:",
       "  --public-key-url <url>  URL where you publish your witness public key",
+      "  --log-id <id>           The logId this witness serves. When given, a head",
+      "                          for any other logId is refused, even on the",
+      "                          first run (exit 1).",
+      "  --timeout <sec>         Per-request timeout (default 30). Bodies over",
+      "                          1 MiB are refused.",
       "  --log-public-key <path> The log's Ed25519 public key (PEM). When given,",
       "                          the log's v2= STH signature must verify before",
       "                          the witness cosigns; a v3= STH is refused.",
@@ -105,8 +158,12 @@ function printHelp() {
       "  1  The log misbehaved: fork / rewrite, canonical not matching its",
       "     fields, another logId, bad log signature (do NOT auto-recover;",
       "     investigate)",
-      "  2  Usage error, network failure, malformed STH, a bad state file,",
-      "     or a v3= STH with --log-public-key",
+      "  2  Usage error, network failure or timeout, malformed STH, a bad",
+      "     state file or one that cannot be saved, a failed submission",
+      "     (resubmitted next poll), or a v3= STH with --log-public-key",
+      "",
+      "Daemon mode writes a stderr line for every non-zero verdict: exit 1",
+      "halts the daemon, anything else is retried at the next poll.",
       "",
     ].join("\n"),
   );
@@ -139,11 +196,19 @@ function stateShapeError(state) {
     return "lastRoot must be 64 lowercase hex digits";
   }
   // Absent in files written before logId was saved; those still load.
+  if (state.lastSize === 0 && state.lastRoot !== EMPTY_ROOT) {
+    return "lastRoot of an empty tree must be SHA-256 of no bytes";
+  }
   if (
     state.logId !== undefined &&
-    (typeof state.logId !== "string" || state.logId.length === 0)
+    (typeof state.logId !== "string" ||
+      state.logId.length === 0 ||
+      UNSAFE_TEXT.test(state.logId))
   ) {
-    return "logId, when present, must be a non-empty string";
+    return "logId, when present, must be a non-empty string without control characters";
+  }
+  if (state.pending !== undefined && state.pending !== true) {
+    return "pending, when present, must be true";
   }
   return null;
 }
@@ -167,8 +232,38 @@ function loadState(path) {
   return state;
 }
 
+/**
+ * Replace the state file atomically: write <path>.tmp, fsync it,
+ * rename it over the file and fsync the directory, so a crash leaves
+ * either the old state or the new one, never a torn file. Throws on
+ * any failure.
+ */
 function saveState(path, state) {
-  writeFileSync(path, JSON.stringify(state, null, 2), { mode: 0o600 });
+  const tmp = path + ".tmp";
+  const fd = openSync(tmp, "w", 0o600);
+  try {
+    writeSync(fd, JSON.stringify(state, null, 2));
+    fsyncSync(fd);
+  } catch (err) {
+    closeSync(fd);
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Best effort; the error that matters is rethrown below.
+    }
+    throw err;
+  }
+  closeSync(fd);
+  renameSync(tmp, path);
+  let dirFd;
+  try {
+    dirFd = openSync(dirname(path), "r");
+    fsyncSync(dirFd);
+  } catch {
+    // Some platforms cannot fsync a directory; the rename is done.
+  } finally {
+    if (dirFd !== undefined) closeSync(dirFd);
+  }
 }
 
 function loadPrivateKey(keyPath) {
@@ -204,14 +299,71 @@ function loadLogPublicKey(keyPath) {
   return key;
 }
 
-async function fetchSth(baseUrl) {
-  const res = await fetch(`${baseUrl}/api/transparency/sth`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) {
-    throw new Error(`STH fetch failed: HTTP ${res.status}`);
+/** The body as text, refusing more than MAX_BODY_BYTES. */
+async function readLimited(res, what) {
+  const tooLarge = () =>
+    new Error(`${what} response too large (over ${MAX_BODY_BYTES} bytes)`);
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    await res.body?.cancel().catch(() => {});
+    throw tooLarge();
   }
-  return await res.json();
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+/**
+ * fetch with a timeout over the whole exchange (headers and body) and
+ * the body-size limit. Returns { status, ok, text }.
+ */
+async function request(url, init, what, timeoutSec) {
+  try {
+    const res = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(timeoutSec * 1000),
+    });
+    const text = await readLimited(res, what);
+    return { status: res.status, ok: res.ok, text };
+  } catch (err) {
+    if (err?.name === "TimeoutError" || err?.cause?.name === "TimeoutError") {
+      throw new Error(`${what} timed out after ${timeoutSec}s`, { cause: err });
+    }
+    throw err;
+  }
+}
+
+function parseJson(text, what) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${what} response is not JSON`);
+  }
+}
+
+async function fetchSth(opts) {
+  const r = await request(
+    `${opts.url}/api/transparency/sth`,
+    { headers: { accept: "application/json" } },
+    "STH fetch",
+    opts.timeoutSec,
+  );
+  if (!r.ok) {
+    throw new Error(`STH fetch failed: HTTP ${r.status}`);
+  }
+  return parseJson(r.text, "STH fetch");
 }
 
 // One valid spelling per field (transparency-log.md sections 3.3 and
@@ -245,11 +397,17 @@ function sthShapeError(sth) {
   if (typeof sth.logId !== "string" || sth.logId.length === 0) {
     return "logId must be a non-empty string";
   }
+  if (UNSAFE_TEXT.test(sth.logId)) {
+    return "logId must not contain control characters or U+2028/U+2029";
+  }
   if (!isHashHex(sth.rootHash)) {
     return "rootHash must be 64 lowercase hex digits";
   }
   if (!Number.isSafeInteger(sth.treeSize) || sth.treeSize < 0) {
     return "treeSize must be an integer from 0 to 2^53 - 1";
+  }
+  if (sth.treeSize === 0 && sth.rootHash !== EMPTY_ROOT) {
+    return "rootHash of an empty tree must be SHA-256 of no bytes";
   }
   if (
     typeof sth.timestamp !== "string" ||
@@ -281,30 +439,42 @@ function verifyLogSignature(canonical, signature, publicKey) {
   }
 }
 
-async function fetchConsistencyProof(baseUrl, oldSize, newSize) {
-  const url = `${baseUrl}/api/transparency/proof?kind=consistency&old=${oldSize}&new=${newSize}`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`consistency proof fetch failed: HTTP ${res.status}`);
+async function fetchConsistencyProof(opts, oldSize, newSize) {
+  const url = `${opts.url}/api/transparency/proof?kind=consistency&old=${oldSize}&new=${newSize}`;
+  const r = await request(
+    url,
+    { headers: { accept: "application/json" } },
+    "consistency proof fetch",
+    opts.timeoutSec,
+  );
+  if (!r.ok) {
+    throw new Error(`consistency proof fetch failed: HTTP ${r.status}`);
   }
-  const body = await res.json();
-  if (!Array.isArray(body.proof)) {
+  const body = parseJson(r.text, "consistency proof fetch");
+  if (!Array.isArray(body?.proof)) {
     throw new Error("consistency proof response is malformed");
   }
   return body.proof;
 }
 
-async function submitCosignature(baseUrl, payload) {
-  const res = await fetch(`${baseUrl}/api/transparency/witness`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw new Error(`cosignature submit failed: HTTP ${res.status} ${errBody}`);
+async function submitCosignature(opts, payload) {
+  const r = await request(
+    `${opts.url}/api/transparency/witness`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    "cosignature submit",
+    opts.timeoutSec,
+  );
+  if (!r.ok) {
+    // The body is the log's text: quoted, and cut short.
+    throw new Error(
+      `cosignature submit failed: HTTP ${r.status} ${JSON.stringify(r.text.slice(0, 200))}`,
+    );
   }
-  return await res.json();
+  return parseJson(r.text, "cosignature submit");
 }
 
 function signCanonical(canonical, privateKey) {
@@ -341,12 +511,20 @@ async function runOnce(opts) {
     );
   }
 
-  const sth = await fetchSth(opts.url);
+  const sth = await fetchSth(opts);
   const shapeError = sthShapeError(sth);
   if (shapeError) {
     return refuse("malformed-sth", 2, `MALFORMED STH: ${shapeError}`);
   }
-  log(`[witness] fetched STH: logId=${sth.logId} size=${sth.treeSize} root=${sth.rootHash.slice(0, 16)}…`);
+  log(`[witness] fetched STH: logId=${JSON.stringify(sth.logId)} size=${sth.treeSize} root=${sth.rootHash.slice(0, 16)}…`);
+  if (opts.expectedLogId !== undefined && sth.logId !== opts.expectedLogId) {
+    return refuse(
+      "log-id-mismatch",
+      1,
+      `STH is for logId ${JSON.stringify(sth.logId)}, but --log-id is ${JSON.stringify(opts.expectedLogId)}`,
+      { expectedLogId: opts.expectedLogId, logId: sth.logId },
+    );
+  }
 
   // The canonical the witness signs is the one it rebuilds from the
   // fields it checks; the log's copy must be byte-identical to it.
@@ -384,6 +562,7 @@ async function runOnce(opts) {
     log("[witness] log signature NOT checked (no --log-public-key)");
   }
 
+  let verdict = "witnessed";
   if (state) {
     if (typeof state.logId === "string" && state.logId !== sth.logId) {
       return refuse(
@@ -396,10 +575,14 @@ async function runOnce(opts) {
     if (typeof state.logId !== "string") {
       log(`[witness] state file has no logId; recording ${JSON.stringify(sth.logId)}`);
     }
-    if (
-      state.lastSize === sth.treeSize &&
-      state.lastRoot === sth.rootHash
-    ) {
+    const sameHead =
+      state.lastSize === sth.treeSize && state.lastRoot === sth.rootHash;
+    if (sameHead && state.pending === true) {
+      // The head was saved but its submission did not complete. Same
+      // size, same root: signing it again cannot make a fork.
+      log("[witness] last submission of this head did not complete — resubmitting");
+      verdict = "resubmitted";
+    } else if (sameHead) {
       if (typeof state.logId !== "string") {
         saveState(opts.statePath, { logId: sth.logId, ...state });
       }
@@ -410,15 +593,13 @@ async function runOnce(opts) {
         rootHash: sth.rootHash,
       });
       return { verdict: "no-change", exit: 0 };
-    }
-    if (state.lastSize > sth.treeSize) {
+    } else if (state.lastSize > sth.treeSize) {
       return refuse("fork-detected", 1, "FORK DETECTED — tree size went BACKWARDS", {
         reason: "tree-size-decreased",
         oldSize: state.lastSize,
         newSize: sth.treeSize,
       });
-    }
-    if (state.lastSize === sth.treeSize) {
+    } else if (state.lastSize === sth.treeSize) {
       return refuse(
         "fork-detected",
         1,
@@ -430,26 +611,46 @@ async function runOnce(opts) {
           rootHash: sth.rootHash,
         },
       );
+    } else {
+      // Fetch + verify consistency proof from last → current.
+      const proof = await fetchConsistencyProof(opts, state.lastSize, sth.treeSize);
+      const ok = verifyConsistencyProof(
+        state.lastSize,
+        sth.treeSize,
+        state.lastRoot,
+        sth.rootHash,
+        proof,
+      );
+      if (!ok) {
+        return refuse("fork-detected", 1, "CONSISTENCY PROOF FAILED — log forked or rewrote", {
+          reason: "consistency-proof-failed",
+          oldSize: state.lastSize,
+          newSize: sth.treeSize,
+        });
+      }
+      log(`[witness] consistency proof OK (${state.lastSize} → ${sth.treeSize})`);
     }
-    // Fetch + verify consistency proof from last → current.
-    const proof = await fetchConsistencyProof(opts.url, state.lastSize, sth.treeSize);
-    const ok = verifyConsistencyProof(
-      state.lastSize,
-      sth.treeSize,
-      state.lastRoot,
-      sth.rootHash,
-      proof,
-    );
-    if (!ok) {
-      return refuse("fork-detected", 1, "CONSISTENCY PROOF FAILED — log forked or rewrote", {
-        reason: "consistency-proof-failed",
-        oldSize: state.lastSize,
-        newSize: sth.treeSize,
-      });
-    }
-    log(`[witness] consistency proof OK (${state.lastSize} → ${sth.treeSize})`);
   } else {
     log("[witness] no prior state — first-time witness of this log");
+  }
+
+  // Save the head BEFORE the signature leaves the process. From here
+  // on this witness never signs another root at this size, whatever
+  // happens to the submission.
+  const head = {
+    logId: sth.logId,
+    lastSize: sth.treeSize,
+    lastRoot: sth.rootHash,
+    lastTimestamp: sth.timestamp,
+  };
+  try {
+    saveState(opts.statePath, { ...head, pending: true });
+  } catch (err) {
+    return refuse(
+      "state-save-failed",
+      2,
+      `could not save the state file before signing (${err.message})`,
+    );
   }
 
   // Sign the canonical rebuilt from the checked fields and submit.
@@ -460,27 +661,40 @@ async function runOnce(opts) {
     sthCanonical: canonical,
     ...(opts.publicKeyUrl ? { publicKeyUrl: opts.publicKeyUrl } : {}),
   };
-  const submission = await submitCosignature(opts.url, submitBody);
+  let submission;
+  try {
+    submission = await submitCosignature(opts, submitBody);
+  } catch (err) {
+    log(`[witness] ${err.message} — the head is saved; the next poll resubmits it`);
+    emit({
+      verdict: "submit-failed",
+      treeSize: sth.treeSize,
+      rootHash: sth.rootHash,
+      message: err.message,
+    });
+    return { verdict: "submit-failed", exit: 2 };
+  }
   log(
-    `[witness] cosignature submitted — total witnesses on this STH: ${submission.witnessCount}`,
+    `[witness] cosignature submitted — total witnesses on this STH: ${JSON.stringify(submission?.witnessCount ?? null)}`,
   );
 
-  const newState = {
-    logId: sth.logId,
-    lastSize: sth.treeSize,
-    lastRoot: sth.rootHash,
-    lastTimestamp: sth.timestamp,
-    lastSubmittedAt: new Date().toISOString(),
-  };
-  saveState(opts.statePath, newState);
+  try {
+    saveState(opts.statePath, { ...head, lastSubmittedAt: new Date().toISOString() });
+  } catch (err) {
+    // The head is already saved (pending): the next poll resubmits the
+    // same head, which is harmless.
+    process.stderr.write(
+      `[witness] warning: cosignature submitted but the state file could not be updated (${err.message})\n`,
+    );
+  }
 
   emit({
-    verdict: "witnessed",
+    verdict,
     treeSize: sth.treeSize,
     rootHash: sth.rootHash,
-    totalWitnesses: submission.witnessCount,
+    totalWitnesses: submission?.witnessCount ?? null,
   });
-  return { verdict: "witnessed", exit: 0 };
+  return { verdict, exit: 0 };
 }
 
 async function runDaemon(opts) {
@@ -493,9 +707,14 @@ async function runDaemon(opts) {
       const r = await runOnce(opts);
       if (r.exit === 1) {
         process.stderr.write(
-          `[witness] daemon halting: ${r.verdict} — operator action required\n`,
+          `[witness] ${r.verdict} (exit 1) — daemon halting, operator action required\n`,
         );
         process.exit(1);
+      }
+      if (r.exit !== 0) {
+        process.stderr.write(
+          `[witness] ${r.verdict} (exit ${r.exit}) — will retry in ${intervalSec}s\n`,
+        );
       }
     } catch (err) {
       process.stderr.write(
@@ -516,6 +735,18 @@ async function main() {
   if (!flags.url) fail("--url is required");
   if (!flags.key) fail("--key is required");
   if (!flags["witness-id"]) fail("--witness-id is required");
+  const expectedLogId = flags["log-id"];
+  if (
+    expectedLogId !== undefined &&
+    (expectedLogId === "true" || expectedLogId.length === 0 || UNSAFE_TEXT.test(expectedLogId))
+  ) {
+    fail("--log-id needs a logId without control characters");
+  }
+  const timeoutSec =
+    flags.timeout === undefined ? DEFAULT_TIMEOUT_SEC : Number(flags.timeout);
+  if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) {
+    fail("--timeout must be a positive number of seconds");
+  }
 
   const opts = {
     url: flags.url.replace(/\/+$/, ""),
@@ -526,6 +757,8 @@ async function main() {
       ? loadLogPublicKey(flags["log-public-key"])
       : undefined,
     statePath: flags.state ?? defaultStatePath(flags["witness-id"]),
+    expectedLogId,
+    timeoutSec,
     interval: flags.interval,
     json: flags.json,
   };

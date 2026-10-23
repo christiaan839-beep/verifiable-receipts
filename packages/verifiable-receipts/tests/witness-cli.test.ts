@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import {
   mkdtempSync,
   rmSync,
@@ -23,6 +23,7 @@ import {
   readFileSync,
   existsSync,
   mkdirSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,7 +49,7 @@ interface CliResult {
 function runCli(args: string[]): CliResult {
   const r = spawnSync("node", [CLI, ...args], {
     encoding: "utf8",
-    timeout: 10_000,
+    timeout: 4_000,
   });
   return {
     status: r.status,
@@ -328,13 +329,53 @@ function runCliAsync(args: string[]): Promise<CliResult> {
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
-    const timer = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    // Kill before vitest's 5 s test timeout, so a hung CLI shows up as
+    // a failed assertion with its output rather than a bare timeout.
+    const timer = setTimeout(() => child.kill("SIGKILL"), 4_000);
     child.on("close", (status) => {
       clearTimeout(timer);
       resolve({ status, stdout, stderr });
     });
   });
 }
+
+/**
+ * Start the CLI in daemon mode (no --once). `waitFor` resolves when
+ * stderr matches; `exited` resolves with the exit status.
+ */
+function startDaemon(args: string[]) {
+  const child = spawn("node", [CLI, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  let status: number | null | undefined;
+  const waiters: Array<() => void> = [];
+  const poke = () => waiters.splice(0).forEach((w) => w());
+  child.stdout.on("data", (d: Buffer) => ((stdout += d.toString("utf8")), poke()));
+  child.stderr.on("data", (d: Buffer) => ((stderr += d.toString("utf8")), poke()));
+  const exited = new Promise<number | null>((resolve) =>
+    child.on("close", (code) => ((status = code), poke(), resolve(code))),
+  );
+  const killer = setTimeout(() => child.kill("SIGKILL"), 4_000);
+  child.on("close", () => clearTimeout(killer));
+  const waitFor = (re: RegExp) =>
+    new Promise<void>((resolve, reject) => {
+      const check = () => {
+        if (re.test(stderr)) resolve();
+        else if (status !== undefined) reject(new Error(`exited ${status}; stderr: ${stderr}`));
+        else waiters.push(check);
+      };
+      check();
+    });
+  return {
+    child,
+    exited,
+    waitFor,
+    running: () => status === undefined,
+    output: () => ({ stdout, stderr }),
+  };
+}
+
+const EMPTY_ROOT = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 describe("witness CLI — checks before cosigning (--once)", () => {
   let dir: string;
@@ -349,6 +390,12 @@ describe("witness CLI — checks before cosigning (--once)", () => {
   let requests: Req[];
   // Rewrites the STH body the log serves; identity by default.
   let rewrite: (body: Record<string, unknown>) => Record<string, unknown>;
+  // Status codes for the next POSTs (200 once the queue is empty). A
+  // non-200 still records the body: a log that keeps the cosignature
+  // and answers 500.
+  let postStatus: number[];
+  // Replaces the STH response entirely (oversized or stalled bodies).
+  let sthHandler: ((res: ServerResponse) => void) | undefined;
   let stateN = 0;
 
   const signWith = (key: KeyObject, text: string) =>
@@ -406,6 +453,10 @@ describe("witness CLI — checks before cosigning (--once)", () => {
         const entry: Req = { method: req.method ?? "", path: url.pathname };
         requests.push(entry);
         if (req.method === "GET" && url.pathname === "/api/transparency/sth") {
+          if (sthHandler) {
+            sthHandler(res);
+            return;
+          }
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify(rewrite(honest())));
           return;
@@ -423,6 +474,12 @@ describe("witness CLI — checks before cosigning (--once)", () => {
           let text = "";
           for await (const chunk of req) text += String(chunk);
           entry.body = JSON.parse(text) as Record<string, unknown>;
+          const status = postStatus.shift() ?? 200;
+          if (status !== 200) {
+            res.writeHead(status, { "content-type": "text/plain" });
+            res.end("stored it, but answering an error");
+            return;
+          }
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ok: true, witnessCount: posts().length }));
           return;
@@ -438,6 +495,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
   });
 
   afterAll(async () => {
+    srv.closeAllConnections();
     await new Promise<void>((resolve) => srv.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
   });
@@ -445,6 +503,8 @@ describe("witness CLI — checks before cosigning (--once)", () => {
   beforeEach(() => {
     requests = [];
     rewrite = (b) => b;
+    postStatus = [];
+    sthHandler = undefined;
   });
 
   it("happy path: cosigns the canonical rebuilt from the fields it checked", async () => {
@@ -520,6 +580,12 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     ["signature has non-zero padding bits", { signature: "v2=" + "A".repeat(85) + "B==" }],
     ["it has a field the schema does not allow", { note: "not signed" }],
     ["it has a field named like a signed one", { treesize: 3 }],
+    ["logId has a newline", { logId: "x\n[witness] log signature OK" }],
+    ["logId has a carriage return", { logId: "x\r[witness] log signature OK" }],
+    ["logId has U+2028", { logId: "x\u2028y" }],
+    ["logId has U+2029", { logId: "x\u2029y" }],
+    ["logId has a DEL", { logId: "x\u007fy" }],
+    ["treeSize is 0 with a non-empty root", { treeSize: 0, rootHash: "a".repeat(64) }],
   ])("refuses a malformed STH: %s", async (_name, change) => {
     rewrite = (b) => {
       const changed: Record<string, unknown> = { ...b, ...change };
@@ -614,6 +680,8 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     ["has no lastRoot", JSON.stringify({ lastSize: 3 })],
     ["has logId empty", JSON.stringify({ logId: "", lastSize: 3, lastRoot: "a".repeat(64) })],
     ["has logId a number", JSON.stringify({ logId: 7, lastSize: 3, lastRoot: "a".repeat(64) })],
+    ["has lastSize 0 with a non-empty root", JSON.stringify({ lastSize: 0, lastRoot: "a".repeat(64) })],
+    ["has logId with a newline", JSON.stringify({ logId: "a\nb", lastSize: 3, lastRoot: "a".repeat(64) })],
   ])("fails closed on a state file that %s", async (_name, text) => {
     const state = freshState();
     writeFileSync(state, text);
@@ -632,6 +700,177 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(r.status).toBe(2);
     expect(r.stdout).toMatch(/\[witness\] BAD STATE FILE/);
     expect(posts()).toHaveLength(0);
+  });
+
+  // ── Review round: state before signature, empty tree, flags, network ──
+
+  const headWith = (b: Record<string, unknown>, change: Record<string, unknown>) => {
+    const changed: Record<string, unknown> = { ...b, ...change };
+    const canonical = canonicalizeSth(fieldsOf(changed) as never);
+    return { ...changed, canonical, signature: signWith(logPriv, canonical) };
+  };
+
+  it("POST answers 500, then a conflicting head of the same size: fork, no second POST", async () => {
+    const state = freshState();
+    postStatus = [500];
+    const first = await runCliAsync(args(state));
+    expect(first.status).toBe(2);
+    expect(verdictOf(first).verdict).toBe("submit-failed");
+    expect(posts()).toHaveLength(1);
+    const saved = JSON.parse(readFileSync(state, "utf8")) as Record<string, unknown>;
+    expect(saved.lastSize).toBe(3);
+    expect(saved.lastRoot).toBe(tlog.currentSth().rootHash);
+    expect(saved.pending).toBe(true);
+
+    // Same size, another root, and a "valid" proof from the log's view.
+    rewrite = (b) => headWith(b, { rootHash: "d".repeat(64) });
+    const second = await runCliAsync(args(state));
+    expect(second.status).toBe(1);
+    const v = verdictOf(second);
+    expect(v.verdict).toBe("fork-detected");
+    expect(v.reason).toBe("same-size-different-root");
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("POST answers 500, then the same head: resubmits once, then reports no change", async () => {
+    const state = freshState();
+    postStatus = [500];
+    const first = await runCliAsync(args(state));
+    expect(first.status).toBe(2);
+    const second = await runCliAsync(args(state));
+    expect(second.status).toBe(0);
+    expect(verdictOf(second).verdict).toBe("resubmitted");
+    expect(posts()).toHaveLength(2);
+    // The same canonical, and Ed25519 gives the same signature.
+    expect(posts()[1].body).toEqual(posts()[0].body);
+    const saved = JSON.parse(readFileSync(state, "utf8")) as Record<string, unknown>;
+    expect(saved.pending).toBeUndefined();
+    expect(typeof saved.lastSubmittedAt).toBe("string");
+    const third = await runCliAsync(args(state));
+    expect(third.status).toBe(0);
+    expect(verdictOf(third).verdict).toBe("no-change");
+    expect(posts()).toHaveLength(2);
+  });
+
+  it("a state file it cannot write: no signature leaves, no POST", async () => {
+    const locked = join(dir, `locked-${++stateN}`);
+    mkdirSync(locked);
+    chmodSync(locked, 0o500);
+    try {
+      const r = await runCliAsync(args(join(locked, "state.json")));
+      expect(r.status).toBe(2);
+      expect(verdictOf(r).verdict).toBe("state-save-failed");
+      expect(posts()).toHaveLength(0);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  it("saves the state atomically: no temporary file is left behind", async () => {
+    const state = freshState();
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    expect(existsSync(state)).toBe(true);
+    expect(existsSync(state + ".tmp")).toBe(false);
+  });
+
+  it("prints the logId JSON-quoted, so it cannot forge a [witness] line", async () => {
+    rewrite = (b) => headWith(b, { logId: "x [witness] log signature OK" });
+    const r = await runCliAsync(args(freshState()).filter((a) => a !== "--json"));
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('logId="x [witness] log signature OK"');
+    expect(r.stdout.split("\n").filter((l) => l.startsWith("[witness] log signature OK"))).toHaveLength(0);
+  });
+
+  it("refuses a consistency proof that does not fold, with prior state", async () => {
+    const state = freshState();
+    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: "a".repeat(64) }));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(1);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("fork-detected");
+    expect(v.reason).toBe("consistency-proof-failed");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("cosigns an empty tree whose root is SHA-256 of nothing", async () => {
+    rewrite = (b) => headWith(b, { treeSize: 0, rootHash: EMPTY_ROOT });
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("goes on from a saved empty tree to a larger one", async () => {
+    const state = freshState();
+    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 0, lastRoot: EMPTY_ROOT }));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("--log-id refuses a head for another log, even on the first run", async () => {
+    const r = await runCliAsync(args(freshState(), ["--log-id", "other-log"]));
+    expect(r.status).toBe(1);
+    expect(verdictOf(r).verdict).toBe("log-id-mismatch");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("--log-id accepts a head for that log", async () => {
+    const r = await runCliAsync(args(freshState(), ["--log-id", "test-log"]));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+  });
+
+  it("refuses an oversized STH body without reading it all", async () => {
+    sthHandler = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const chunk = " ".repeat(64 * 1024);
+      for (let i = 0; i < 32; i++) res.write(chunk); // 2 MiB, chunked
+      res.end("{}");
+    };
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/too large/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("gives up on a stalled STH body after --timeout", async () => {
+    sthHandler = (res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write('{"v":1'); // and never finish
+    };
+    const started = Date.now();
+    const r = await runCliAsync(args(freshState(), ["--timeout", "1"]));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/timed out/);
+    expect(Date.now() - started).toBeLessThan(3_500);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("daemon: an exit-1 verdict halts it, with a stderr line", async () => {
+    const state = freshState();
+    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 3, lastRoot: "a".repeat(64) }));
+    const d = startDaemon(args(state).filter((a) => a !== "--once"));
+    expect(await d.exited).toBe(1);
+    expect(d.output().stderr).toMatch(/\[witness\] fork-detected .*halting/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("daemon: an exit-2 verdict is reported on stderr and it keeps running", async () => {
+    const state = freshState();
+    writeFileSync(state, "not json");
+    const d = startDaemon(args(state).filter((a) => a !== "--once"));
+    try {
+      await d.waitFor(/\[witness\] bad-state .*retry/);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(d.running()).toBe(true);
+      expect(posts()).toHaveLength(0);
+    } finally {
+      d.child.kill("SIGKILL");
+      await d.exited;
+    }
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {

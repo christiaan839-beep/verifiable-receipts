@@ -92,7 +92,7 @@ Tree heads are returned unsigned; sign `canonicalizeSth(sth)` yourself.
 ```bash
 npx verifiable-receipts-sign --input body.json --key ed25519-private.pem [--mldsa-key mldsa65.b64] [--out receipt.json]
 npx verifiable-receipts verify --manifest MANIFEST.signed.json --pubkey ed25519.pem [--json]
-npx verifiable-receipts-witness --url https://log.example --key witness.pem --witness-id example-witness [--log-public-key log.pub.pem] --once
+npx verifiable-receipts-witness --url https://log.example --key witness.pem --witness-id example-witness [--log-id log-id] [--log-public-key log.pub.pem] --once
 ```
 
 - `verifiable-receipts-sign` drops `canonical`, `contentHash` and
@@ -105,16 +105,24 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
 - `verifiable-receipts-witness` polls a log's tree head, checks a
   consistency proof from the last head it saw, and posts a signature.
   Before it signs it checks each field's spelling (and that the head
-  has no fields beyond the schema's seven), rebuilds the
-  canonical from the fields and requires the log's copy to match it
-  byte for byte (it signs the rebuilt one), refuses a different `logId`
-  from its state file and a different root at a size it already
-  signed. With `--log-public-key <pem>` it also verifies the log's
-  `v2=` signature and refuses `v3=` heads; without it, it prints that
-  the log signature was not checked. A state file that exists but is
-  unreadable or malformed is refused, not treated as a first run.
-  Exit 0 witnessed or no change, 1 the log misbehaved, 2 usage error,
-  malformed head or bad state file.
+  has no fields beyond the schema's seven, an empty tree has the
+  SHA-256 of no bytes as its root, and the `logId` has no control
+  characters), rebuilds the canonical from the fields and requires the
+  log's copy to match it byte for byte (it signs the rebuilt one), and
+  refuses a different `logId` from its state file or from `--log-id`
+  and a different root at a size it already signed. It saves the new
+  head atomically before the signature leaves the process, so a failed
+  or lost submission is resubmitted for the same head and never opens
+  the way to a second root at that size. With `--log-public-key <pem>`
+  it also verifies the log's `v2=` signature; without it, it prints
+  that the log signature was not checked. A state file that exists but
+  is unreadable or malformed is refused, not treated as a first run.
+  Requests time out after `--timeout` seconds (default 30) and bodies
+  over 1 MiB are refused. Exit 0 witnessed or no change; 1 the log
+  misbehaved; 2 usage error, network failure or timeout, malformed
+  head, bad or unsavable state file, failed submission, or a `v3=` head
+  with `--log-public-key`. The daemon writes a stderr line for every
+  non-zero verdict, halts on 1 and retries the rest.
 
 ## Development
 
