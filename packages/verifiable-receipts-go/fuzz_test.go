@@ -96,9 +96,6 @@ func checkAccepted(t *testing.T, r Receipt, pub ed25519.PublicKey) {
 		t.Fatalf("accepted undecodable signature %q: %v", r.Signature, err)
 	}
 	if "v2="+base64.StdEncoding.EncodeToString(sig) != r.Signature {
-		if strings.ContainsAny(r.Signature, "\r\n") {
-			t.Skip("known: the Go base64 decoder skips CR and LF, so VerifyV2Receipt accepts them inside the signature")
-		}
 		t.Fatalf("accepted a non-canonical signature spelling %q", r.Signature)
 	}
 	if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, []byte(r.Canonical), sig) {
@@ -230,9 +227,6 @@ func FuzzMutatedReceipt(f *testing.F) {
 			r.Canonical = string(b)
 		}
 		if res := VerifyV2Receipt(r, pub); res.OK {
-			if field%3 == 0 && strings.ContainsAny(r.Signature, "\r\n") {
-				t.Skip("known: the Go base64 decoder skips CR and LF, so VerifyV2Receipt accepts them inside the signature")
-			}
 			t.Fatalf("accepted a mutated receipt (field %d, pos %d): %+v", field%3, pos, r)
 		}
 	})
