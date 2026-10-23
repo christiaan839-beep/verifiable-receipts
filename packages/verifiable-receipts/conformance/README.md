@@ -150,6 +150,30 @@ bash packages/verifiable-receipts/conformance/roundtrip/run.sh
 It needs node, python with `cryptography`, and go; it reads the Python
 package from the working tree.
 
+## Differential run
+
+`differential/run.sh` gives the TypeScript, Python and Go verifiers the
+same random receipts and inclusion proofs and fails if they disagree on
+any of them or if one raises. `gen.py` signs fresh receipts with a
+throwaway key and builds valid inclusion proofs for arbitrary indexes and
+tree sizes (by folding a random audit path), then mutates most cases
+once or twice: signature spellings (line breaks, padding bits, the
+URL-safe alphabet, prefixes), `contentHash` forms, canonical text,
+envelope fields and their numbers, duplicate keys, hex case and
+prefixes, and index and size edge values. Each verifier parses each case
+with its own language's JSON parser, as a caller would.
+
+```bash
+bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
+```
+
+The arguments are the number of cases and the seed. The `fuzz` workflow
+runs 20,000 cases with seed 1 on every pull request and a million with a
+new seed every night; disagreements are uploaded as an artifact. Its
+first runs found the Python and Go proof verifiers accepting tree sizes
+above 2^53 − 1, and the three receipt verifiers comparing integers above
+2^53 in envelope fields differently; both are fixed and in the specs.
+
 ## Stability
 
 Once a fixture is in a tagged release its bytes (and the key that
