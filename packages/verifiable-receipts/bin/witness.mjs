@@ -40,15 +40,17 @@
  * State file at ~/.sovereign-witness/<sanitized-witness-id>.json:
  *   { logId, lastSize, lastRoot, lastTimestamp, lastSubmittedAt }
  * A state file without logId (written by an earlier version) still
- * loads; the logId is added the next time the state is saved.
+ * loads; the logId is added the next time the state is saved. A state
+ * file that exists but cannot be read or parsed, or whose fields are
+ * malformed, is refused (exit 2) rather than treated as absent.
  *
  * Exit codes (--once mode):
  *   0  Witnessed successfully OR no change since last poll
  *   1  The log misbehaved: fork or rewrite, a canonical that does not
  *      match the fields, another logId, or a bad log signature.
  *      Operator MUST investigate
- *   2  Usage error (bad flags, network failure, malformed STH, a v3=
- *      STH with --log-public-key)
+ *   2  Usage error (bad flags, network failure, malformed STH, a bad
+ *      state file, a v3= STH with --log-public-key)
  */
 
 import {
@@ -103,8 +105,8 @@ function printHelp() {
       "  1  The log misbehaved: fork / rewrite, canonical not matching its",
       "     fields, another logId, bad log signature (do NOT auto-recover;",
       "     investigate)",
-      "  2  Usage error, network failure, malformed STH, or a v3= STH with",
-      "     --log-public-key",
+      "  2  Usage error, network failure, malformed STH, a bad state file,",
+      "     or a v3= STH with --log-public-key",
       "",
     ].join("\n"),
   );
@@ -122,14 +124,47 @@ function defaultStatePath(witnessId) {
   return join(dir, safeFileName(witnessId) + ".json");
 }
 
+/** A state file that exists but cannot be trusted. */
+class BadStateError extends Error {}
+
+/** Why `state` is not a usable state file, or null when it is. */
+function stateShapeError(state) {
+  if (typeof state !== "object" || state === null || Array.isArray(state)) {
+    return "not a JSON object";
+  }
+  if (!Number.isSafeInteger(state.lastSize) || state.lastSize < 0) {
+    return "lastSize must be an integer from 0 to 2^53 - 1";
+  }
+  if (!isHashHex(state.lastRoot)) {
+    return "lastRoot must be 64 lowercase hex digits";
+  }
+  // Absent in files written before logId was saved; those still load.
+  if (
+    state.logId !== undefined &&
+    (typeof state.logId !== "string" || state.logId.length === 0)
+  ) {
+    return "logId, when present, must be a non-empty string";
+  }
+  return null;
+}
+
+/**
+ * The saved state, or null when there is no state file (a first-time
+ * witness). A file that exists but cannot be read, parsed or trusted
+ * throws BadStateError: treating it as absent would let the log start
+ * the witness over from any tree head it likes.
+ */
 function loadState(path) {
   if (!existsSync(path)) return null;
+  let state;
   try {
-    const raw = readFileSync(path, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
+    state = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new BadStateError(`cannot read or parse ${path}: ${err.message}`);
   }
+  const problem = stateShapeError(state);
+  if (problem) throw new BadStateError(`${path}: ${problem}`);
+  return state;
 }
 
 function saveState(path, state) {
@@ -181,6 +216,17 @@ async function fetchSth(baseUrl) {
 
 // One valid spelling per field (transparency-log.md sections 3.3 and
 // 3.6; schemas/tree-head.schema.json and defs.schema.json).
+// The only keys a tree head may carry (tree-head.schema.json,
+// additionalProperties: false): the signature covers no others.
+const STH_KEYS = new Set([
+  "v",
+  "logId",
+  "treeSize",
+  "rootHash",
+  "timestamp",
+  "signature",
+  "canonical",
+]);
 const ISO_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
 const V2_SIGNATURE = /^v2=[A-Za-z0-9+/]{85}[AQgw]==$/;
 const V3_SIGNATURE = /^v3=[A-Za-z0-9+/]{85}[AQgw]==\.[A-Za-z0-9+/]{4412}$/;
@@ -189,6 +235,11 @@ const V3_SIGNATURE = /^v3=[A-Za-z0-9+/]{85}[AQgw]==\.[A-Za-z0-9+/]{4412}$/;
 function sthShapeError(sth) {
   if (typeof sth !== "object" || sth === null || Array.isArray(sth)) {
     return "not a JSON object";
+  }
+  for (const key of Object.keys(sth)) {
+    if (!STH_KEYS.has(key)) {
+      return `unexpected field ${JSON.stringify(key)} (the signature does not cover it)`;
+    }
   }
   if (sth.v !== 1) return "v must be 1";
   if (typeof sth.logId !== "string" || sth.logId.length === 0) {
@@ -278,6 +329,18 @@ async function runOnce(opts) {
     return { verdict, exit };
   };
 
+  let state;
+  try {
+    state = loadState(opts.statePath);
+  } catch (err) {
+    if (!(err instanceof BadStateError)) throw err;
+    return refuse(
+      "bad-state",
+      2,
+      `BAD STATE FILE — ${err.message}; fix or move it aside (a missing file means first-time witness)`,
+    );
+  }
+
   const sth = await fetchSth(opts.url);
   const shapeError = sthShapeError(sth);
   if (shapeError) {
@@ -321,7 +384,6 @@ async function runOnce(opts) {
     log("[witness] log signature NOT checked (no --log-public-key)");
   }
 
-  const state = loadState(opts.statePath);
   if (state) {
     if (typeof state.logId === "string" && state.logId !== sth.logId) {
       return refuse(

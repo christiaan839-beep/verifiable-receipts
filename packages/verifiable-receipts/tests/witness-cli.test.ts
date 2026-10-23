@@ -22,6 +22,7 @@ import {
   writeFileSync,
   readFileSync,
   existsSync,
+  mkdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -517,6 +518,8 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     ["signature is not v2= or v3=", { signature: "v1=" + "A".repeat(86) + "==" }],
     ["signature is short", { signature: "v2=AAAA" }],
     ["signature has non-zero padding bits", { signature: "v2=" + "A".repeat(85) + "B==" }],
+    ["it has a field the schema does not allow", { note: "not signed" }],
+    ["it has a field named like a signed one", { treesize: 3 }],
   ])("refuses a malformed STH: %s", async (_name, change) => {
     rewrite = (b) => {
       const changed: Record<string, unknown> = { ...b, ...change };
@@ -597,6 +600,38 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(r.stdout).toMatch(/\[witness\] log signature OK/);
     expect(r.stdout).not.toMatch(/NOT checked/);
     expect(posts()).toHaveLength(1);
+  });
+
+  it.each([
+    ["is not JSON", "{ lastSize: 3"],
+    ["is JSON null", "null"],
+    ["is a JSON array", "[]"],
+    ["has lastSize negative", JSON.stringify({ lastSize: -1, lastRoot: "a".repeat(64) })],
+    ["has lastSize a fraction", JSON.stringify({ lastSize: 1.5, lastRoot: "a".repeat(64) })],
+    ["has lastSize a string", JSON.stringify({ lastSize: "3", lastRoot: "a".repeat(64) })],
+    ["has no lastSize", JSON.stringify({ lastRoot: "a".repeat(64) })],
+    ["has lastRoot uppercase", JSON.stringify({ lastSize: 3, lastRoot: "A".repeat(64) })],
+    ["has no lastRoot", JSON.stringify({ lastSize: 3 })],
+    ["has logId empty", JSON.stringify({ logId: "", lastSize: 3, lastRoot: "a".repeat(64) })],
+    ["has logId a number", JSON.stringify({ logId: 7, lastSize: 3, lastRoot: "a".repeat(64) })],
+  ])("fails closed on a state file that %s", async (_name, text) => {
+    const state = freshState();
+    writeFileSync(state, text);
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("bad-state");
+    expect(posts()).toHaveLength(0);
+    // The bad file is left as it was for the operator to inspect.
+    expect(readFileSync(state, "utf8")).toBe(text);
+  });
+
+  it("fails closed on a state file that cannot be read", async () => {
+    const state = freshState();
+    mkdirSync(state); // a directory where the file should be
+    const r = await runCliAsync(args(state).filter((a) => a !== "--json"));
+    expect(r.status).toBe(2);
+    expect(r.stdout).toMatch(/\[witness\] BAD STATE FILE/);
+    expect(posts()).toHaveLength(0);
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {

@@ -227,7 +227,7 @@ Measured on 23 October 2026 (Node 22, Python 3.13, Go 1.24):
 
 The four skipped TypeScript tests were the witness CLI's network flow
 (`tests/witness-cli.test.ts`); they now run (24 October 2026:
-TypeScript 379 passed, none skipped, 12 files). CI (`.github/workflows/test.yml`) runs
+TypeScript 393 passed, none skipped, 12 files). CI (`.github/workflows/test.yml`) runs
 all of the above on every push and pull request.
 
 ## License
