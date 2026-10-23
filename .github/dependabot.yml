@@ -43,12 +43,15 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
-  - package-ecosystem: npm
-    directory: /.github/tools/npm-cli
+  - package-ecosystem: pip
+    directory: /.github/tools/python-ci
     schedule:
       interval: weekly
     cooldown:
       default-days: 14
+    groups:
+      python-ci:
+        patterns: ["*"]
   - package-ecosystem: pip
     directory: /.github/tools/python-build
     schedule:
