@@ -44,6 +44,11 @@ func InnerHash(leftHex, rightHex string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// maxCount is the largest leaf index or tree size a verifier accepts,
+// 2^53 - 1: the integers a double holds exactly, so every verifier,
+// including JavaScript's, reads the same value.
+const maxCount = 1<<53 - 1
+
 // isHashHex reports whether s is a wire hash: 32 bytes written as
 // exactly 64 lowercase hex digits.
 func isHashHex(s string) bool {
@@ -107,7 +112,7 @@ func onesCount(n int) int {
 // digits (32 bytes): a hash has one spelling, and a longer "leaf"
 // cannot stand in for two hashes.
 func VerifyInclusionProof(proof InclusionProof, leafHashHex, rootHashHex string) bool {
-	if proof.TreeSize <= 0 {
+	if proof.TreeSize <= 0 || proof.TreeSize > maxCount {
 		return false
 	}
 	if proof.LeafIndex < 0 || proof.LeafIndex >= proof.TreeSize {

@@ -142,8 +142,9 @@ throw) when one fails.
   length rule a 64-byte "leaf" made of two hashes joined, with an empty
   audit-path entry, folds to the root of the two-leaf tree.
 - `leafIndex`, `treeSize` and the sizes of a consistency proof MUST be
-  JSON integers from 0 to 2^53 − 1 (the integers a double holds
-  exactly). Fractions, booleans, strings, NaN and infinities MUST be
+  integer values from 0 to 2^53 − 1 (the integers a double holds
+  exactly). A JSON number is a value, so `284` and `284.0` are the same
+  integer; fractions, booleans, strings, NaN and infinities MUST be
   rejected. An inclusion proof also needs `treeSize` ≥ 1 and
   `leafIndex` < `treeSize`.
 - Index arithmetic MUST be exact over that whole range: 32-bit

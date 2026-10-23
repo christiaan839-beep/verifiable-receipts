@@ -43,6 +43,22 @@ def inner_hash(left: bytes, right: bytes) -> bytes:
 
 
 _HASH_HEX = re.compile(r"[0-9a-f]{64}")
+# The largest leaf index or tree size accepted, 2**53 - 1: the integers a
+# double holds exactly, so every verifier (JavaScript's too) reads the same.
+_MAX_COUNT = 2**53 - 1
+
+
+def _count(x: object) -> int | None:
+    """A leaf index or tree size: an integer value (1 and 1.0 alike), or None.
+
+    JSON numbers are values, so 284.0 is the integer 284; a fraction, a
+    bool, a string or an infinity is not a count.
+    """
+    if type(x) is int:
+        return x
+    if type(x) is float and x.is_integer():
+        return int(x)
+    return None
 
 
 def _hash_bytes(hex_str: object) -> bytes | None:
@@ -72,24 +88,24 @@ def verify_inclusion_proof(
         the algorithm RFC 9162 §2.1.1 yields exactly root_hash_hex.
 
     Notes:
-        - leafIndex and treeSize must be ints (not bools, floats or
-          strings), with 0 <= leafIndex < treeSize
+        - leafIndex and treeSize must be integer values (1 and 1.0 alike;
+          not fractions, bools or strings), with 0 <= leafIndex < treeSize
+          <= 2**53 - 1
         - every hash must be 64 lowercase hex digits
         - The number of audit-path siblings is determined by the path
           from the leaf to the root; mismatches return False rather
           than raising.
     """
-    leaf_index = proof.get("leafIndex")
-    tree_size = proof.get("treeSize")
-    # type() rather than isinstance(): bool is a subclass of int.
-    if type(leaf_index) is not int or type(tree_size) is not int:
+    leaf_index = _count(proof.get("leafIndex"))
+    tree_size = _count(proof.get("treeSize"))
+    if leaf_index is None or tree_size is None:
         return False
 
     audit_path = proof.get("auditPath")
     if not isinstance(audit_path, list):
         return False
 
-    if tree_size <= 0:
+    if tree_size <= 0 or tree_size > _MAX_COUNT:
         return False
     if leaf_index < 0 or leaf_index >= tree_size:
         return False

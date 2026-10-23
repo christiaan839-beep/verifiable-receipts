@@ -34,7 +34,12 @@ function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-/** Deep JSON-value equality; object key order does not matter. */
+/**
+ * Deep JSON-value equality; object key order does not matter. A number of
+ * magnitude 2^53 or more equals nothing: JSON.parse reads 2^53 + 1 as
+ * 2^53, so such a number in a repeated field is rejected in every
+ * verifier rather than compared differently.
+ */
 export function jsonEqual(a, b) {
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
@@ -50,7 +55,10 @@ export function jsonEqual(a, b) {
     if (ka.length !== Object.keys(b).length) return false;
     return ka.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k]));
   }
-  return a === b; // null, booleans, numbers, strings
+  if (typeof a === "number" && typeof b === "number") {
+    return Math.abs(a) < 2 ** 53 && Math.abs(b) < 2 ** 53 && a === b;
+  }
+  return a === b; // null, booleans, strings
 }
 
 /**

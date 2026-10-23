@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -206,6 +207,22 @@ class TestEnvelopeConsistency:
             'envelope field "approvedBy" is not in the signed canonical'
         )
 
+    def test_a_number_of_magnitude_2_53_or_more_matches_nothing(self) -> None:
+        # JavaScript reads 2**53 + 1 as 2**53; every verifier rejects such
+        # a number in a repeated field instead of comparing it.
+        priv, pub_pem = _make_keypair()
+        cases = [(2**53 - 1, True), (2**53, False), (2**53 + 1, False), (-(2**53), False)]
+        for value, ok in [*cases, (1e300, False)]:
+            canonical = json.dumps({"overall": "pass", "big": value}, separators=(",", ":"))
+            receipt = {
+                "canonical": canonical,
+                "contentHash": _content_hash(canonical),
+                "signature": _sign_v2(priv, canonical),
+                "big": value,
+            }
+            result = verify_v2_receipt(receipt, pub_pem)
+            assert result.ok is ok, (value, result.reason)
+
     def test_a_boolean_never_equals_a_number(self) -> None:
         priv, pub_pem = _make_keypair()
         result = verify_v2_receipt(self._receipt(priv, n=True), pub_pem)
@@ -305,6 +322,18 @@ class TestGuardianAttestation:
 
 
 class TestRfc9162InclusionProof:
+    def test_rejects_a_tree_size_beyond_2_53_minus_1(self) -> None:
+        # Leaf 0's siblings are all on the right, so one path proves it in
+        # trees of 2**53 - 1 and 2**53 leaves; only the size bound differs.
+        leaf = leaf_hash(b"x")
+        path = [leaf_hash(bytes([i])) for i in range(53)]
+        root = leaf
+        for sibling in path:
+            root = inner_hash(root, sibling)
+        for size, ok in ((2**53 - 1, True), (2**53, False)):
+            proof = {"leafIndex": 0, "treeSize": size, "auditPath": [p.hex() for p in path]}
+            assert verify_inclusion_proof(proof, leaf.hex(), root.hex()) is ok, size
+
     def test_single_leaf_tree(self) -> None:
         leaf = leaf_hash(b"hello")
         proof = {
