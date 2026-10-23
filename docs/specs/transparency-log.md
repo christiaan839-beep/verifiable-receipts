@@ -161,15 +161,23 @@ verifiers are checked against every fixture.
 
 ## 4. Append protocol
 
-1. Issuer computes the canonical projection of a receipt.
-2. Issuer computes `leafHash(canonical)`.
-3. Issuer POSTs `leafHash` to the log's append endpoint (TBD —
-   suggested: `POST /log/<logId>/leaves`).
-4. The log appends the leaf and emits a new STH covering the
-   updated tree.
-5. The log returns to the issuer: `{ index, newSth }`.
-6. The issuer SHOULD store `{ index, newSth }` alongside the receipt
-   so any subsequent verifier can construct the inclusion proof.
+1. Issuer signs a receipt (its `canonical` projection, `contentHash`
+   and `v2=` signature).
+2. Issuer submits the whole receipt to the log. The log MUST verify it
+   under one of its configured issuer keys before it appends anything,
+   so the log holds only receipts an issuer signed.
+3. The log appends `leafHash(canonical)` and signs a new STH covering
+   the updated tree. A receipt with a `canonical` already in the log is
+   one entry: the log returns the existing one.
+4. The log returns to the issuer `{ index, leafHash, sth }`.
+5. The issuer SHOULD store `{ index, sth }` alongside the receipt so
+   any later verifier can ask for the inclusion proof.
+
+The reference log,
+[receipts-log](https://github.com/christiaan839-beep/receipts-log),
+implements this as `POST /v1/entries` (its `API.md`), with inclusion
+and consistency proofs at `GET /v1/proof/inclusion` and
+`GET /v1/proof/consistency`.
 
 The append is **non-reversible**. A log MUST NOT remove a leaf
 under any circumstance. A leaf containing PII that must not be
@@ -186,12 +194,21 @@ or more logs and co-signs them. The protocol:
    previously-signed STH (size `M`) to the current STH (size `N`).
 3. Witness verifies the consistency proof. If it passes:
    - Witness signs the STH with its own keypair.
-   - Witness publishes `{ logSth, witnessSignature }` to a public
-     bulletin board (TBD — suggested: a Git repo, IPFS, or a
-     dedicated witness API).
-4. If the consistency proof fails:
-   - Witness publishes a fork notice. Monitors and clients SHOULD
-     treat the log as compromised.
+   - Witness submits `{ witnessId, sthCanonical, signature }` to the
+     log, which records it only when the signature verifies under that
+     witness's configured key and the STH is one the log produced, and
+     serves every cosignature for a tree size to anyone who asks.
+     receipts-log implements this as `POST /v1/cosignatures` and
+     `GET /v1/cosignatures?treeSize=<n>`.
+4. If the consistency proof fails, or the log shows a different root
+   for a tree size the witness already signed:
+   - Witness MUST NOT sign, and stops. receipts-log's witness exits
+     with status 1 and reports why (a tree size that went backwards, a
+     different root at the same size, or the consistency proof that
+     failed). Monitors and clients SHOULD treat the log as compromised.
+   - This spec does not define where a fork notice is published.
+     A deployment needs a channel the log does not control, so that
+     the log cannot suppress the notice.
 
 A monitor with N witnesses sees N independent STH signatures over
 every published tree head. A vendor that forks its log either fools
