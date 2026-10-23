@@ -2,31 +2,25 @@
 /**
  * verifiable-receipts CLI — bin/verify.mjs
  *
- * Self-hostable verifier for @sovereign-matrix/verifiable-receipts.
- * Runs anywhere Node 18+ runs. No platform dependency, no network
- * call. Hands a regulator the exact bytes their carrier promised.
+ * Verifies a signed bundle manifest (MANIFEST.signed.json) against an
+ * Ed25519 public key. No network calls. It checks the manifest hash
+ * and signature; it does not open the ZIP or check each receipt.
  *
  * Usage:
  *
  *   # Verify a signed manifest JSON file
- *   npx @sovereign-matrix/verifiable-receipts verify \
+ *   npx verifiable-receipts verify \
  *     --manifest ./MANIFEST.signed.json \
  *     --pubkey ./ed25519-public.pem
  *
  *   # Same flow piped from stdin
- *   cat MANIFEST.signed.json | npx @sovereign-matrix/verifiable-receipts \
+ *   cat MANIFEST.signed.json | npx verifiable-receipts \
  *     verify --pubkey ./ed25519-public.pem
  *
  *   # Exit codes:
  *   #   0 — manifest is intact and signature verifies
  *   #   1 — verification failed (reason printed)
  *   #   2 — usage error (bad flags, missing file, malformed JSON)
- *
- * The verifier is byte-deterministic — re-running it on the same
- * inputs produces the same outcome forever. If an auditor in 2040
- * holds the manifest and the Ed25519 public key, this script (or
- * any future Node version that still has crypto.verify) tells them
- * whether the receipts are intact.
  */
 
 import { readFileSync } from "node:fs";
@@ -63,7 +57,7 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(
     [
-      "verifiable-receipts verify — Sovereign Matrix",
+      "verifiable-receipts verify",
       "",
       "Usage:",
       "  verifiable-receipts verify --manifest <path> --pubkey <path>",
@@ -73,6 +67,9 @@ function printHelp() {
       "  --manifest <path>   Path to a MANIFEST.signed.json file",
       "  --pubkey <path>     Path to an Ed25519 public key (PEM)",
       "  --json              Emit a JSON envelope on success/failure",
+      "",
+      "Checks the manifest hash and an Ed25519 v2= signature. It does not",
+      "open the ZIP or check each receipt, and it refuses v3= manifests.",
       "  --help              This message",
       "",
       "Exit codes:",
@@ -142,19 +139,21 @@ async function main() {
     fail(`manifest JSON parse failed: ${err.message}`);
   }
 
-  // The OSS verifyManifest() takes a `verify(canonical, signature) => bool`
-  // callback so the package is signature-scheme agnostic. Here we wire it
-  // to Node's built-in Ed25519 verifier. The signature in MANIFEST.signed.json
-  // is base64 — strip the "v2=" prefix if present.
+  // verifyManifest() takes a `verify(canonical, signature) => bool`
+  // callback. This CLI checks Ed25519 `v2=` signatures only. A `v3=`
+  // manifest is refused rather than passed on its Ed25519 half alone,
+  // which would drop the ML-DSA-65 check; verify those with
+  // verifyDualSig() from the library.
+  const sigStr = String(manifest?.signature ?? "");
+  if (sigStr.startsWith("v3=")) {
+    fail("v3= manifests are not supported by this CLI; verify them with verifyDualSig()");
+  }
   const verifyFn = (canonical, signature) => {
     try {
-      const sigStr = String(signature ?? "");
-      const stripped = sigStr.startsWith("v2=")
-        ? sigStr.slice(3)
-        : sigStr.startsWith("v3=")
-          ? sigStr.slice(3).split(".")[0] // v3 has ed25519.mldsa65 — verify Ed25519 half
-          : sigStr;
-      const sig = Buffer.from(stripped, "base64");
+      const s = String(signature ?? "");
+      if (!s.startsWith("v2=")) return false;
+      const sig = Buffer.from(s.slice(3), "base64");
+      if (sig.toString("base64") !== s.slice(3)) return false;
       return nodeVerify(null, Buffer.from(canonical, "utf8"), pubKey, sig);
     } catch {
       return false;

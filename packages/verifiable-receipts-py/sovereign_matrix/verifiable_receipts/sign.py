@@ -25,7 +25,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,

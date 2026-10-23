@@ -11,7 +11,6 @@ import sys
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
 from sovereign_matrix.verifiable_receipts import sign_v2_receipt
 
 

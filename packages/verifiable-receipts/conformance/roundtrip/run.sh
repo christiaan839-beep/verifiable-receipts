@@ -11,7 +11,7 @@
 # checks that all three verifiers reject the edit. The key lives in a
 # temporary directory that is removed on exit.
 #
-# Needs node 18+ with packages/verifiable-receipts built (`npm install`
+# Needs node 22+ with packages/verifiable-receipts built (`npm install`
 # there), python 3.10+ with `cryptography`, and go 1.22+. The Python
 # package is read from the working tree (PYTHONPATH), not from site-packages.
 #

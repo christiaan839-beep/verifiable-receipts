@@ -4,6 +4,74 @@ All notable changes to `@sovereign-matrix/verifiable-receipts` are documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-10-23
+
+### Removed (breaking)
+
+- `src/packs.ts` and the `./packs` export: the 42 "regulatory packs"
+  (`hipaaPack`, `euAiActPack`, `composePacks`, `ALL_PACKS` and the
+  rest). They were substring and regex checks with regulation text in
+  their descriptions; they did not check compliance with anything.
+  Write the rules you need as `GuardianRule`s.
+- `src/red-team.ts` (`runRedTeam`, `defaultAdversarialCorpus`),
+  `src/anomaly.ts` (`detectAnomalies`), `src/audit-dsl.ts`
+  (`queryReceipts`, `parseQuery`) and `src/c2pa-bridge.ts`
+  (`toC2PAManifest`, `fromC2PAManifest`), with their tests. Nothing in
+  the signing, verification or log code used them.
+
+### Security
+
+- `verifyThresholdAttestation` rejects an envelope whose policy is not
+  well formed: `m` and `n` must be integers with `1 <= m <= n`, and
+  `authorizedIssuers` must list exactly `n` distinct ids. Before, an
+  envelope with `m = 0` returned `ok: true` with no signatures.
+- `verifyDualSig` and `verifyMlDsa65` reject base64 that is not
+  canonical padded standard base64, an Ed25519 half that is not 64
+  bytes and an ML-DSA-65 half that is not 3309 bytes.
+- The `v2=` verifiers (Python, Go, the conformance harness and the
+  `verifiable-receipts verify` CLI) reject base64 signatures with
+  non-zero padding bits or with CR or LF inside, so a signature has one
+  valid spelling. Go's decoder skips CR and LF even in strict mode, so
+  the Go verifier also checks that the decoded bytes re-encode to the
+  exact text. New fixtures: `v2-invalid-noncanonical-base64.json` and
+  `v2-invalid-crlf-base64.json` (16 in all).
+- `verifiable-receipts verify` refuses `v3=` manifests (it used to
+  accept one on its Ed25519 half alone) and signatures without the
+  `v2=` prefix.
+- `verifyGuardianAttestation` returns `canonical-mismatch` instead of
+  throwing when `canonical` is not a JSON object; `parseVapt` returns
+  `null` for a payload that is JSON but not an object.
+- `runGuardian` sorts rules by UTF-16 code unit instead of
+  `localeCompare`, so the canonical no longer depends on the signer's
+  locale. An attestation whose rule ids sort differently under the two
+  orders, signed by 0.3.x, no longer passes the TypeScript
+  `verifyGuardianAttestation`; the Python and Go verifiers are not
+  affected.
+- `buildSignedBundle` / `verifyManifest` keep a `__proto__` key in the
+  hashed manifest instead of dropping it.
+
+### Changed
+
+- Specs and docs: removed claims the code does not back. The ML-DSA-65
+  signature is 3309 bytes (FIPS 204), not 3293; "forward-secure" is
+  gone; VAOS 3.0 now states that a `v3=` signature can be downgraded to
+  `v2=` unless the verifier refuses `v2=`; `@noble/post-quantum` is
+  described as self-audited, as its authors say. The TRS soundness and
+  v2 non-malleability proof sketches were wrong in the cases above and
+  carry correction notes.
+- `SPEC.md` rewritten to match what this version emits and accepts.
+- `engines.node` is `>=20.19` (what `@noble/post-quantum` 0.6 needs).
+  Exports added for `./threshold`, `./stream-attestation` and `./vapt`.
+- Dev tooling: vitest 5 (vitest 3 depended on a tinypool with a
+  critical advisory), ESLint with typescript-eslint, `npm run
+  typecheck` over sources and tests, `npm run check`. A
+  `package-lock.json` is committed and CI uses `npm ci`.
+- CI pins every action to a commit SHA and runs typecheck, ESLint,
+  `npm audit`, `ruff`, `gofmt` and the existing suites.
+- The Python package (0.2.1) and the Go module apply the same strict
+  base64 rule; the Python code is lint-clean under the new root
+  `ruff.toml`.
+
 ## [0.3.1] — 2026-10-16
 
 ### Fixed

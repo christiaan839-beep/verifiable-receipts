@@ -2,25 +2,11 @@
 
 **License:** Apache 2.0.
 
-This directory makes the "three-language symmetric verifier" claim
-**publicly auditable**. A single JSON fixture corpus is checked by
-three independent reference verifiers — TypeScript, Python, and Go.
-Every fixture has an `expected.ok` field; every verifier MUST agree.
-
-## Why this exists
-
-Without a conformance corpus, "we have a Python verifier and a Go
-verifier" is a marketing claim. With this corpus, it is a public,
-deterministic, byte-level proof. An auditor can clone the repo, run
-all three harnesses, and confirm they reach identical conclusions on
-every receipt.
-
-Same playbook used by:
-
-- The [Certificate Transparency](https://github.com/google/certificate-transparency-go)
-  cross-implementation test vectors.
-- The [JOSE](https://github.com/panva/jose) cross-language conformance fixtures.
-- The [Sigstore](https://github.com/sigstore/sigstore-conformance) suite.
+One corpus of JSON fixtures, checked by three verifiers written
+separately in TypeScript (node), Python and Go. Every fixture has an
+`expected.ok` field, and every verifier must agree with it. The
+fixtures test the verifiers; they do not show the verifiers are
+correct on inputs the corpus does not cover.
 
 ## Files
 
@@ -90,8 +76,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 16 October 2026: TypeScript 15 passed,
-Python 15 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 23 October 2026: TypeScript 16 passed,
+Python 17 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -99,7 +85,9 @@ Python 15 passed (one fixture-count check plus one test per fixture), Go
 Fixtures cover:
 
 - v2 wire format: well-formed accept · canonical-tamper reject ·
-  wrong-key reject · base64 malformed · non-v2 prefix
+  wrong-key reject · base64 malformed · base64 not canonical (same
+  bytes, different spelling) · base64 with a line feed inside (same
+  bytes) · non-v2 prefix
 - v2 envelope: fields beside `canonical` that repeat it (a nested
   object's keys in another order) accept · a field that disagrees with
   it (`overall` fail against pass) reject · a field it does not contain
@@ -108,14 +96,15 @@ Fixtures cover:
   asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) · tampered-root
   reject · out-of-range index
 
-14 fixtures × 3 verifiers = **42 cross-language conformance checks.**
+16 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
 1. A fixture that needs a valid signature under `public-key.pem` has
    to reuse a signature already in the corpus, since the private key
    was discarded: the three envelope fixtures repeat `v2-valid-001.json`'s
-   `canonical`, `contentHash` and `signature`. Add the fixture to
+   `canonical`, `contentHash` and `signature`, and
+   `v2-invalid-noncanonical-base64.json` respells its signature. Add the fixture to
    `generate-fixtures.mjs` as well, so a regeneration reproduces it.
 2. Write the fixture to `fixtures/<name>.json`.
 3. Run all three harnesses. They MUST all agree on the new
@@ -132,7 +121,7 @@ discarded at generation time). If the corpus ever needs re-signing:
 node packages/verifiable-receipts/conformance/generate-fixtures.mjs
 ```
 
-This rewrites `public-key.pem` and the eight `v2-*.json` fixtures in
+This rewrites `public-key.pem` and the nine `v2-*.json` fixtures in
 one pass with a new key; inclusion-proof fixtures are key-independent
 and untouched. Re-run all three harnesses afterwards.
 
@@ -157,17 +146,12 @@ bash packages/verifiable-receipts/conformance/roundtrip/run.sh
 It needs node, python with `cryptography`, and go; it reads the Python
 package from the working tree.
 
-## Stability guarantee
+## Stability
 
-Fixtures in this corpus are **frozen**. Once a fixture is published
-in a tagged release, its byte contents (including the keypair used
-to sign it) MUST NOT change. New tests are added; existing fixtures
-are never silently mutated.
-
-This guarantee lets external auditors pin a fixture by its
-sha256 and re-run the harness against any future verifier version
-to detect verification drift.
+Once a fixture is in a tagged release its bytes (and the key that
+signed it) do not change; new cases are added as new fixtures. No
+release is tagged yet.
 
 ## License
 
-Apache 2.0 © Sovereign Matrix.
+Apache-2.0.

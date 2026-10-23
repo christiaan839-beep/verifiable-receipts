@@ -2,30 +2,23 @@
 /**
  * verifiable-receipts sign CLI — bin/sign.mjs
  *
- * Mint a VAOS-compliant signed receipt from any JSON input. Pure
- * one-shot signing operation; no platform dependency, no network
- * calls. The output is byte-identical to what an Ed25519-signed
- * receipt from the Sovereign Matrix platform would look like, so any
- * VAOS verifier (ours or anyone else's) accepts it.
- *
- * Distribution moat: completes the OSS package as a two-sided
- * primitive. Issuers don't need to write their own canonical-projection
- * code or sign-then-stringify glue; they `npx ... sign` and ship.
+ * Sign a receipt (VAOS 2.0 `v2=` or VAOS 3.0 `v3=`) from a JSON
+ * object. One-shot, no network calls.
  *
  * Usage:
  *
  *   # Sign a receipt body from a JSON file
- *   npx @sovereign-matrix/verifiable-receipts-sign \
+ *   npx verifiable-receipts-sign \
  *     --input ./receipt-body.json \
  *     --key ./ed25519-private.pem \
  *     --out ./signed-receipt.json
  *
  *   # Or pipe via stdin
- *   cat receipt-body.json | npx @sovereign-matrix/verifiable-receipts-sign \
+ *   cat receipt-body.json | npx verifiable-receipts-sign \
  *     --key ./ed25519-private.pem
  *
- *   # Dual-sign with ML-DSA-65 (post-quantum forward-secure)
- *   npx @sovereign-matrix/verifiable-receipts-sign \
+ *   # Dual-sign with Ed25519 and ML-DSA-65 (v3=)
+ *   npx verifiable-receipts-sign \
  *     --input ./receipt-body.json \
  *     --key ./ed25519-private.pem \
  *     --mldsa-key ./mldsa65-secret.b64 \
@@ -86,10 +79,9 @@ function parseArgs(argv) {
 function printHelp() {
   process.stdout.write(
     [
-      "verifiable-receipts-sign — Sovereign Matrix",
+      "verifiable-receipts-sign",
       "",
-      "Mint a VAOS-compliant signed receipt from any JSON input.",
-      "Pure one-shot signing; no platform dependency, no network calls.",
+      "Sign a JSON object as a v2= or v3= receipt. No network calls.",
       "",
       "Usage:",
       "  verifiable-receipts-sign --input <path> --key <ed25519.pem> [flags]",

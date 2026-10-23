@@ -1,4 +1,4 @@
-# VAOS 3.0 — Verifiable Agent Output Specification (Post-Quantum Dual-Sign)
+# VAOS 3.0 — Verifiable Agent Output Specification (Ed25519 + ML-DSA-65 dual signature)
 
 | Field          | Value                                                          |
 | -------------- | -------------------------------------------------------------- |
@@ -17,23 +17,22 @@
 ## 1. Abstract
 
 VAOS 3.0 promotes the signature primitive of VAOS 2.0 from
-single-signature Ed25519 to **dual-signature Ed25519 + ML-DSA-65
-(Dilithium3)** as standardized in
+single-signature Ed25519 to **dual-signature Ed25519 + ML-DSA-65**,
+the module-lattice signature of
 [NIST FIPS 204](https://csrc.nist.gov/pubs/fips/204/final).
 
-Why: regulated-AI retention horizons routinely span 7–25 years
-(clinical trial records, tax audits, insurance subrogation, pharma
-ICSR retention under EU GVP Module VI). That horizon crosses the
-projected timeline for a cryptographically-relevant quantum computer
-(CRQC) capable of breaking Ed25519 via Shor's algorithm. A VAOS 2.0
-receipt signed today MAY become forgeable in 2040.
+Why: receipts may need to verify for many years. A
+cryptographically relevant quantum computer (CRQC) running Shor's
+algorithm would break Ed25519, and with it any receipt whose only
+signature is Ed25519: an attacker could then sign new receipts under
+the issuer's published key.
 
-VAOS 3.0 hedges that risk by signing every receipt with **both**
-Ed25519 and ML-DSA-65. A verifier in 2040 — running against a CRQC-
-hardened library — can confirm the ML-DSA-65 signature alone, even
-if Ed25519 has fallen. A verifier in 2026 — running against today's
-classical libraries — can confirm Ed25519 alone, and treat the
-ML-DSA-65 signature as forward-secure ballast.
+VAOS 3.0 signs every receipt with **both** Ed25519 and ML-DSA-65
+over the same bytes. The dual signature resists forgery for as long
+as **either** algorithm holds, **provided the verifier requires the
+`v3=` form** for that issuer. The Ed25519 half of a `v3=` signature
+is a valid `v2=` signature on its own (§9, downgrade), so a verifier
+that still accepts `v2=` from an issuer gains nothing from ML-DSA-65.
 
 VAOS 3.0 is **fully wire-compatible** with VAOS 2.0 verifiers via
 the version prefix system: a v3 verifier MUST accept v2 receipts;
@@ -47,27 +46,14 @@ encouraged.
 
 ## 2. Motivation
 
-NIST's August 2024 standardization of FIPS 203 (ML-KEM) and FIPS 204
-(ML-DSA) created the first interoperable, peer-reviewed post-quantum
-signature family. The "harvest now, decrypt later" attack class —
-where an adversary records signed records today and forges new ones
-against the stored public key once a CRQC arrives — is unmitigable
-for Ed25519-only receipts. ML-DSA-65 hedges it.
+NIST published FIPS 204 (ML-DSA) in August 2024. Pairing a classical
+signature with a post-quantum one is a common migration pattern (see
+NIST SP 1800-38 and the IETF composite-signature drafts): the pair is
+as strong as the stronger of the two, as long as verifiers require
+both.
 
-The dual-signature pattern (a classical signature paired with a
-post-quantum signature) is the conservative migration strategy
-recommended by NIST SP 1800-38 and adopted by IETF's hybrid
-PKIX work. Dual-sign:
-
-- preserves classical security against today's adversaries;
-- adds post-quantum security against future adversaries;
-- requires no key-management retirement schedule;
-- lets verifiers upgrade asynchronously.
-
-The cost is bytes (an ML-DSA-65 signature is 3293 bytes vs.
-Ed25519's 64 bytes) and CPU (signing is ~30× slower; verification
-~3× slower). For audit receipts — which are rare, small, and
-sign-once / verify-many — the trade is overwhelmingly correct.
+The cost is size (an ML-DSA-65 signature is 3309 bytes, against 64
+for Ed25519; the public key is 1952 bytes) and signing time.
 
 ---
 
@@ -83,7 +69,7 @@ VAOS 2.0 §3 carries forward. Additions:
   `v3=<base64-ed25519>.<base64-mldsa65>` carrying both signatures
   concatenated with a literal `.` separator. The Ed25519 half is
   the same 64-byte signature that would be emitted under VAOS 2.0;
-  the ML-DSA-65 half is the 3293-byte ML-DSA-65 signature output.
+  the ML-DSA-65 half is the 3309-byte ML-DSA-65 signature output.
 
 ---
 
@@ -121,7 +107,9 @@ The issuer:
 2. Signs the resulting UTF-8 byte string with their Ed25519 secret
    key per [RFC 8032 §5.1.6](https://www.rfc-editor.org/rfc/rfc8032#section-5.1.6).
 3. Signs the **same** UTF-8 byte string with their ML-DSA-65 secret
-   key per [FIPS 204 §6](https://csrc.nist.gov/pubs/fips/204/final).
+   key per [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final)
+   ML-DSA.Sign (pure ML-DSA, not HashML-DSA) with an empty context
+   string.
 4. Base64-encodes each signature with the standard alphabet
    (RFC 4648 §4).
 5. Constructs the wire string
@@ -131,7 +119,7 @@ The issuer:
 ### 6.2 Wire format
 
 ```
-v3=<base64-of-64-byte-Ed25519-sig>.<base64-of-3293-byte-ML-DSA-65-sig>
+v3=<base64-of-64-byte-Ed25519-sig>.<base64-of-3309-byte-ML-DSA-65-sig>
 ```
 
 A verifier MUST treat the literal `.` as the only valid separator
@@ -185,14 +173,14 @@ interface DualSigVerdict {
 ### 7.1 Asymmetric verification (forward-compatibility)
 
 A conforming verifier MUST report the per-primitive results even
-when one half fails. This lets a 2040 auditor — running against a
-CRQC-hardened library that ignores Ed25519 — accept the receipt on
-the ML-DSA-65 half alone, while logging that the Ed25519 half no
-longer holds.
+when one half fails, so that a relying party can tell which half
+failed. `ok` is true only when both hold; the reference
+`verifyDualSig` follows this rule.
 
-Issuers SHOULD treat any receipt with `ed25519: false, mldsa65:
-true` as evidence of a CRQC-class adversary and rotate keys
-accordingly.
+A result of `ed25519: false, mldsa65: true` means the receipt or its
+Ed25519 half was altered, or the wrong Ed25519 key was used. It is
+not evidence of a quantum adversary: such an adversary would produce
+a *valid* Ed25519 signature.
 
 ---
 
@@ -205,10 +193,9 @@ public. Issuers MAY mirror it via CDN, IPFS, or any other content-
 addressable system.
 
 The ML-DSA-65 secret key MUST NOT be transmitted, logged, or
-stored outside the issuer's signing infrastructure. Compromise
-invalidates every v3 signature in retention under that key — but
-**not** the v2 (Ed25519) half, which remains independently
-verifiable under the Ed25519 key.
+stored outside the issuer's signing infrastructure. If one secret
+key is compromised, an attacker still needs the other to produce a
+valid `v3=` signature; the issuer SHOULD rotate both.
 
 ---
 
@@ -216,13 +203,12 @@ verifiable under the Ed25519 key.
 
 | Threat                                             | Mitigation                                                                                                                       |
 | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --- | --------------------------- |
-| Classical-adversary forgery (no CRQC)              | Ed25519 + ML-DSA-65 — defeating either requires breaking the underlying lattice or curve. Computationally infeasible.            |
-| CRQC adversary forgery of stored receipts          | Ed25519 falls; ML-DSA-65 holds. Verifier reports `ed25519:false, mldsa65:true`; the receipt is still authentic under §7.1.       |
-| Substitution of the ML-DSA-65 half only            | Both halves sign **the same** canonical bytes. Substituting one half breaks `ok=true && (ed25519                                 |     | mldsa65) === ok` invariant. |
-| Algorithm-confusion attack (force v2 verification) | `v2=` and `v3=` are hard-branched in the verifier. A v2 verifier processing a v3 wire string MUST fail at the prefix check.      |
-| Side-channel leakage from ML-DSA-65 signer         | Use a constant-time implementation. The reference `@noble/post-quantum` is audited and constant-time on hot paths.               |
-| Quantum-period downgrade attack                    | An adversary that strips the ML-DSA-65 half and re-presents the receipt as v2 cannot do so without forging a fresh v2 signature. |
-| Canonicalization drift                             | Both halves consume the same projected bytes from §5. Conforming implementations share one canonicalization function.            |
+| Classical-adversary forgery (no CRQC)              | Forging a `v3=` signature requires forging both Ed25519 and ML-DSA-65 over the same bytes.                                                                                                                       |
+| CRQC adversary forging new receipts                | The adversary can forge Ed25519 but not ML-DSA-65, so a forged `v3=` signature fails (`ok: false`). This holds only for verifiers that reject `v2=` from the issuer (next row).                                  |
+| Downgrade to `v2=`                                 | **Not prevented by the format.** The Ed25519 half of any `v3=` signature is a valid `v2=` signature over the same canonical. A verifier MUST require `v3=` from an issuer that publishes an ML-DSA-65 key, or the dual signature adds nothing. |
+| Substitution of one half                           | Both halves sign the same canonical bytes; `ok` requires both to verify.                                                                                                                                        |
+| Side-channel leakage from ML-DSA-65 signer         | Out of scope for the format. The reference implementation uses `@noble/post-quantum`, which its authors describe as self-audited, not independently audited; JavaScript gives no constant-time guarantees.   |
+| Canonicalization drift                             | Both halves consume the same projected bytes from §5.                                                                                                                                                           |
 
 ---
 
@@ -282,5 +268,4 @@ VAOS 3.0 is informed by the design of:
 
 ## 13. Contact
 
-`sovereign.systems007@gmail.com`, for editorial feedback and for security disclosures. Start a security report's subject with
-`[security]`, and please don't open a public issue for one.
+Editorial feedback: an issue on the repository. Security reports: a private GitHub security advisory (see `SECURITY.md`).

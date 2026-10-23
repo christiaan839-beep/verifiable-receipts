@@ -1,205 +1,120 @@
 # @sovereign-matrix/verifiable-receipts
 
-TypeScript library for signed AI agent receipts. Version 0.3.1,
-Apache-2.0. Not published to npm yet: install it from this repository.
+TypeScript library for signing receipts for AI agent actions and
+verifying them later. Version 0.4.0, Apache-2.0. Not on npm yet:
+install it from the repository (see the [root README](../../README.md)).
 
-A receipt records an agent run (inputs, output, the checks that ran and
-their verdicts) as a canonical JSON string, and signs that string. Anyone
-with the issuer's public key can verify it later.
+Node 20.19 or later (the tests need Node 22). One runtime dependency,
+`@noble/post-quantum`, for ML-DSA-65. Ed25519 is supplied by the caller
+(`node:crypto`, a KMS, an HSM), except in the CLIs, which use
+`node:crypto`.
 
-## What is in it
+The wire formats are in [`SPEC.md`](./SPEC.md).
 
-- **Signing and verification.** Ed25519 (`v2=`) and Ed25519 plus
-  ML-DSA-65, FIPS 204 (`v3=<ed25519>.<ml-dsa-65>`). The wire format is in
-  [`SPEC.md`](./SPEC.md).
-- **Transparency log proofs.** RFC 9162 inclusion and consistency proofs,
-  and signed tree heads (`src/transparency.ts`).
-- **Signed bundles.** A deterministic ZIP of receipts with a signed
-  `MANIFEST.signed.json` (`src/bundle.ts`).
-- **Rule runner and packs.** `runGuardian` runs a set of rules over an
-  agent run and returns a signed verdict. `src/packs.ts` exports 42 rule
-  packs (listed below); each rule's description names the clause it
-  checks. They are pattern checks that help gather evidence, not legal
-  advice or a compliance guarantee.
-- **C2PA bridge.** Converts a signed verdict to and from a C2PA manifest
-  assertion labelled `org.sovereignmatrix.vaos.v1`.
-- **Three CLIs.** `verifiable-receipts` (verify a bundle manifest),
-  `verifiable-receipts-sign` (sign a JSON body) and
-  `verifiable-receipts-witness` (cosign a transparency log's tree heads).
+## Modules
 
-Other modules in `src/`: `anomaly`, `audit-dsl`, `log-store`, `red-team`,
-`stream-attestation`, `threshold`, `vapt`. [`proofs/`](./proofs) holds five
-written proof sketches in Markdown; they are not machine-checked.
+| Import path                                  | What it does                                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `…/pq-sign`                                  | ML-DSA-65 sign/verify; `verifyDualSig` for `v3=<ed25519>.<ml-dsa-65>` (both halves must hold)     |
+| `…/guardian`                                 | `runGuardian` runs rules over an agent run and signs the verdict; `verifyGuardianAttestation`    |
+| `…/bundle`                                   | Deterministic STORE-method ZIP; `buildSignedBundle` / `verifyManifest`                           |
+| `…/transparency`                             | RFC 6962 hashes, RFC 9162 inclusion and consistency proofs, unsigned tree heads                   |
+| `…/log-store`                                | `InMemoryLogStore`, append-only `FileLogStore`, `TransparencyLog`                                |
+| `…/threshold`                                | m-of-n co-signed envelopes (`trs1`); each cosigner signs `trsSigningBytes`, which binds the policy |
+| `…/stream-attestation`                       | Merkle commitment over a stream's chunks; per-chunk inclusion proofs                             |
+| `…/vapt`                                     | Short-lived Ed25519 payment tokens with amount, currency, merchant and lifetime limits           |
 
-## Receipt shape (v2)
-
-```json
-{
-  "verdictId": "v_…",
-  "overall": "pass",
-  "issuedAt": "2026-…",
-  "canonical": "{…}",
-  "contentHash": "sha256:…",
-  "signature": "v2=…"
-}
-```
-
-`canonical` is the exact UTF-8 JSON that was signed, `contentHash` is
-`sha256:` plus the hex SHA-256 of `canonical`, and `signature` is `v2=`
-plus the base64 Ed25519 signature over `canonical`. Every other field
-repeats a field of `canonical`: the Python and Go verifiers reject a
-receipt with a field that disagrees with the parsed `canonical` or that
-`canonical` does not contain.
-
-## Install from the repository
-
-```bash
-git clone https://github.com/christiaan839-beep/verifiable-receipts
-cd verifiable-receipts/packages/verifiable-receipts
-npm install    # installs the dev tools and builds dist/
-# then, from your own project:
-npm install --install-links /path/to/verifiable-receipts/packages/verifiable-receipts
-```
-
-`dist/` is not committed: `npm install` in the package builds it (the
-`prepare` script runs `tsc`), and the second command packs the built
-package into your project. Node 18 or later. One runtime dependency:
-`@noble/post-quantum` (for ML-DSA-65).
-
-## Tests
-
-Measured on 16 October 2026: **689 passed, 4 skipped** (vitest 3, 22 test
-files, including the cross-language conformance suite; Node 22). The four
-skipped tests are the witness CLI's network flow, skipped in
-`tests/witness-cli.test.ts`. To run them, from a clone of this repository:
-
-```bash
-cd packages/verifiable-receipts
-npm install
-npm test
-```
-
-The [`conformance/`](./conformance) folder has 14 JSON fixtures (valid
-and tampered receipts, wrong keys, fields beside `canonical` that agree
-or disagree with it, inclusion proofs). The TypeScript, Python
-([`../verifiable-receipts-py`](../verifiable-receipts-py)) and Go
-([`../verifiable-receipts-go`](../verifiable-receipts-go)) verifiers all
-run against them and must agree. [`conformance/roundtrip/`](./conformance/roundtrip)
-signs receipts with the Python signer, `verifiable-receipts-sign` and
-`runGuardian` under a throwaway key and verifies each in Python, Go and
-node; CI runs it.
+`…` is `@sovereign-matrix/verifiable-receipts`; everything is also
+exported from the package root.
 
 ## Sign and verify a verdict
 
 ```ts
-import {
-  runGuardian,
-  verifyGuardianAttestation,
-  composePacks,
-  hipaaPack,
-  sr117Pack,
-} from "@sovereign-matrix/verifiable-receipts";
+import { runGuardian, verifyGuardianAttestation, outputSizeRule, requireTokenRule } from "@sovereign-matrix/verifiable-receipts";
 import { generateKeyPairSync, sign, verify } from "node:crypto";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const rules = composePacks(hipaaPack, sr117Pack);
 
 const verdict = await runGuardian(
-  rules,
-  {
-    runId: "run_1",
-    agentSlug: "loan-underwriter",
-    tokenId: "tok_1",
-    input: { applicantId: "u1" },
-    output: { decision: "approved" },
-  },
-  // Bring your own signer: node:crypto, a KMS, an HSM.
-  (canonical) =>
-    `v2=${sign(null, Buffer.from(canonical), privateKey).toString("base64")}`,
+  [outputSizeRule(10_000), requireTokenRule],
+  { runId: "run_1", agentSlug: "example-agent", tokenId: "tok_1", input: {}, output: { text: "hi" } },
+  (canonical) => `v2=${sign(null, Buffer.from(canonical), privateKey).toString("base64")}`,
 );
-
-console.log(verdict.overall); // "pass" | "warn" | "block"
 
 const result = verifyGuardianAttestation(verdict, (canonical, signature) =>
   signature.startsWith("v2=") &&
-  verify(
-    null,
-    Buffer.from(canonical),
-    publicKey,
-    Buffer.from(signature.slice(3), "base64"),
-  ),
+  verify(null, Buffer.from(canonical), publicKey, Buffer.from(signature.slice(3), "base64")),
 );
-console.log(result.ok); // true
+console.log(verdict.overall, result.ok); // "pass" true
 ```
 
-## Post-quantum signature
+A rule is `{ id, description, evaluate(ctx) }`. A rule that throws
+becomes a `warn` verdict; the overall verdict is `block` if any rule
+blocks, else `warn` if any warns, else `pass`. The signed canonical
+covers each rule's `ruleId`, `verdict` and `reason`; it does not cover
+`durationMs`, `evidence` or `totalMs`.
+
+## Dual signature
 
 ```ts
-import {
-  generateMlDsa65Keypair,
-  signMlDsa65,
-  verifyMlDsa65,
-} from "@sovereign-matrix/verifiable-receipts";
+import { generateMlDsa65Keypair, signMlDsa65, formatV3Wire, verifyDualSig } from "@sovereign-matrix/verifiable-receipts";
 
-const { secretKeyB64, publicKeyB64 } = generateMlDsa65Keypair();
-const sig = signMlDsa65(canonical, Buffer.from(secretKeyB64, "base64"));
-const ok = verifyMlDsa65(canonical, sig, Buffer.from(publicKeyB64, "base64"));
+const ml = generateMlDsa65Keypair();
+const edSig = sign(null, Buffer.from(canonical), privateKey).toString("base64");
+const wire = formatV3Wire(edSig, signMlDsa65(canonical, Buffer.from(ml.secretKeyB64, "base64")));
+
+const v = verifyDualSig(canonical, wire, Buffer.from(ml.publicKeyB64, "base64"), (c, s) =>
+  verify(null, Buffer.from(c), publicKey, Buffer.from(s.slice(3), "base64")),
+);
+// { ok, ed25519, mldsa65 }
 ```
 
-## Signed bundle
+The Ed25519 half of a `v3=` signature is a valid `v2=` signature on
+its own. A dual signature protects against a broken Ed25519 only if
+your verifier refuses `v2=` from issuers that sign `v3=`.
+
+## Transparency log
 
 ```ts
-import { buildSignedBundle, verifyManifest } from "@sovereign-matrix/verifiable-receipts";
+import { TransparencyLog, FileLogStore, verifyInclusionProof } from "@sovereign-matrix/verifiable-receipts";
 
-const { zip, manifest } = buildSignedBundle(rows, (manifestHash) => sign(manifestHash));
-const check = verifyManifest(manifest, (canonical, signature) => verify(canonical, signature));
+const log = new TransparencyLog("example-log", new FileLogStore("./log.txt"));
+const { index, leafHashHex, sth } = log.append(receipt.canonical); // RFC 6962 leaf hash
+const path = log.proveInclusion(index);
+verifyInclusionProof(leafHashHex, index, sth.treeSize, path, sth.rootHash); // true
 ```
+
+Tree heads are returned unsigned; sign `canonicalizeSth(sth)` yourself.
+`FileLogStore` takes no file lock: one writer per file.
 
 ## CLIs
 
-After installing, the binaries are on your project's `node_modules/.bin`:
-
 ```bash
-npx verifiable-receipts verify --manifest ./MANIFEST.signed.json --pubkey ./ed25519.pem
-npx verifiable-receipts-sign --input ./body.json --key ./ed25519-private.pem --out ./signed.json
-npx verifiable-receipts-witness --url https://issuer.example --key ./witness.pem --witness-id "Name" --once
+npx verifiable-receipts-sign --input body.json --key ed25519-private.pem [--mldsa-key mldsa65.b64] [--out receipt.json]
+npx verifiable-receipts verify --manifest MANIFEST.signed.json --pubkey ed25519.pem [--json]
+npx verifiable-receipts-witness --url https://log.example --key witness.pem --witness-id example-witness --once
 ```
 
-Run any of them with `--help` for the full flags (`verifiable-receipts-sign
---mldsa-key` adds the ML-DSA-65 signature for a `v3=` receipt).
-`verifiable-receipts verify` exits `0` (verifies), `1` (fails) or `2`
-(usage error).
+- `verifiable-receipts-sign` drops `canonical`, `contentHash` and
+  `signature` from the body, sorts keys at every depth, signs the
+  compact JSON and writes the body's fields plus those three. Its `v2=`
+  output verifies in Python and Go.
+- `verifiable-receipts verify` checks a bundle manifest's hash and its
+  `v2=` signature (exit 0 valid, 1 invalid, 2 usage error). It does not
+  open the ZIP and it refuses `v3=` manifests.
+- `verifiable-receipts-witness` polls a log's tree head, checks a
+  consistency proof from the last head it saw, and posts a signature.
 
-`verifiable-receipts-sign` drops any `canonical`, `contentHash` and
-`signature` from the body, sorts its keys at every depth, signs the
-compact JSON, and writes the body's fields plus `canonical`,
-`contentHash` and `signature`. A `v2=` receipt from it verifies with the
-Python `verify_v2_receipt` and the Go `VerifyV2Receipt`.
+## Development
 
-## Rule packs
+```bash
+npm ci
+npm run check    # tsc (src + tests), eslint, build, vitest
+```
 
-The 42 packs exported from `src/packs.ts`:
+`conformance/` runs the shared cross-language fixtures (see its
+README); `proofs/` holds informal proof sketches. CHANGELOG.md lists
+changes per version.
 
-- **United States:** `hipaaPack`, `sr117Pack`, `naicPack`, `dscsaPack`,
-  `cfpbPack`, `nydfsPack`, `nycAedtPack`, `ferpaPack`, `fdaSaMDPack`,
-  `fdaPccpPack`, `coloradoAiPack`, `californiaAb2013Pack`,
-  `illinoisAiPack`, `texasAiPack`, `nistAiRmfPack`, `carmackLogisticsPack`,
-  `ambientScribePack`
-- **Canada:** `canadaAidaPack`, `quebecLaw25Pack`
-- **Latin America:** `brazilLgpdAiPack`
-- **Europe and UK:** `euAiActPack`, `doraPack`, `csrdPack`, `fcaPack`, `ukIcoPack`
-- **Asia-Pacific:** `masPack`, `japanAppiPack`, `koreaPipaPack`,
-  `indiaDpdpAiPack`, `chinaPiplGenAiPack`, `vietnamCyberPack`, `apraCps230Pack`
-- **Middle East and Africa:** `southAfricaPopiaPack`, `uaePdplPack`, `saudiPdplPack`
-- **Standards and cross-cutting:** `iso42001Pack`, `pciDssPack`,
-  `owaspAgenticTop10Pack`, `mcpGovernancePack`, `multiAgentCascadePack`,
-  `pedagogicalAiPack`, `industrialFoundationPack`
-
-Compose them with `composePacks(...)`. Subpath imports are available:
-`/pq-sign`, `/guardian`, `/bundle`, `/packs`.
-
-## License
-
-Apache-2.0; see [LICENSE](./LICENSE). Report suspected bugs in the
-cryptography privately to `sovereign.systems007@gmail.com` (the security
-contact in [SPEC.md](./SPEC.md#contact)) before disclosing them.
+Report a vulnerability privately: see the repository's
+[SECURITY.md](../../SECURITY.md).

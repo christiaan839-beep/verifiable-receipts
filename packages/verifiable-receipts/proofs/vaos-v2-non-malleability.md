@@ -37,9 +37,17 @@ that still represents the same audit claim.
 3. **C3 (SHA-256 second-preimage resistance.)** No PPT adversary
    finds `canonical' ≠ canonical` with
    `SHA-256(canonical') = SHA-256(canonical)`.
-4. **C4 (Base64 / hex injectivity).** The base64 and hex
-   encodings are injective: distinct bytes encode to distinct
-   strings.
+4. **C4 (Canonical encodings).** Each signature byte string has
+   exactly one accepted base64 spelling, and each hash one accepted
+   hex spelling. Plain base64 decoding is *not* injective: a 64-byte
+   signature ends in a character with four unused bits, so several
+   strings decode to the same bytes. The verifiers enforce C4 by
+   rejecting base64 that does not re-encode to itself (Go
+   `StdEncoding.Strict()`, Python and node re-encode and compare;
+   added in 0.4.0, fixture `v2-invalid-noncanonical-base64.json`).
+   Before 0.4.0, C4 did not hold and Case II's string-level claim
+   was false; the byte-level claim (no second valid signature on the
+   same canonical) still held by C2.
 
 ## Proof by case analysis on the differing field
 
@@ -67,7 +75,8 @@ In either subcase, the adversary breaks EUF-CMA. ∎ Case I
 For verification to succeed, `decode(signature')` must be a valid
 Ed25519 signature on `canonical` under `P`.
 
-By C4, `signature' ≠ signature` implies `decode(signature') ≠ decode(signature)`.
+By C4, a `signature'` that the verifier accepts and that differs from
+`signature` decodes to different bytes: `decode(signature') ≠ decode(signature)`.
 
 The adversary has produced a pair `(canonical, σ')` with
 `σ' ≠ σ` and `verify(P, canonical, σ') = true`, where σ is the
@@ -126,9 +135,8 @@ under `P` and describe the same canonical. ∎
 
 ## Reference implementation
 
-- `src/pq-sign.ts` `verifyDualSig()` — v2 path lines 110–148.
-- `src/c2pa-bridge.ts` `fromC2PAManifest()` re-checks the same
-  invariants when extracting an attestation from a C2PA wrapper.
-- Tests at `tests/pq-sign.test.ts` exercise: tampered canonical,
-  swapped signature, contentHash desync, malformed wire prefix,
-  base64 corruption.
+- `verify_v2_receipt` (Python), `VerifyV2Receipt` (Go) and
+  `conformance/verify-v2.mjs` (node).
+- The conformance fixtures in `conformance/fixtures/` exercise:
+  tampered canonical, wrong key, bad and non-canonical base64, a
+  `v1=` prefix, and envelope fields that disagree with `canonical`.

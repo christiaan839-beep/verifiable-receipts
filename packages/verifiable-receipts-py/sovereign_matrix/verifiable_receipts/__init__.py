@@ -16,19 +16,19 @@ Public API:
     verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex) -> bool
 """
 
-from .verify import (
-    VerifyResult,
-    verify_v2_receipt,
-    verify_guardian_attestation,
-)
 from .sign import (
     canonicalize,
     sign_v2_receipt,
 )
 from .transparency import (
-    verify_inclusion_proof,
-    leaf_hash,
     inner_hash,
+    leaf_hash,
+    verify_inclusion_proof,
+)
+from .verify import (
+    VerifyResult,
+    verify_guardian_attestation,
+    verify_v2_receipt,
 )
 
 __all__ = [
@@ -42,4 +42,4 @@ __all__ = [
     "inner_hash",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"

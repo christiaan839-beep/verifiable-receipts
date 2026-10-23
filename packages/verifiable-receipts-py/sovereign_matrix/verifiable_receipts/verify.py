@@ -29,15 +29,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.serialization import (
-    load_pem_public_key,
-)
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
+)
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_public_key,
 )
 
 # Top-level fields that carry the signature material rather than
@@ -66,9 +67,14 @@ def _decode_v2_signature(signature: str) -> bytes:
         raise ValueError("signature is not v2 (expected 'v2=<base64>')")
     raw = signature[3:]
     try:
-        return base64.b64decode(raw, validate=True)
+        decoded = base64.b64decode(raw, validate=True)
     except (ValueError, base64.binascii.Error) as exc:  # type: ignore[attr-defined]
         raise ValueError(f"signature base64 invalid: {exc}") from exc
+    # Reject non-canonical spellings (non-zero padding bits), so one
+    # signature has exactly one valid string form.
+    if base64.b64encode(decoded).decode("ascii") != raw:
+        raise ValueError("signature base64 invalid: not canonical")
+    return decoded
 
 
 def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
@@ -111,7 +117,7 @@ def _json_equal(a: Any, b: Any) -> bool:
         return isinstance(a, str) and isinstance(b, str) and a == b
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         return len(a) == len(b) and all(
-            _json_equal(x, y) for x, y in zip(a, b)
+            _json_equal(x, y) for x, y in zip(a, b, strict=True)
         )
     if isinstance(a, Mapping) and isinstance(b, Mapping):
         return set(a.keys()) == set(b.keys()) and all(

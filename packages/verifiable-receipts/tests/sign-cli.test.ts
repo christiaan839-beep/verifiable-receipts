@@ -83,7 +83,7 @@ const FIXTURE_BODY = {
   v: 1,
   id: "rcpt_sign_test_001",
   agentName: "echo",
-  modelUsed: "nim",
+  modelUsed: "example-model",
   input: { prompt: "hello" },
   output: { text: "hello" },
   safetyResult: { passed: true, score: 1 },

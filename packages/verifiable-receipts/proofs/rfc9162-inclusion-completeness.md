@@ -164,9 +164,10 @@ This completes the induction. ∎
 
 ## Reference implementation
 
-`src/transparency.ts` lines 78–187. Tests at
+`treeRoot`, `inclusionProof` and `verifyInclusionProof` in
+`src/transparency.ts`. Tests at
 `tests/transparency.test.ts` exercise n = 1, 2, 3, 4, 7, 8 trees
 across every leaf index. The Python (`packages/verifiable-receipts-py`)
 and Go (`packages/verifiable-receipts-go`) ports re-derive the same
-walk byte-for-byte; their independent tests close the door on a
-TypeScript-specific implementation bug.
+walk byte-for-byte; the shared fixtures in `conformance/fixtures/`
+check that the three agree.

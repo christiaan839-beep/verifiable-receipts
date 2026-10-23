@@ -2,18 +2,12 @@
  * Verifiable Agentic Payment Token (VAPT) — transaction-scoped tokens
  * for autonomous agent purchases.
  *
- * The open-source analogue of Mastercard Agent Pay / Visa Agentic
- * Commerce. A VAPT cryptographically binds an autonomous agent to a
- * verified human user's pre-authorized transaction envelope. Merchants
- * accept the token, settlement happens, but neither merchant nor the
- * agent runtime ever sees the user's underlying payment credentials.
- *
- * Why this matters: the Gemini "Agentic Transition" research correctly
- * flags identity attribution as the primary security failure of the
- * early agentic era. VAPT is the wire-format primitive that closes
- * that gap for monetary actions. Apache 2.0 — competitors compete on
- * settlement rails + fraud scoring, not on whether a token is
- * cryptographically verifiable.
+ * A VAPT is a short-lived token, signed by the user (or the user's
+ * delegate), that names an agent, a spending ceiling, a currency and
+ * optionally a merchant allowlist. A merchant checks the signature and
+ * the limits before settling. This module does not move money and
+ * does not enforce single use: `singleUse` is a hint, and the
+ * settlement layer must record `vaptHash(token)` to reject replays.
  *
  * Wire format:
  *
@@ -211,6 +205,9 @@ export function parseVapt(
   try {
     payload = JSON.parse(canonical) as VaptPayload;
   } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
   }
   if (payload.scheme !== "vapt1") return null;

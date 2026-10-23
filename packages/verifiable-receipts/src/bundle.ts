@@ -6,9 +6,9 @@
  * mtime, no extra fields). Caller supplies a sign() callback — the
  * bundle is then a self-contained tamper-evident archive.
  *
- * Use case: "I want every receipt my company ever generated as one
- * ZIP I can hand my auditor." The auditor's verifier re-computes the
- * MANIFEST hash + signature without unzipping.
+ * Use case: hand a set of receipts to a third party as one file. The
+ * verifier recomputes the manifest hash and checks its signature
+ * without unzipping.
  */
 
 import { createHash } from "node:crypto";
@@ -192,6 +192,12 @@ export function buildSignedBundle(
 /**
  * Verify a manifest. Pure — no unzip needed. Returns one of 4
  * failure modes when invalid.
+ *
+ * This checks the manifest only. It does not open the ZIP: to check
+ * the files, recompute `bundleDigest()` over the archive's entries
+ * (without MANIFEST.signed.json) and compare it with
+ * `manifest.bundleDigest`. The receipts' own signatures are not
+ * checked here either.
  */
 export function verifyManifest(
   manifest: BundleManifest,
@@ -240,8 +246,9 @@ function stableStringify(v: unknown): string {
 function sortKeysDeep(v: unknown): unknown {
   if (v === null || typeof v !== "object") return v;
   if (Array.isArray(v)) return v.map(sortKeysDeep);
-  const out: Record<string, unknown> = {};
-  for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+  // Null prototype, so a "__proto__" key is kept as an own property.
+  const out = Object.create(null) as Record<string, unknown>;
+  for (const k of Object.keys(v).sort()) {
     out[k] = sortKeysDeep((v as Record<string, unknown>)[k]);
   }
   return out;

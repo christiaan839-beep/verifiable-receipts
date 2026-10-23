@@ -12,8 +12,6 @@ Run from the repo root:
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import re
 import sys
@@ -30,8 +28,8 @@ if str(SDK_DIR) not in sys.path:
     sys.path.insert(0, str(SDK_DIR))
 
 from sovereign_matrix.verifiable_receipts import (  # noqa: E402
-    verify_v2_receipt,
     verify_inclusion_proof,
+    verify_v2_receipt,
 )
 
 FIXTURES_DIR = HERE / "fixtures"
