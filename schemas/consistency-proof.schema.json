@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/consistency-proof.schema.json",
+  "title": "Consistency proof",
+  "description": "The hashes showing a tree of newSize leaves extends the tree of oldSize leaves (RFC 9162 section 2.1.4). oldSize must also be at most newSize, which a verifier checks. Check both roots against signed tree heads.",
+  "type": "object",
+  "required": ["oldSize", "newSize", "oldRootHex", "newRootHex", "proof"],
+  "properties": {
+    "kind": { "const": "consistency" },
+    "logId": { "type": "string", "minLength": 1 },
+    "oldSize": { "$ref": "defs.schema.json#/$defs/count" },
+    "newSize": { "$ref": "defs.schema.json#/$defs/count" },
+    "oldRootHex": { "$ref": "defs.schema.json#/$defs/hash" },
+    "newRootHex": { "$ref": "defs.schema.json#/$defs/hash" },
+    "proof": { "type": "array", "items": { "$ref": "defs.schema.json#/$defs/hash" }, "maxItems": 106 }
+  }
+}

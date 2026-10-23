@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/receipt.schema.json",
+  "title": "Receipt (v2)",
+  "description": "An issuer's signed record of an action (a SCITT Signed Statement). The schema checks shape only: a verifier checks the signature, the content hash and that every repeated field equals the same field of the parsed canonical.",
+  "type": "object",
+  "required": ["canonical", "signature"],
+  "properties": {
+    "canonical": {
+      "description": "The exact UTF-8 text that was signed: a JSON object.",
+      "type": "string",
+      "minLength": 2
+    },
+    "contentHash": {
+      "description": "SHA-256 of canonical, optionally prefixed with sha256:.",
+      "type": ["string", "null"],
+      "pattern": "^(sha256:)?[0-9a-f]{64}$"
+    },
+    "signature": { "$ref": "defs.schema.json#/$defs/v2Signature" }
+  }
+}

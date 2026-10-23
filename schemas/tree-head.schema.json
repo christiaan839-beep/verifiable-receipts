@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/christiaan839-beep/verifiable-receipts/blob/main/schemas/tree-head.schema.json",
+  "title": "Signed tree head",
+  "description": "A log's signed statement of its size and root at a time. The signature covers JSON.stringify of logId, rootHash, timestamp, treeSize and v, in that order; canonical, when present, must equal that text.",
+  "type": "object",
+  "required": ["v", "logId", "treeSize", "rootHash", "timestamp"],
+  "properties": {
+    "v": { "const": 1 },
+    "logId": { "type": "string", "minLength": 1 },
+    "treeSize": { "$ref": "defs.schema.json#/$defs/count" },
+    "rootHash": { "$ref": "defs.schema.json#/$defs/hash" },
+    "timestamp": {
+      "description": "As Date.prototype.toISOString writes it.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "signature": { "$ref": "defs.schema.json#/$defs/v2Signature" },
+    "canonical": { "type": "string" }
+  }
+}
