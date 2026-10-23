@@ -39,5 +39,6 @@ not affect this code (report those upstream).
 
 ## Supported versions
 
-Only the latest commit on `main` gets fixes. No version has been
-published to a package registry.
+Fixes go into `main` and the latest release of each package (npm,
+PyPI and the Go module); older versions are not patched. Releases are
+built and published from CI with signed provenance (see `RELEASING.md`).

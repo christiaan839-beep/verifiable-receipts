@@ -25,6 +25,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
 
+[project.optional-dependencies]
+test = ["pytest", "hypothesis==6.168.5"]
+
 [project.urls]
 Homepage = "https://github.com/christiaan839-beep/verifiable-receipts"
 Source = "https://github.com/christiaan839-beep/verifiable-receipts/tree/main/packages/verifiable-receipts-py"
