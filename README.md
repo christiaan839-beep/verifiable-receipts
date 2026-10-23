@@ -62,7 +62,7 @@ git clone https://github.com/christiaan839-beep/verifiable-receipts
 cd verifiable-receipts
 ```
 
-- **TypeScript** (Node 20.19 or later; the tests need Node 22):
+- **TypeScript** (Node 22.12 or later):
   `(cd packages/verifiable-receipts && npm ci)` installs and builds
   `dist/`. From your own project:
   `npm install --install-links /path/to/verifiable-receipts/packages/verifiable-receipts`.

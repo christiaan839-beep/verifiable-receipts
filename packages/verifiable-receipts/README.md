@@ -4,7 +4,7 @@ TypeScript library for signing receipts for AI agent actions and
 verifying them later. Version 0.4.0, Apache-2.0. Not on npm yet:
 install it from the repository (see the [root README](../../README.md)).
 
-Node 20.19 or later (the tests need Node 22). One runtime dependency,
+Node 22.12 or later. One runtime dependency,
 `@noble/post-quantum`, for ML-DSA-65. Ed25519 is supplied by the caller
 (`node:crypto`, a KMS, an HSM), except in the CLIs, which use
 `node:crypto`.
