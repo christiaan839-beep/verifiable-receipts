@@ -138,15 +138,27 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 
 			if _, isInclusion := probe["leafHashHex"]; isInclusion {
 				var fixture inclusionFixture
+				// A proof that does not decode into InclusionProof (an index
+				// of 1.5, say) is rejected before it reaches the verifier.
+				var actual bool
 				if err := json.Unmarshal(raw, &fixture); err != nil {
-					t.Fatalf("unmarshal inclusion: %v", err)
+					var shape struct {
+						Expected struct {
+							OK bool `json:"ok"`
+						} `json:"expected"`
+					}
+					if json.Unmarshal(raw, &shape) != nil {
+						t.Fatalf("unmarshal inclusion: %v", err)
+					}
+					fixture.Expected.OK = shape.Expected.OK
+				} else {
+					proof := InclusionProof{
+						LeafIndex: fixture.LeafIndex,
+						TreeSize:  fixture.TreeSize,
+						AuditPath: fixture.AuditPath,
+					}
+					actual = VerifyInclusionProof(proof, fixture.LeafHashHex, fixture.RootHashHex)
 				}
-				proof := InclusionProof{
-					LeafIndex: fixture.LeafIndex,
-					TreeSize:  fixture.TreeSize,
-					AuditPath: fixture.AuditPath,
-				}
-				actual := VerifyInclusionProof(proof, fixture.LeafHashHex, fixture.RootHashHex)
 				if actual != fixture.Expected.OK {
 					t.Fatalf(
 						"%s: expected ok=%v, got ok=%v",

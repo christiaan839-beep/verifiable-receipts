@@ -76,8 +76,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 23 October 2026: TypeScript 16 passed,
-Python 17 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 23 October 2026: TypeScript 23 passed,
+Python 24 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -92,11 +92,15 @@ Fixtures cover:
   object's keys in another order) accept · a field that disagrees with
   it (`overall` fail against pass) reject · a field it does not contain
   reject
-- RFC 9162 inclusion proof: single-leaf · 4-leaf (idx 1) · 7-leaf
-  asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) · tampered-root
-  reject · out-of-range index
+- RFC 9162 inclusion proof: single-leaf · 2-leaf (idx 1) · 4-leaf
+  (idx 1) · 7-leaf asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) ·
+  tampered-root reject · out-of-range index
+- Proof input encoding (`docs/specs/transparency-log.md` §3.6), each
+  reject: uppercase hex · `0x` prefix · a 64-byte leaf with an empty
+  audit-path entry (folds to the 2-leaf root) · leafIndex 1.5 ·
+  leafIndex `true` · the 2-leaf proof at treeSize 2^32 + 2
 
-16 fixtures, each checked by all 3 verifiers.
+23 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 

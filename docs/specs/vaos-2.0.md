@@ -167,11 +167,19 @@ Given a receipt and the issuer's verification key, a verifier:
 
 1. Parses `signature`. If the prefix is `v1=`, fall back to VAOS 1.0
    §8. If the prefix is `v2=`, continue. Any other prefix → reject.
-2. Strips the `v2=` prefix and base64-decodes the remainder.
+2. Strips the `v2=` prefix and base64-decodes the remainder. The
+   remainder MUST be canonical padded standard base64 (RFC 4648 §4):
+   only characters of the standard alphabet and `=` padding (no
+   whitespace, CR or LF anywhere), the padding present, and the unused
+   bits of the last character zero. Equivalently, re-encoding the
+   decoded bytes MUST give back the remainder exactly. Any other
+   spelling → reject, even when a lenient decoder would return the same
+   bytes, so a signature has exactly one valid string form.
 3. Takes the receipt's `canonical` string as the signed message: its
    UTF-8 bytes, exactly as given. When the receipt carries
-   `contentHash`, checks that it equals `sha256:` followed by the hex
-   SHA-256 of those bytes (the `sha256:` prefix is optional).
+   `contentHash`, checks that it equals `sha256:` followed by the
+   lowercase hex SHA-256 of those bytes (the `sha256:` prefix is
+   optional; uppercase hex → reject).
 4. Calls the host's Ed25519 verification primitive
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the

@@ -34,7 +34,7 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   valid spelling. Go's decoder skips CR and LF even in strict mode, so
   the Go verifier also checks that the decoded bytes re-encode to the
   exact text. New fixtures: `v2-invalid-noncanonical-base64.json` and
-  `v2-invalid-crlf-base64.json` (16 in all).
+  `v2-invalid-crlf-base64.json`.
 - `verifiable-receipts verify` refuses `v3=` manifests (it used to
   accept one on its Ed25519 half alone) and signatures without the
   `v2=` prefix.
@@ -49,6 +49,17 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   affected.
 - `buildSignedBundle` / `verifyManifest` keep a `__proto__` key in the
   hashed manifest instead of dropping it.
+- The inclusion and consistency proof verifiers (TypeScript, Python,
+  Go) require every hash to be 64 lowercase hex digits and every index
+  or size to be an integer in range; anything else returns false. Before,
+  a 64-byte "leaf" with an empty audit-path entry verified against a
+  two-leaf root in all three; uppercase and `0x`-prefixed hex were
+  accepted; TypeScript accepted a fractional or NaN index and wrapped
+  index arithmetic at 32 bits (a two-leaf proof verified for a tree of
+  2^32 + 2 leaves); `verifyConsistencyProof` threw on such sizes; Python
+  raised `OverflowError` on an infinite index and read `true`, `"1"` and
+  `1.5` as 1. Seven new fixtures (23 in all); the rules are in
+  `docs/specs/transparency-log.md` §3.6.
 
 ### Changed
 

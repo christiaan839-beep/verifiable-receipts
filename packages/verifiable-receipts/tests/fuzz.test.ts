@@ -247,6 +247,9 @@ describe("verifyInclusionProof", () => {
           expect(typeof ok).toBe("boolean");
           if (ok) {
             expect(verifyInclusionProof(leaf, idx, size, proof, `${root}0`)).toBe(false);
+            // One spelling: what passes is safe integers and 64 lowercase hex digits.
+            expect(Number.isSafeInteger(idx) && Number.isSafeInteger(size)).toBe(true);
+            for (const h of [leaf, root, ...proof]) expect(h).toMatch(/^[0-9a-f]{64}$/);
           }
         },
       ),
@@ -275,6 +278,26 @@ describe("verifyInclusionProof", () => {
 });
 
 describe("verifyConsistencyProof", () => {
+  it("never throws on arbitrary sizes and hashes", () => {
+    fc.assert(
+      fc.property(
+        sizeArb,
+        sizeArb,
+        fc.oneof(hexArb, fc.string()),
+        fc.oneof(hexArb, fc.string()),
+        fc.array(fc.oneof(hexArb, fc.string()), { maxLength: 40 }),
+        (oldSize, newSize, oldRoot, newRoot, proof) => {
+          const ok = verifyConsistencyProof(oldSize, newSize, oldRoot, newRoot, proof);
+          expect(typeof ok).toBe("boolean");
+          if (ok) {
+            expect(Number.isSafeInteger(oldSize) && Number.isSafeInteger(newSize)).toBe(true);
+            for (const h of [oldRoot, newRoot, ...proof]) expect(h).toMatch(/^[0-9a-f]{64}$/);
+          }
+        },
+      ),
+    );
+  }, timeout);
+
   it("verifies a real proof and rejects a wrong old or new root", () => {
     fc.assert(
       fc.property(treeArb(64), fc.nat(), hexArb, (leaves, pick, wrongRoot) => {
