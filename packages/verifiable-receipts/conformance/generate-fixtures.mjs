@@ -71,6 +71,14 @@ function respell(wire) {
   return `v2=${b64.slice(0, -3)}${ALPHABET[last ^ 1]}==`;
 }
 
+// The same signature with a line feed after its fourth character. Some
+// base64 decoders skip CR and LF (Go's does even in strict mode) and
+// return the same bytes; a verifier must reject the spelling.
+function withLineFeed(wire) {
+  const b64 = wire.slice(3);
+  return `v2=${b64.slice(0, 4)}\n${b64.slice(4)}`;
+}
+
 const fixtures = {
   "v2-valid-001.json": {
     description: "v2 valid — well-formed Guardian attestation",
@@ -114,6 +122,16 @@ const fixtures = {
       canonical: CANONICAL,
       contentHash,
       signature: respell(signWith(privateKey)),
+    },
+    expected: { ok: false, reasonContains: "base64" },
+  },
+  "v2-invalid-crlf-base64.json": {
+    description:
+      "v2 invalid — signature base64 has a line feed inside (decoders that skip whitespace return the valid signature's bytes)",
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: withLineFeed(signWith(privateKey)),
     },
     expected: { ok: false, reasonContains: "base64" },
   },

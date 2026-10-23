@@ -77,7 +77,7 @@ From the root of a clone of this repository:
 
 Each harness checks every fixture against its `expected.ok`, and all
 three MUST agree. Measured on 23 October 2026: TypeScript 16 passed,
-Python 16 passed (one fixture-count check plus one test per fixture), Go
+Python 17 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -86,7 +86,8 @@ Fixtures cover:
 
 - v2 wire format: well-formed accept · canonical-tamper reject ·
   wrong-key reject · base64 malformed · base64 not canonical (same
-  bytes, different spelling) · non-v2 prefix
+  bytes, different spelling) · base64 with a line feed inside (same
+  bytes) · non-v2 prefix
 - v2 envelope: fields beside `canonical` that repeat it (a nested
   object's keys in another order) accept · a field that disagrees with
   it (`overall` fail against pass) reject · a field it does not contain
@@ -95,7 +96,7 @@ Fixtures cover:
   asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) · tampered-root
   reject · out-of-range index
 
-15 fixtures, each checked by all 3 verifiers.
+16 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
