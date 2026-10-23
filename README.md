@@ -52,6 +52,8 @@ The formats are specified in
 [transparency log](docs/specs/transparency-log.md),
 [stream attestation](docs/specs/vaos-rsa-1.0.md) and
 [payment tokens](docs/specs/vapt-1.0.md).
+[`docs/ontology.md`](docs/ontology.md) defines every term, its relations,
+and its equivalent in SCITT (RFC 9943).
 
 ## Install
 
