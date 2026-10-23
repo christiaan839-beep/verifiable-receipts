@@ -10,12 +10,15 @@ Hash domain separation per RFC 9162 §2:
     leaf_hash(data) = SHA-256(0x00 || data)
     inner_hash(left, right) = SHA-256(0x01 || left || right)
 
-All hex inputs are case-insensitive but compared lowercase.
+Every hash input is 32 bytes written as exactly 64 lowercase hex digits;
+anything else (uppercase, a 0x or sha256: prefix, another length) is
+rejected, so a hash has one spelling.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 
 _LEAF_PREFIX = b"\x00"
@@ -39,12 +42,14 @@ def inner_hash(left: bytes, right: bytes) -> bytes:
     return h.digest()
 
 
-def _hex_to_bytes(hex_str: str) -> bytes:
-    """Decode hex string (case-insensitive) to bytes. Raises ValueError."""
-    if not isinstance(hex_str, str):
-        raise ValueError("expected hex string")
-    cleaned = hex_str.lower().removeprefix("sha256:").removeprefix("0x")
-    return bytes.fromhex(cleaned)
+_HASH_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def _hash_bytes(hex_str: object) -> bytes | None:
+    """Decode a wire hash (64 lowercase hex digits) to 32 bytes, or None."""
+    if not isinstance(hex_str, str) or _HASH_HEX.fullmatch(hex_str) is None:
+        return None
+    return bytes.fromhex(hex_str)
 
 
 def verify_inclusion_proof(
@@ -67,16 +72,17 @@ def verify_inclusion_proof(
         the algorithm RFC 9162 §2.1.1 yields exactly root_hash_hex.
 
     Notes:
-        - leafIndex must be in [0, treeSize)
-        - treeSize must be > 0
+        - leafIndex and treeSize must be ints (not bools, floats or
+          strings), with 0 <= leafIndex < treeSize
+        - every hash must be 64 lowercase hex digits
         - The number of audit-path siblings is determined by the path
           from the leaf to the root; mismatches return False rather
           than raising.
     """
-    try:
-        leaf_index = int(proof.get("leafIndex", -1))
-        tree_size = int(proof.get("treeSize", 0))
-    except (TypeError, ValueError):
+    leaf_index = proof.get("leafIndex")
+    tree_size = proof.get("treeSize")
+    # type() rather than isinstance(): bool is a subclass of int.
+    if type(leaf_index) is not int or type(tree_size) is not int:
         return False
 
     audit_path = proof.get("auditPath")
@@ -88,20 +94,19 @@ def verify_inclusion_proof(
     if leaf_index < 0 or leaf_index >= tree_size:
         return False
 
+    current = _hash_bytes(leaf_hash_hex)
+    expected_root = _hash_bytes(root_hash_hex)
+    if current is None or expected_root is None:
+        return False
+
     # Single-leaf tree: root equals leaf, no audit path.
     if tree_size == 1:
-        return len(audit_path) == 0 and leaf_hash_hex == root_hash_hex
+        return len(audit_path) == 0 and current == expected_root
 
     # RFC 9162 / RFC 6962 §2.1.1 inner/border decomposition. The
     # simpler index%2 walk fails on right-edge carry-up cases (e.g.
     # idx=6 in a 7-leaf tree); the bit-decomposition handles every
     # tree shape correctly. Matches the TypeScript canonical verifier.
-    try:
-        current = _hex_to_bytes(leaf_hash_hex)
-        expected_root = _hex_to_bytes(root_hash_hex)
-    except ValueError:
-        return False
-
     inner = (leaf_index ^ (tree_size - 1)).bit_length()
     border = bin(leaf_index >> inner).count("1")
     if len(audit_path) != inner + border:
@@ -110,12 +115,10 @@ def verify_inclusion_proof(
     # Pre-decode every audit-path entry; reject any malformed entry.
     siblings: list[bytes] = []
     for sibling_hex in audit_path:
-        if not isinstance(sibling_hex, str):
+        sibling = _hash_bytes(sibling_hex)
+        if sibling is None:
             return False
-        try:
-            siblings.append(_hex_to_bytes(sibling_hex))
-        except ValueError:
-            return False
+        siblings.append(sibling)
 
     # Inner segment: walk the bits of leaf_index. Bit=0 → sibling on
     # the right; bit=1 → sibling on the left.
