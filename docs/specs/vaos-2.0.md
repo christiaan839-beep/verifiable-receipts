@@ -182,8 +182,8 @@ Given a receipt and the issuer's verification key, a verifier:
    optional; uppercase hex → reject). A receipt carries `contentHash`
    when the key is present with any value but JSON `null`: an absent
    or `null` `contentHash` is not checked; any other value MUST be a
-   string, and is checked, so the empty string → reject, as does a
-   non-string value.
+   string and is checked: a non-string value → reject, and so does the
+   empty string.
 4. Calls the host's Ed25519 verification primitive
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the

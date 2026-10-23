@@ -7,6 +7,6 @@
   },
   "expected": {
     "ok": false,
-    "reasonContains": "contentHash"
+    "reasonContains": "contentHash mismatch"
   }
 }

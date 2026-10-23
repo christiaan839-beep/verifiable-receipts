@@ -60,8 +60,11 @@ func main() {
 
 1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
    followed by canonical standard base64 (padding bits zero).
-2. If `ContentHash` is set, it equals the hex SHA-256 of `Canonical`
-   (the `sha256:` prefix is optional).
+2. If the receipt has a contentHash, it equals the hex SHA-256 of
+   `Canonical` (the `sha256:` prefix is optional). It has one when the
+   receipt's JSON has a string `contentHash`, even `""`, or when
+   `ContentHash` is non-empty; an absent or `null` `contentHash` is not
+   checked.
 3. The Ed25519 signature verifies over the bytes of `Canonical`, exactly
    as given.
 4. `Canonical` parses as a JSON object.

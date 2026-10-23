@@ -100,7 +100,18 @@ const fixtures = {
       contentHash: "",
       signature: signWith(privateKey),
     },
-    expected: { ok: false, reasonContains: "contentHash" },
+    expected: { ok: false, reasonContains: "contentHash mismatch" },
+  },
+  // null is not a hash: a verifier treats it as an absent contentHash.
+  "v2-valid-null-contenthash.json": {
+    description:
+      "v2 valid — contentHash is null (null means no hash, as if the field were absent)",
+    receipt: {
+      canonical: CANONICAL,
+      contentHash: null,
+      signature: signWith(privateKey),
+    },
+    expected: { ok: true },
   },
   "v2-invalid-wrong-key.json": {
     description: "v2 invalid — signature under wrong key",

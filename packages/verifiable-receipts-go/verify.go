@@ -97,6 +97,26 @@ func (r *Receipt) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// MarshalJSON writes canonical, contentHash and signature, as the
+// default encoding did, but writes contentHash only when the receipt
+// has one: ContentHash is non-empty, or UnmarshalJSON read a string
+// contentHash (even ""). So a receipt with no hash stays without one
+// after a round trip, and a parsed "" stays a defect. Envelope is not
+// written, as before.
+func (r Receipt) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Canonical   string  `json:"canonical"`
+		ContentHash *string `json:"contentHash,omitempty"`
+		Signature   string  `json:"signature"`
+	}
+	w := wire{Canonical: r.Canonical, Signature: r.Signature}
+	if r.ContentHash != "" || r.hasContentHash {
+		hash := r.ContentHash
+		w.ContentHash = &hash
+	}
+	return json.Marshal(w)
+}
+
 // VerifyResult is the outcome of a verification attempt. OK reports
 // success; Reason is non-empty on failure.
 type VerifyResult struct {

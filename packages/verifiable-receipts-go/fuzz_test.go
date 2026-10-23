@@ -101,7 +101,10 @@ func checkAccepted(t *testing.T, r Receipt, pub ed25519.PublicKey) {
 	if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, []byte(r.Canonical), sig) {
 		t.Fatalf("accepted a signature that does not verify: %q", r.Signature)
 	}
-	if r.ContentHash != "" && strings.TrimPrefix(r.ContentHash, "sha256:") != contentHash(r.Canonical)[len("sha256:"):] {
+	// A receipt has a contentHash when ContentHash is non-empty or, for
+	// a parsed one (FuzzReceiptJSON), when its JSON held a string, even "".
+	hasHash := r.ContentHash != "" || r.hasContentHash
+	if hasHash && strings.TrimPrefix(r.ContentHash, "sha256:") != contentHash(r.Canonical)[len("sha256:"):] {
 		t.Fatalf("accepted a wrong contentHash %q", r.ContentHash)
 	}
 	if pub.Equal(fuzzPub) && r.Signature != signV2(fuzzPriv, r.Canonical) {
@@ -170,6 +173,18 @@ func FuzzReceiptJSON(f *testing.F) {
 		f.Fatalf("marshal seed: %v", err)
 	}
 	f.Add(body)
+	// Signed under the fuzz key with contentHash "", so only the
+	// contentHash check can reject it: the fixtures' copy is signed
+	// under the fixture key and fails the signature check here.
+	empty, err := json.Marshal(map[string]any{
+		"canonical":   canonical,
+		"contentHash": "",
+		"signature":   signV2(fuzzPriv, canonical),
+	})
+	if err != nil {
+		f.Fatalf("marshal seed: %v", err)
+	}
+	f.Add(empty)
 	f.Add([]byte(`null`))
 	f.Add([]byte(`{"canonical":7}`))
 
