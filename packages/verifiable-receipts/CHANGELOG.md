@@ -30,8 +30,11 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes and an ML-DSA-65 half that is not 3309 bytes.
 - The `v2=` verifiers (Python, Go, the conformance harness and the
   `verifiable-receipts verify` CLI) reject base64 signatures with
-  non-zero padding bits, so a signature has one valid spelling. New
-  fixture: `v2-invalid-noncanonical-base64.json` (15 in all).
+  non-zero padding bits or with CR or LF inside, so a signature has one
+  valid spelling. Go's decoder skips CR and LF even in strict mode, so
+  the Go verifier also checks that the decoded bytes re-encode to the
+  exact text. New fixtures: `v2-invalid-noncanonical-base64.json` and
+  `v2-invalid-crlf-base64.json` (16 in all).
 - `verifiable-receipts verify` refuses `v3=` manifests (it used to
   accept one on its Ed25519 half alone) and signatures without the
   `v2=` prefix.

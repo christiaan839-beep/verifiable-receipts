@@ -141,6 +141,30 @@ func TestVerifyV2Receipt_RejectsMalformedBase64(t *testing.T) {
 	}
 }
 
+func TestVerifyV2Receipt_RejectsNonCanonicalBase64Spellings(t *testing.T) {
+	pub, priv, _ := makeKeyPair(t)
+	canonical := `{"verdictId":"v_test","overall":"pass"}`
+	sig := strings.TrimPrefix(signV2(priv, canonical), "v2=")
+	// Go's decoder skips CR and LF even in strict mode, so each of these
+	// decodes to the valid signature's bytes; each must still fail.
+	for _, s := range []string{
+		sig[:4] + "\n" + sig[4:],
+		sig[:4] + "\r" + sig[4:],
+		sig + "\r\n",
+		"\n" + sig,
+		sig[:40] + "\r\n" + sig[40:],
+	} {
+		r := Receipt{Canonical: canonical, Signature: "v2=" + s, ContentHash: contentHash(canonical)}
+		if VerifyV2Receipt(r, pub).OK {
+			t.Errorf("accepted non-canonical spelling %q", s)
+		}
+	}
+	r := Receipt{Canonical: canonical, Signature: "v2=" + sig, ContentHash: contentHash(canonical)}
+	if !VerifyV2Receipt(r, pub).OK {
+		t.Fatal("the canonical spelling must still verify")
+	}
+}
+
 func TestVerifyV2Receipt_RejectsMissingFields(t *testing.T) {
 	pub, _, _ := makeKeyPair(t)
 	if VerifyV2Receipt(Receipt{Signature: "v2=x"}, pub).OK {

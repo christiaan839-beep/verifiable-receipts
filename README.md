@@ -185,8 +185,9 @@ Report a vulnerability privately: see [SECURITY.md](SECURITY.md).
 ## Conformance
 
 [`packages/verifiable-receipts/conformance/fixtures/`](packages/verifiable-receipts/conformance/fixtures)
-holds 15 JSON fixtures: valid receipts, a tampered one, one signed with
-another key, malformed and non-canonical base64, a `v1=` prefix, fields
+holds 16 JSON fixtures: valid receipts, a tampered one, one signed with
+another key, malformed and non-canonical base64 (padding bits, a line
+feed inside), a `v1=` prefix, fields
 beside `canonical` that agree or disagree with it, and six inclusion
 proofs. The node, Python and Go verifiers each run every fixture and
 must reach its `expected.ok`. The fixtures were signed with a key whose
