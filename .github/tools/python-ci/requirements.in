@@ -6,3 +6,4 @@ cryptography
 pytest
 hypothesis==6.168.5
 ruff==0.17.0
+jsonschema
