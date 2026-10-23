@@ -30,9 +30,9 @@ three, and the shared fixtures decide whether they agree.
 # TypeScript
 (cd packages/verifiable-receipts && npm ci && npm run typecheck && npm run lint && npm run build && npm test)
 # Python
-pip install "./packages/verifiable-receipts-py[test]" ruff==0.17.2
+pip install --require-hashes --no-deps -r .github/tools/python-ci/requirements.txt
 ruff check .
-python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py
+PYTHONPATH=packages/verifiable-receipts-py python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py
 # Go
 (cd packages/verifiable-receipts-go && test -z "$(gofmt -l .)" && go vet ./... && go test ./...)
 # All three together

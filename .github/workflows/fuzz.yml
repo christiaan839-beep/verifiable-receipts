@@ -87,7 +87,7 @@ jobs:
       - name: Build the TypeScript package
         working-directory: packages/verifiable-receipts
         run: npm ci && npm run build
-      - run: python -m pip install ./packages/verifiable-receipts-py
+      - run: python -m pip install --require-hashes --no-deps -r .github/tools/python-ci/requirements.txt
       - name: Every case judged alike by all three verifiers
         env:
           RUN_ID: ${{ github.run_id }}
@@ -134,5 +134,5 @@ jobs:
         env:
           HYPOTHESIS_PROFILE: nightly
         run: |
-          python -m pip install "./packages/verifiable-receipts-py[test]"
-          python -m pytest -q packages/verifiable-receipts-py/tests/test_fuzz.py
+          python -m pip install --require-hashes --no-deps -r .github/tools/python-ci/requirements.txt
+          PYTHONPATH=packages/verifiable-receipts-py python -m pytest -q packages/verifiable-receipts-py/tests/test_fuzz.py

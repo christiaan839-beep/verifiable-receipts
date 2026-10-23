@@ -1,0 +1,8 @@
+# The Python packages CI installs, by hash. The package under test is
+# read from the working tree (PYTHONPATH), not installed. Regenerate
+# requirements.txt after a change here with:
+#   uv pip compile --generate-hashes --python-version 3.12 --exclude-newer <14 days ago> -o requirements.txt requirements.in
+cryptography
+pytest
+hypothesis==6.168.5
+ruff==0.17.0

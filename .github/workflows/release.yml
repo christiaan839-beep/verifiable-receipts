@@ -159,20 +159,21 @@ jobs:
       name: release
       url: https://www.npmjs.com/package/@sovereign-matrix/verifiable-receipts
     permissions:
-      contents: read # check out the pinned npm CLI's lockfile
       id-token: write # npm trusted publishing (OIDC) and npm provenance
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          sparse-checkout: .github/tools/npm-cli
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Install the npm CLI that supports staged publishing, from its lockfile
-        run: npm ci --prefix .github/tools/npm-cli --ignore-scripts --no-audit --no-fund
+      # The npm that ships with Node 24 (11.19 since Node 24.21) stages
+      # packages; check it is at least 11.15, the first that can.
+      - name: npm supports staged publishing
+        run: |
+          v=$(npm --version)
+          echo "npm $v"
+          node -e 'const [a, b] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && b >= 15) ? 0 : 1)' "$v" \
+            || { echo "::error::npm $v cannot stage packages; it needs 11.15 or later"; exit 1; }
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
@@ -180,11 +181,9 @@ jobs:
       - name: Stage the attested tarball's contents for approval on npm
         run: |
           set -euo pipefail
-          npm="$GITHUB_WORKSPACE/.github/tools/npm-cli/node_modules/.bin/npm"
-          "$npm" --version
           tar -xzf dist/*.tgz
           cd package
-          "$npm" stage publish --ignore-scripts
+          npm stage publish --ignore-scripts
 
   publish-pypi:
     name: Publish on PyPI
