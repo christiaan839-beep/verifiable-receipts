@@ -215,7 +215,7 @@ jobs:
     steps:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.27"
           cache: false
       - name: Fetch the module version through the public proxy and checksum database
         env:

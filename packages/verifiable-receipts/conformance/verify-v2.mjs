@@ -98,7 +98,7 @@ export function verifyV2Receipt(receipt, publicKey) {
     }
   }
 
-  let verified = false;
+  let verified;
   try {
     verified = nodeVerify(null, canonicalBytes, publicKey, sigBytes);
   } catch {

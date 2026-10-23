@@ -282,7 +282,7 @@ export async function verifyThresholdAttestation(
       continue;
     }
     seen.add(c.issuerId);
-    let ok = false;
+    let ok: boolean;
     try {
       ok = await opts.verifyIssuerSignature(
         boundBytes,

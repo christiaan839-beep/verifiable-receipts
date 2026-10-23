@@ -80,7 +80,11 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v2 non-malleability proof sketches were wrong in the cases above and
   carry correction notes.
 - `SPEC.md` rewritten to match what this version emits and accepts.
-- `engines.node` is `>=20.19` (what `@noble/post-quantum` 0.6 needs).
+- `engines.node` is `>=22.12`: Node 20 reached end of life on 30 April
+  2026, and CI tests Node 22 and 24. `@noble/post-quantum` is 0.7.1
+  (its ML-DSA fixes include an intermediate overflow in NTT
+  multiplication); signatures made with 0.6.1 verify under 0.7.1 and the
+  other way round.
   Exports added for `./threshold`, `./stream-attestation` and `./vapt`.
 - Dev tooling: vitest 5 (vitest 3 depended on a tinypool with a
   critical advisory), ESLint with typescript-eslint, `npm run

@@ -17,9 +17,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   typescript:
-    name: TypeScript
+    name: TypeScript (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24] # the supported LTS lines; engines starts at 22
     defaults:
       run:
         working-directory: packages/verifiable-receipts
@@ -29,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -52,9 +56,13 @@ jobs:
       - run: python -m pytest packages/verifiable-receipts-py/tests
       - run: python -m pytest packages/verifiable-receipts/conformance/conformance.py
   go:
-    name: Go
+    name: Go ${{ matrix.go }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "1.27"] # the go.mod minimum and the newest supported release
     defaults:
       run:
         working-directory: packages/verifiable-receipts-go
@@ -64,7 +72,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.22"
+          go-version: ${{ matrix.go }}
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test ./...
@@ -87,7 +95,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.22"
+          go-version: "1.27"
       - run: npm ci
         working-directory: packages/verifiable-receipts
       - run: pip install ./packages/verifiable-receipts-py

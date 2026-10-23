@@ -18,6 +18,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 14
+    ignore:
+      # The types follow the oldest Node the package supports (engines), so
+      # a newer Node's APIs fail the type check instead of a user's code.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-development:
         dependency-type: development
