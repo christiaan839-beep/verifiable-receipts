@@ -10,7 +10,7 @@
 
 **Design:** `docs/design/2026-10-23-ontology-and-proof-explorer.md` (verifiable-receipts), Part 2.
 
-**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `fd2390b`, the `VR_REF`: 115 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 32 Playwright tests on Chromium (Largest Contentful Paint 1.27 to 1.29 s under the fast 3G profile), ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export of `fd2390b`. `static/check.js` is 26,282 bytes, 8,973 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
+**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `fd2390b`, the `VR_REF`: 116 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 32 Playwright tests on Chromium (Largest Contentful Paint 1.27 to 1.29 s under the fast 3G profile), ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export of `fd2390b`. `static/check.js` is 26,282 bytes, 8,973 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
 
 **Repository:** `~/Projects/receipts-explorer` (new), published in Task 17 as github.com/christiaan839-beep/receipts-explorer.
 
@@ -53,9 +53,11 @@
 | File | Responsibility | Task |
 |---|---|---|
 | `package.json`, `package-lock.json` | Development tools at exact versions; scripts | 1 |
-| `tsconfig.json`, `eslint.config.js` | Strict types; lint rules that forbid HTML parsing, storage and stray network calls in `src/` | 1 |
+| `tsconfig.json`, `src/tsconfig.json` | Strict types: tests and tools with Node's types; `src/` without them, so Node APIs in the page fail to compile | 1 |
+| `eslint.config.js` | Lint rules that keep `src/` a page that parses no HTML, stores nothing, loads no code, uses no Node API and talks only to the log | 1 |
 | `pyproject.toml` | ruff settings | 1 |
-| `.gitignore`, `.claude/launch.json`, `LICENSE` | Housekeeping | 1 |
+| `.gitignore`, `.npmrc`, `.claude/launch.json`, `LICENSE` | Housekeeping: ignored files, exact saves and enforced engines | 1 |
+| `test/lint.test.ts` | Proves every lint rule on `src/` bites | 3 |
 | `third_party/verifiable-receipts/` | `VR_REF`, `LICENSE`, `README.md`, `SHA256SUMS`, `verify-v2.mjs`, `ontology.md` | 2 |
 | `test/fixtures/conformance/`, `test/fixtures/schemas/` | Test vectors copied from `VR_REF` | 2 |
 | `scripts/check-vendor.sh` | The drift check | 2 |
@@ -98,7 +100,7 @@
 - Node 22.18 or later (`node --version`). If `npm` fails with `EACCES` on `~/.npm`, add `--cache "$TMPDIR/npm-cache"`.
 - Python tests: `PY=/opt/homebrew/bin/python3.12`; ruff: `uvx ruff@0.17.0`; zizmor: `uvx zizmor@1.30.1`.
 - `VR=~/Projects/verifiable-receipts` and, from Task 2, `VR_REF=$(cat third_party/verifiable-receipts/VR_REF)`.
-- Every TypeScript task ends with `npx tsc -p tsconfig.json && npx eslint . && npm test`, which must print nothing from tsc and ESLint and `# fail 0` from the tests.
+- Every TypeScript task ends with `npm run typecheck && npx eslint . && npm test`, which must print nothing from tsc and ESLint and `# fail 0` from the tests. `npm run typecheck` runs `tsc` twice: on `tsconfig.json` (tests, end-to-end tests and tools, with Node's types) and on `src/tsconfig.json` (the page, without them).
 - Commit with this identity; no global git identity is set:
 
 ```bash
@@ -114,7 +116,7 @@ git commit --author="$A" -m "<subject>" -m "<body>" -m "Co-Authored-By: Claude O
 ### Task 1: the repository and its tools
 
 **Files:**
-- Create: `LICENSE` (copied), `.gitignore`, `package.json`, `package-lock.json` (by npm), `tsconfig.json`, `eslint.config.js`, `pyproject.toml`, `.claude/launch.json`
+- Create: `LICENSE` (copied), `.gitignore`, `.npmrc`, `package.json`, `package-lock.json` (by npm), `tsconfig.json`, `src/tsconfig.json`, `eslint.config.js`, `pyproject.toml`, `.claude/launch.json`
 
 - [ ] **Step 1:** create the repository with a root commit that holds only the licence, then branch:
 
@@ -141,6 +143,22 @@ playwright-report/
 __pycache__/
 .DS_Store
 .ruff_cache/
+blob-report/
+coverage/
+.venv/
+npm-debug.log*
+.env
+.env.*
+*.key
+.claude/settings.local.json
+src/lint-probe-*.ts
+```
+
+`.npmrc`:
+
+```text
+engine-strict=true
+save-exact=true
 ```
 
 `package.json`:
@@ -158,7 +176,7 @@ __pycache__/
   },
   "scripts": {
     "bundle": "node scripts/bundle.mjs",
-    "typecheck": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p src/tsconfig.json",
     "lint": "eslint .",
     "test": "node --test \"test/**/*.test.ts\"",
     "build": "npm run bundle && python3 build.py",
@@ -210,7 +228,19 @@ __pycache__/
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "e2e/**/*.ts", "content/*.json", "*.config.ts"]
+  "include": ["test/**/*.ts", "e2e/**/*.ts", "content/*.json", "*.config.ts"]
+}
+```
+
+`src/tsconfig.json`:
+
+```json
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["**/*.ts", "../content/*.json"]
 }
 ```
 
@@ -220,32 +250,70 @@ __pycache__/
 // Copyright 2026 Christiaan de Wet / Sovereign Matrix
 // SPDX-License-Identifier: Apache-2.0
 
+import { builtinModules } from "node:module";
+
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 // What the page must never do with a visitor's receipts and keys: parse
-// them as HTML, store them, or send them anywhere but the log they typed.
-const NO_HTML = ["innerHTML", "outerHTML", "insertAdjacentHTML"].map((property) => ({
-  property,
-  message: "Build elements with textContent; never parse input as HTML.",
-}));
-const NO_STORAGE = [
-  { object: "window", property: "localStorage", message: "The page stores nothing." },
-  { object: "window", property: "sessionStorage", message: "The page stores nothing." },
-  { object: "window", property: "indexedDB", message: "The page stores nothing." },
-  { object: "document", property: "cookie", message: "The page sets no cookies." },
+// them as HTML, store them, run code it did not ship, or send them anywhere
+// but the log they typed. Properties are banned by name on any object, so
+// globalThis.x, window.x and self.x are caught as well as a bare x.
+const banned = (message, ...names) => names.map((property) => ({ property, message }));
+const PROPERTIES = [
+  ...banned(
+    "Build elements with textContent; never parse input as HTML.",
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "setHTMLUnsafe",
+    "createContextualFragment",
+  ),
+  ...banned("The page stores nothing.", "localStorage", "sessionStorage", "indexedDB", "cookie"),
+  ...banned("Nothing from the inputs goes in the address bar.", "pushState", "replaceState"),
+  ...banned("The page talks only to the log, through src/log-client.ts.", "navigator", "sendBeacon"),
   { object: "document", property: "write", message: "Build elements with textContent." },
-  { object: "history", property: "pushState", message: "Nothing from the inputs goes in the address bar." },
-  { object: "history", property: "replaceState", message: "Nothing from the inputs goes in the address bar." },
 ];
-const NO_GLOBALS = ["localStorage", "sessionStorage", "indexedDB", "XMLHttpRequest", "WebSocket", "EventSource", "navigator"].map((name) => ({
-  name,
-  message: "The page stores nothing and talks only to the log, through src/log-client.ts.",
-}));
+const GLOBALS = [
+  ...[
+    "localStorage",
+    "sessionStorage",
+    "indexedDB",
+    "caches",
+    "XMLHttpRequest",
+    "WebSocket",
+    "EventSource",
+    "navigator",
+    "DOMParser",
+    "Worker",
+    "SharedWorker",
+    "open",
+  ].map((name) => ({ name, message: "The page stores nothing, parses no HTML and talks only to the log, through src/log-client.ts." })),
+  // src/ is bundled for the browser, which has none of Node's globals.
+  ...["Buffer", "process", "require", "global", "__dirname", "__filename"].map((name) => ({
+    name,
+    message: "src/ runs in the browser: use src/bytes.ts and WebCrypto, not Node.",
+  })),
+];
+const FETCH = "Only src/log-client.ts makes requests.";
 
 export default tseslint.config(
-  { ignores: ["build/**", "dist/**", "node_modules/**", "third_party/**", "test-results/**", "playwright-report/**"] },
+  {
+    ignores: [
+      "build/**",
+      "dist/**",
+      "node_modules/**",
+      "third_party/**",
+      "test-results/**",
+      "playwright-report/**",
+      "blob-report/**",
+      "coverage/**",
+    ],
+  },
   js.configs.recommended,
+  {
+    rules: { "no-eval": "error", "no-implied-eval": "error", "no-new-func": "error" },
+  },
   {
     files: ["**/*.ts"],
     extends: [...tseslint.configs.strictTypeChecked, ...tseslint.configs.stylisticTypeChecked],
@@ -263,15 +331,28 @@ export default tseslint.config(
   {
     files: ["src/**/*.ts"],
     rules: {
-      "no-restricted-properties": ["error", ...NO_HTML, ...NO_STORAGE],
-      "no-restricted-globals": ["error", ...NO_GLOBALS],
+      "no-restricted-properties": ["error", ...PROPERTIES],
+      "no-restricted-globals": ["error", ...GLOBALS],
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: builtinModules.map((name) => ({ name, message: "src/ runs in the browser: no Node modules." })),
+          patterns: [{ group: ["node:*"], message: "src/ runs in the browser: no Node modules." }],
+        },
+      ],
+      "no-restricted-syntax": [
+        "error",
+        { selector: "ImportExpression", message: "The page loads no code at run time; import statically." },
+      ],
     },
   },
   {
+    // ESLint replaces a rule's options per block, so these repeat the full lists and add fetch.
     files: ["src/**/*.ts"],
     ignores: ["src/log-client.ts"],
     rules: {
-      "no-restricted-globals": ["error", ...NO_GLOBALS, { name: "fetch", message: "Only src/log-client.ts makes requests." }],
+      "no-restricted-properties": ["error", ...PROPERTIES, { property: "fetch", message: FETCH }],
+      "no-restricted-globals": ["error", ...GLOBALS, { name: "fetch", message: FETCH }],
     },
   },
   {
@@ -290,6 +371,7 @@ export default tseslint.config(
 # .github/tools/python-ci). The site itself needs nothing beyond the
 # standard library of Python 3.9 or later; CI runs Python 3.12.
 [tool.ruff]
+required-version = "==0.17.0"
 line-length = 140
 target-version = "py39"
 extend-exclude = ["third_party", "node_modules", "dist", "build"]
@@ -326,6 +408,7 @@ ignore = ["S101", "S603"]
 }
 ```
 
+Two type-check projects: `tsconfig.json` covers the tests, the end-to-end tests and the tools, with Node's types, and type-checks the `src/` files they import under those types too; `src/tsconfig.json` covers `src/` alone with `"types": []`, so `node:crypto`, `Buffer` or `process` in the page fails to compile. ESLint's project service picks the nearest `tsconfig.json`, so `src/` is linted without Node's types as well. In `eslint.config.js`, banned properties are matched by name on any object, so `globalThis.fetch`, `window.fetch` and `self.fetch` are caught as well as `fetch`; ESLint replaces a rule's options per block, so the block for everything but `src/log-client.ts` repeats the full lists and adds `fetch`. `test/lint.test.ts` (Task 3) proves each rule bites. `*.pem` is deliberately not ignored: the test fixtures are public keys.
 The versions are the newest releases published by 10 October 2026, 14 days before this plan; `overrides` holds `playwright-core` at 1.64.0, because `@axe-core/playwright` would otherwise pull 1.64.1, released on 14 October.
 
 - [ ] **Step 3:** install, and check what was installed:
@@ -335,15 +418,16 @@ npm install
 npm ls --depth=0
 npm ls playwright-core
 npm audit --audit-level=moderate
+npm config get save-exact && npm config get engine-strict
 ```
 
-Expected: `npm ls --depth=0` lists exactly `@axe-core/playwright@4.13.0`, `@eslint/js@10.0.1`, `@playwright/test@1.64.0`, `@types/node@22.20.5`, `esbuild@0.28.2`, `eslint@10.12.0`, `fast-check@4.10.2`, `typescript-eslint@8.71.1`, `typescript@5.9.3`; `npm ls playwright-core` shows `1.64.0 overridden` and `1.64.0 deduped`, nothing else; `found 0 vulnerabilities`.
+Expected: `npm ls --depth=0` lists exactly `@axe-core/playwright@4.13.0`, `@eslint/js@10.0.1`, `@playwright/test@1.64.0`, `@types/node@22.20.5`, `esbuild@0.28.2`, `eslint@10.12.0`, `fast-check@4.10.2`, `typescript-eslint@8.71.1`, `typescript@5.9.3`; `npm ls playwright-core` shows `1.64.0 overridden` and `1.64.0 deduped`, nothing else; `found 0 vulnerabilities`; `true` and `true`. The type checks and lint rules have nothing to check until Task 3, which proves they bite.
 
 - [ ] **Step 4:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "Tools: TypeScript, esbuild, ESLint, fast-check, Playwright, ruff settings" -m "Development tools at exact versions, all at least 14 days old. ESLint forbids HTML parsing, storage and network calls outside src/log-client.ts. Nothing from npm is shipped except what esbuild bundles from src/." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "Tools: TypeScript, esbuild, ESLint, fast-check, Playwright, ruff settings" -m "Development tools at exact versions, all at least 14 days old, with exact saves and enforced engines. src/ is type-checked without Node's types, and ESLint forbids it to parse HTML, store anything, load code at run time, use Node APIs, or make requests outside src/log-client.ts. Nothing from npm is shipped except what esbuild bundles from src/." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 2: vendor verifiable-receipts at VR_REF, with the drift check
@@ -531,7 +615,7 @@ git commit --author="$A" -m "Vendor verifiable-receipts at VR_REF, with a drift 
 ### Task 3: the browser port of the verifier, and keys
 
 **Files:**
-- Create: `test/helpers.ts`, `test/conformance.test.ts`, `test/keys.test.ts`
+- Create: `test/helpers.ts`, `test/conformance.test.ts`, `test/keys.test.ts`, `test/lint.test.ts`
 - Create: `src/bytes.ts`, `src/vendor/verifiable-receipts/receipt.ts`, `src/vendor/verifiable-receipts/transparency.ts`, `src/keys.ts`
 
 - [ ] **Step 1:** write the tests first:
@@ -694,6 +778,71 @@ describe("parsePublicKeys", () => {
 });
 ```
 
+`test/lint.test.ts`:
+
+```ts
+// Copyright 2026 Christiaan de Wet / Sovereign Matrix
+// SPDX-License-Identifier: Apache-2.0
+
+// The ESLint rules that keep src/ a browser page that stores nothing, parses
+// no HTML, loads no code and talks only to the log: each line below breaks
+// one of them, and each must be flagged. The probe is written into src/ so
+// that the src/ tsconfig and rules apply to it, and removed afterwards.
+import assert from "node:assert/strict";
+import { rmSync, writeFileSync } from "node:fs";
+import { describe, it } from "node:test";
+
+import { ESLint } from "eslint";
+
+const ROOT = new URL("../", import.meta.url);
+const PROBE = new URL(`../src/lint-probe-${String(process.pid)}.ts`, import.meta.url);
+
+const CASES: [string, string][] = [
+  ["void globalThis.fetch(s);", "no-restricted-properties"],
+  ["void window.fetch(s);", "no-restricted-properties"],
+  ["void self.fetch(s);", "no-restricted-properties"],
+  ["void fetch(s);", "no-restricted-globals"],
+  ["void globalThis.localStorage;", "no-restricted-properties"],
+  ["void window.navigator;", "no-restricted-properties"],
+  ['window.history.replaceState(null, "", s);', "no-restricted-properties"],
+  ["void window.document.cookie;", "no-restricted-properties"],
+  ["el.setHTMLUnsafe(s);", "no-restricted-properties"],
+  ["void r.createContextualFragment(s);", "no-restricted-properties"],
+  ['void new DOMParser().parseFromString(s, "text/html");', "no-restricted-globals"],
+  ["void (0, eval)(s);", "no-eval"],
+  ["void import(s);", "no-restricted-syntax"],
+  ["void new Worker(s);", "no-restricted-globals"],
+  ['void caches.open("x");', "no-restricted-globals"],
+  ["void open(s);", "no-restricted-globals"],
+  ['void new Function("return 1");', "no-new-func"],
+  ["void Buffer.from(s);", "no-restricted-globals"],
+  ["void process.env;", "no-restricted-globals"],
+  ["el.innerHTML = s;", "no-restricted-properties"],
+];
+
+describe("the src/ lint rules", () => {
+  it("flag every way around them", async () => {
+    const body = CASES.map(([line]) => `  ${line}`).join("\n");
+    const code = `import { createHash } from "node:crypto";\nimport { readFileSync } from "fs";\n\nexport function probe(el: Element, s: string, r: Range): void {\n${body}\n  void createHash;\n  void readFileSync;\n}\n`;
+    writeFileSync(PROBE, code);
+    try {
+      const [result] = await new ESLint({ cwd: ROOT.pathname }).lintFiles([PROBE.pathname]);
+      assert.ok(result);
+      const byLine = new Map<number, string[]>();
+      for (const m of result.messages) byLine.set(m.line, [...(byLine.get(m.line) ?? []), m.ruleId ?? "parse"]);
+      assert.ok(byLine.get(1)?.includes("no-restricted-imports"), "node:crypto");
+      assert.ok(byLine.get(2)?.includes("no-restricted-imports"), "fs");
+      CASES.forEach(([line, rule], i) => {
+        assert.ok(byLine.get(i + 5)?.includes(rule), `${line} not flagged by ${rule}: ${JSON.stringify(byLine.get(i + 5))}`);
+      });
+    } finally {
+      rmSync(PROBE, { force: true });
+    }
+  });
+});
+```
+
+`lint.test.ts` writes a probe file into `src/` (ignored by `.gitignore`), so that `src/tsconfig.json` and the `src/` rules apply to it, lints it with ESLint's API, and removes it.
 - [ ] **Step 2:** run them:
 
 ```bash
@@ -1141,12 +1290,16 @@ export async function parsePublicKeys(text: string, source: string): Promise<Pub
 - [ ] **Step 6:** run the whole check:
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
+npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: tsc and ESLint print nothing; `# pass 34`, `# fail 0` (26 conformance: the count and 25 fixtures; 8 keys).
+Expected: tsc and ESLint print nothing; `# pass 35`, `# fail 0` (26 conformance: the count and 25 fixtures; 8 keys; 1 lint).
 
-- [ ] **Step 7:** commit:
+- [ ] **Step 7:** prove the guards bite.
+  - Lint: delete `"setHTMLUnsafe",` from `eslint.config.js`, run `node --test test/lint.test.ts`, and confirm `# fail 1` with `el.setHTMLUnsafe(s); not flagged by no-restricted-properties`. Restore the line.
+  - Types: write `src/tsc-probe.ts` holding `import { createHash } from "node:crypto"; export const h = createHash("sha256"); export const b = Buffer.from("x"); export const e = process.env;`, run `npx tsc -p src/tsconfig.json`, and confirm `TS2307: Cannot find module 'node:crypto'` and `TS2591: Cannot find name 'Buffer'` and `'process'`. Move the probe to `~/.Trash/`.
+
+- [ ] **Step 8:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
@@ -1300,7 +1453,7 @@ FC_NUM_RUNS=2000 node --test test/port.properties.test.ts 2>&1 | grep -E '^# (pa
 Expected: `# pass 2`, `# fail 0`, in about three seconds.
 
 - [ ] **Step 3:** prove the property catches a broken port. In `src/vendor/verifiable-receipts/receipt.ts`, change `if (toBase64(sigBytes) !== signature.slice(3))` to `if (false)`, rerun the command, and confirm `# fail 1`, with a counterexample that changes one character of the signature: a spelling with a non-zero padding bit, which the original rejects and the broken port accepts. Restore the line and rerun to `# fail 0`. Then change `if (contentHash != null) {` to `if (contentHash) {`, the rule before `fix/empty-contenthash`, rerun `node --test test/port.properties.test.ts`, and confirm `# fail 1` with a counterexample ending `{"kind":"hash","value":""}`; restore it.
-- [ ] **Step 4:** run the whole check (npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'): `# pass 36`, `# fail 0`.
+- [ ] **Step 4:** run the whole check (npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'): `# pass 37`, `# fail 0`.
 - [ ] **Step 5:** commit:
 
 ```bash
@@ -1709,10 +1862,10 @@ export async function checkTreeHead(value: unknown, logKey: CryptoKey): Promise<
 - [ ] **Step 5:** run the whole check:
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
+npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 64`, `# fail 0`.
+Expected: `# pass 65`, `# fail 0`.
 
 - [ ] **Step 6:** commit:
 
@@ -1997,10 +2150,10 @@ export function parseReceipts(text: string): ParsedReceipts {
 - [ ] **Step 4:** run the whole check:
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
+npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 79`, `# fail 0`.
+Expected: `# pass 80`, `# fail 0`.
 
 - [ ] **Step 5:** commit:
 
@@ -2603,10 +2756,10 @@ export async function checkReceipts(receipts: readonly unknown[], inputs: Inputs
 - [ ] **Step 4:** run the whole check:
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
+npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 110`, `# fail 0`.
+Expected: `# pass 111`, `# fail 0`.
 
 - [ ] **Step 5:** prove check 6 never trusts the log's own root. In `inLogCheck`, change `sth.rootHash)` in the `verifyInclusionProof` call to `proof.rootHashHex)`, run `node --test test/checks.test.ts`, and confirm `a proof whose own rootHashHex agrees with it, but the signed root does not, fails` fails. Restore it and rerun to `# fail 0`.
 - [ ] **Step 6:** commit:
@@ -2704,7 +2857,7 @@ FC_NUM_RUNS=2000 node --test test/parsing.properties.test.ts 2>&1 | grep -E '^# 
 
 Expected: `# pass 5`, `# fail 0`.
 
-- [ ] **Step 3:** run the whole check: `# pass 115`, `# fail 0`.
+- [ ] **Step 3:** run the whole check: `# pass 116`, `# fail 0`.
 - [ ] **Step 4:** commit:
 
 ```bash
@@ -3100,13 +3253,13 @@ if (outside.length > 0) {
 - [ ] **Step 4:** run the whole check, then bundle:
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
+npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 npm run bundle
 wc -c build/check.js && gzip -9 -c build/check.js | wc -c
 npm run bundle && shasum -a 256 build/check.js && npm run bundle && shasum -a 256 build/check.js
 ```
 
-Expected: `# pass 115`, `# fail 0`; `build/check.js` about 26.3 KB and about 9.0 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
+Expected: `# pass 116`, `# fail 0`; `build/check.js` about 26.3 KB and about 9.0 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
 
 - [ ] **Step 5:** prove the lint rules hold: add `document.body.innerHTML = "";` to the end of `start` in `src/ui.ts` and run `npx eslint src/ui.ts`; confirm `Build elements with textContent; never parse input as HTML`. Remove the line.
 - [ ] **Step 6:** commit:
@@ -4740,7 +4893,7 @@ Expected, after a minute: `FileNotFoundError` for `dist/404.html` from the serve
 - [ ] **Step 4:** build and run them in all three browsers (sandbox off):
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint .
+npm run typecheck && npx eslint .
 npm run build
 npx playwright test e2e/check.spec.ts
 ```
@@ -4946,7 +5099,7 @@ for (const route of ROUTES) {
 - [ ] **Step 2:** run them (sandbox off):
 
 ```bash
-npx tsc -p tsconfig.json && npx eslint .
+npm run typecheck && npx eslint .
 npm run build
 npx playwright test
 ```
@@ -5367,7 +5520,7 @@ npm run build && $PY -m unittest discover -s tests -t . && python3 scripts/check
 npx playwright test 2>&1 | tail -1
 ```
 
-Expected: the `matches` line; `# pass 115`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `76 passed`.
+Expected: the `matches` line; `# pass 116`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `76 passed`.
 
 - [ ] **Step 5:** commit:
 
