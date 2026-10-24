@@ -95,7 +95,7 @@ import {
   lstatSync,
   realpathSync,
   utimesSync,
-  statSync,
+  fstatSync,
 } from "node:fs";
 import {
   createPrivateKey,
@@ -501,6 +501,21 @@ function createWhole(path, record) {
 
 const UNWRITABLE = new Set(["EACCES", "EPERM", "EROFS"]);
 
+/**
+ * The bytes and identity of the file at `path`, all from one open
+ * descriptor, so its age and its contents describe the same file:
+ * { raw, mtimeMs, dev, ino }. Throws ENOENT when it is gone.
+ */
+function readWithStat(path) {
+  const fd = openSync(path, "r");
+  try {
+    const st = fstatSync(fd);
+    return { raw: readFileSync(fd, "utf8"), mtimeMs: st.mtimeMs, dev: st.dev, ino: st.ino };
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Remove `path` only if it still holds `nonce`. */
 function unlinkIfOurs(path, nonce) {
   let record;
@@ -533,8 +548,8 @@ function takeBreak(breakPath, leaseMs) {
     let st;
     let raw;
     try {
-      st = statSync(breakPath);
-      raw = readFileSync(breakPath, "utf8");
+      st = readWithStat(breakPath);
+      raw = st.raw;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       return { problem: `${breakPath} exists and cannot be read (${err.message})` };
@@ -673,8 +688,8 @@ function acquireLock(lockPath, breakLock, leaseMs) {
     let st;
     let raw;
     try {
-      st = statSync(lockPath);
-      raw = readFileSync(lockPath, "utf8");
+      st = readWithStat(lockPath);
+      raw = st.raw;
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       return locked(`${lockPath} exists and cannot be read (${err.message})`);
@@ -705,15 +720,25 @@ function acquireLock(lockPath, breakLock, leaseMs) {
     const brk = takeBreak(breakPath, leaseMs);
     if (brk.problem) return locked(`${lockPath} is stale, but ${brk.problem}`, brk.retryAt);
     try {
+      // Re-read through a descriptor: unlink only the very file judged
+      // stale (same device, inode and bytes), and only if the path still
+      // names it. This is check-then-act on purpose, made safe because
+      // it runs while holding <lock>.break, which every process must
+      // hold to break a lock, and a live holder never rewrites its lock
+      // in place (it creates a new file); the inode check narrows what
+      // is left to a rename between the lstat and the unlink.
       let now = null;
       try {
-        now = readFileSync(lockPath, "utf8");
+        now = readWithStat(lockPath);
       } catch (err) {
         if (err?.code !== "ENOENT") throw err;
       }
-      if (now === raw) {
-        unlinkSync(lockPath);
-        warn(`[witness] removed stale lock ${lockPath} (${who}; lease ran out: last renewed ${secs(age)} ago)`);
+      if (now && now.raw === raw && now.dev === st.dev && now.ino === st.ino) {
+        const named = lstatSync(lockPath);
+        if (named.dev === now.dev && named.ino === now.ino) {
+          unlinkSync(lockPath);
+          warn(`[witness] removed stale lock ${lockPath} (${who}; lease ran out: last renewed ${secs(age)} ago)`);
+        }
       }
     } catch (err) {
       return locked(`cannot remove stale ${lockPath} (${err.message})`);
@@ -1144,11 +1169,16 @@ async function runLocked(opts, { log, emit, refuse }) {
       // the SAVED head, byte for byte: same bytes, same Ed25519
       // signature. A log that has re-dated this size and root gets no
       // signature on the new date while one is pending.
+      // The same head, rebuilt: logId, size and root are the fetched
+      // STH's, checked above to equal the saved ones; the timestamp is
+      // the saved one (validated as toISOString form when the state was
+      // loaded), re-derived through Date so only a canonical date goes
+      // out.
       resubmit = {
-        logId: state.logId,
-        lastSize: state.lastSize,
-        lastRoot: state.lastRoot,
-        lastTimestamp: state.lastTimestamp,
+        logId: sth.logId,
+        lastSize: sth.treeSize,
+        lastRoot: sth.rootHash,
+        lastTimestamp: new Date(Date.parse(state.lastTimestamp)).toISOString(),
       };
       if (sth.timestamp !== state.lastTimestamp) {
         log(

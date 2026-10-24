@@ -32,7 +32,7 @@ import {
   linkSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { TransparencyLog, InMemoryLogStore } from "../src/log-store.js";
 import { canonicalizeSth, leafHash, treeRoot } from "../src/transparency.js";
 
@@ -1637,19 +1637,25 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     writeFileSync(lock, lockOf(12345));
     expireLease(lock);
     const fresh = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
-    // After the CLI first reads the stale lock, another process replaces
-    // it with a fresh one.
+    // Once the CLI has judged the lock stale and starts taking
+    // <lock>.break, another process replaces the lock with a fresh one
+    // (a new file, as a real process would write it).
     const pre = preload("lock-replaced", [
       'import fs from "node:fs";',
       'import { syncBuiltinESMExports } from "node:module";',
-      "const read = fs.readFileSync;",
+      "const open = fs.openSync;",
       "const write = fs.writeFileSync;",
+      "const rename = fs.renameSync;",
       "let done = false;",
-      "fs.readFileSync = (p, ...rest) => {",
-      "  const out = read(p, ...rest);",
-      // The CLI uses the real path (on macOS /private/var/...): match the end.
-      `  if (!done && String(p).endsWith(${JSON.stringify(basename(lock))})) { done = true; write(p, ${JSON.stringify(fresh)}); }`,
-      "  return out;",
+      "fs.openSync = (p, ...rest) => {",
+      "  const s = String(p);",
+      '  if (!done && s.includes(".lock.break.") && s.endsWith(".tmp")) {',
+      "    done = true;",
+      '    const lock = s.slice(0, s.indexOf(".lock.break.") + ".lock".length);',
+      `    write(lock + ".other", ${JSON.stringify(fresh)});`,
+      '    rename(lock + ".other", lock);',
+      "  }",
+      "  return open(p, ...rest);",
       "};",
       "syncBuiltinESMExports();",
     ]);
