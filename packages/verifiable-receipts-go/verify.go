@@ -33,13 +33,17 @@ import (
 //
 // Unmarshal a receipt's JSON into a Receipt to fill all four fields:
 // Canonical, ContentHash and Signature from their keys, and Envelope
-// from every other top-level key.
+// from every other top-level key. Use it as a named field, not an
+// embedded one: its MarshalJSON and UnmarshalJSON would be promoted
+// and hide the outer struct's own fields.
 type Receipt struct {
 	// Canonical is the exact UTF-8 byte string the issuer signed.
 	Canonical string `json:"canonical"`
 
-	// ContentHash, when non-empty, MUST equal "sha256:" + hex(sha256(canonical))
-	// (the "sha256:" prefix is optional).
+	// ContentHash, when present, MUST equal "sha256:" + hex(sha256(canonical))
+	// (the "sha256:" prefix is optional). A receipt read by UnmarshalJSON
+	// with a contentHash key that is a string, even "", has one; a
+	// Receipt built by hand has one when ContentHash is non-empty.
 	ContentHash string `json:"contentHash"`
 
 	// Signature is the v2= wire-format signature: "v2=" + base64(ed25519_sig).
@@ -50,6 +54,10 @@ type Receipt struct {
 	// equal the same field in the parsed canonical. UnmarshalJSON fills
 	// it; a Receipt built by hand with no Envelope has no fields to check.
 	Envelope map[string]json.RawMessage `json:"-"`
+
+	// hasContentHash is set by UnmarshalJSON when the contentHash key
+	// holds a string, so an empty one is checked rather than skipped.
+	hasContentHash bool
 }
 
 // UnmarshalJSON reads a receipt object: canonical, contentHash and
@@ -83,9 +91,34 @@ func (r *Receipt) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(raw, target); err != nil {
 			return errors.New("vaos: receipt field " + strconv.Quote(key) + " is not a string")
 		}
+		if key == "contentHash" && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			out.hasContentHash = true
+		}
 	}
 	*r = out
 	return nil
+}
+
+// MarshalJSON writes canonical, contentHash and signature, as the
+// default encoding did, but writes contentHash only when the receipt
+// has one: ContentHash is non-empty, or UnmarshalJSON read a string
+// contentHash (even ""). So a receipt with no hash stays without one
+// after a round trip, and a parsed "" stays a defect. Envelope is not
+// written, as before, so a receipt read back from this output has no
+// envelope fields to check against its canonical: keep the original
+// bytes to verify a receipt later, not a re-marshalled copy.
+func (r Receipt) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		Canonical   string  `json:"canonical"`
+		ContentHash *string `json:"contentHash,omitempty"`
+		Signature   string  `json:"signature"`
+	}
+	w := wire{Canonical: r.Canonical, Signature: r.Signature}
+	if r.ContentHash != "" || r.hasContentHash {
+		hash := r.ContentHash
+		w.ContentHash = &hash
+	}
+	return json.Marshal(w)
 }
 
 // VerifyResult is the outcome of a verification attempt. OK reports
@@ -123,7 +156,7 @@ func LoadEd25519PublicKeyFromPEM(pemBytes []byte) (ed25519.PublicKey, error) {
 //   - Receipt has a non-empty Canonical
 //   - Receipt has a non-empty Signature starting with "v2=" and
 //     followed by standard base64
-//   - ContentHash (if present) equals "sha256:" + hex(sha256(canonical))
+//   - ContentHash (if present, even empty) equals "sha256:" + hex(sha256(canonical))
 //   - The Ed25519 signature verifies over the canonical UTF-8 bytes,
 //     exactly as given
 //   - Canonical parses as a JSON object
@@ -158,7 +191,7 @@ func VerifyV2Receipt(r Receipt, pub ed25519.PublicKey) VerifyResult {
 
 	canonicalBytes := []byte(r.Canonical)
 
-	if r.ContentHash != "" {
+	if r.ContentHash != "" || r.hasContentHash {
 		actual := sha256.Sum256(canonicalBytes)
 		expected := strings.TrimPrefix(r.ContentHash, "sha256:")
 		actualHex := hex.EncodeToString(actual[:])

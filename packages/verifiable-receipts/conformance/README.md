@@ -76,8 +76,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 23 October 2026: TypeScript 23 passed,
-Python 24 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 24 October 2026: TypeScript 26 passed,
+Python 26 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -87,7 +87,9 @@ Fixtures cover:
 - v2 wire format: well-formed accept · canonical-tamper reject ·
   wrong-key reject · base64 malformed · base64 not canonical (same
   bytes, different spelling) · base64 with a line feed inside (same
-  bytes) · non-v2 prefix
+  bytes) · non-v2 prefix · `contentHash` present but empty (`""` is
+  checked as a hash, not taken for an absent field) reject ·
+  `contentHash` null (no hash) accept
 - v2 envelope: fields beside `canonical` that repeat it (a nested
   object's keys in another order) accept · a field that disagrees with
   it (`overall` fail against pass) reject · a field it does not contain
@@ -100,7 +102,7 @@ Fixtures cover:
   audit-path entry (folds to the 2-leaf root) · leafIndex 1.5 ·
   leafIndex `true` · the 2-leaf proof at treeSize 2^32 + 2
 
-23 fixtures, each checked by all 3 verifiers.
+25 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
@@ -125,7 +127,7 @@ discarded at generation time). If the corpus ever needs re-signing:
 node packages/verifiable-receipts/conformance/generate-fixtures.mjs
 ```
 
-This rewrites `public-key.pem` and the nine `v2-*.json` fixtures in
+This rewrites `public-key.pem` and the twelve `v2-*.json` fixtures in
 one pass with a new key; inclusion-proof fixtures are key-independent
 and untouched. Re-run all three harnesses afterwards.
 

@@ -179,7 +179,11 @@ Given a receipt and the issuer's verification key, a verifier:
    UTF-8 bytes, exactly as given. When the receipt carries
    `contentHash`, checks that it equals `sha256:` followed by the
    lowercase hex SHA-256 of those bytes (the `sha256:` prefix is
-   optional; uppercase hex → reject).
+   optional; uppercase hex → reject). A receipt carries `contentHash`
+   when the key is present with any value but JSON `null`: an absent
+   or `null` `contentHash` is not checked; any other value MUST be a
+   string and is checked: a non-string value → reject, and so does the
+   empty string.
 4. Calls the host's Ed25519 verification primitive
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the
