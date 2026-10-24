@@ -10,11 +10,13 @@
 
 **Design:** `docs/design/2026-10-23-ontology-and-proof-explorer.md` (verifiable-receipts), Part 2.
 
-**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `fd2390b`, the `VR_REF`: 116 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 32 Playwright tests on Chromium (Largest Contentful Paint 1.27 to 1.29 s under the fast 3G profile), ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export and a clone of `fd2390b` while failing, each with its `::error` line, in 21 broken copies (bad, missing, empty or extra `SHA256SUMS` lines, a wrong hash, an extra, missing or changed file in each vendored directory, an empty or missing `src/vendor/`, a wrong upstream path, the wrong directory, and an upstream clone at the wrong `HEAD`). `static/check.js` is 26,282 bytes, 8,973 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
+**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `24f5c47`, the `VR_REF`: 189 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 33 Playwright tests on Chromium (Largest Contentful Paint 1.24 to 1.26 s under the fast 3G profile), 29 mutants of the port, the key reader, the byte helpers, the input reader and the checks were each killed by the test that names them, ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export and a clone of `24f5c47` while failing, each with its `::error` line, in 23 broken copies (bad, missing, empty or extra `SHA256SUMS` lines, a wrong hash, `hash.ts` dropped from it, an extra, missing or changed file in each vendored directory, an empty or missing `src/vendor/`, a wrong upstream path, the wrong directory, and an upstream clone at the wrong `HEAD`). `static/check.js` is 32,577 bytes, 10,809 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
 
 **Repository:** `~/Projects/receipts-explorer` (new), published in Task 17 as github.com/christiaan839-beep/receipts-explorer.
 
-**Precondition, met:** verifiable-receipts' `fix/empty-contenthash` merged into `main` as `fd2390b` (PR #20). It makes `verify-v2.mjs` reject `"contentHash": ""` (a present contentHash must be the hash) and adds two fixtures: `v2-invalid-empty-contenthash.json` (rejected, `reasonContains: "contentHash mismatch"`) and `v2-valid-null-contenthash.json` (`null` means no hash; accepted). The corpus is 25 fixtures, 12 of them v2. `VR_REF` is `fd2390b5cd30fb3c31c41810195ab7ec5ed51702`, the value `git -C ~/Projects/verifiable-receipts rev-parse origin/main` gave after that merge; Task 2, Step 2 checks it.
+**Preconditions, met:** `VR_REF` is verifiable-receipts `main` at `24f5c47` (`24f5c4780dba7c4f76b159b7f7844e17d0226cd6`, PR #26), the value `git -C ~/Projects/verifiable-receipts rev-parse origin/main` gave after it merged; Task 2, Step 2 checks it. It holds, among the changes this plan adopts:
+- `fd2390b` (PR #20): `verify-v2.mjs` rejects `"contentHash": ""`, and `null` means no hash (fixtures `v2-invalid-empty-contenthash.json`, `v2-valid-null-contenthash.json`).
+- `24f5c47` (PR #26), the nesting limit (VAOS 2.0 §7.2, §7.3): a receipt nests at most 64 deep, checked first ("receipt nesting deeper than 64"); its canonical text is counted after the signature and before it is parsed ("canonical nesting deeper than 64"); a receipt read from text is counted on the text, so a discarded duplicate key still counts (`parseReceipt`); `jsonEqual` is bounded at 64; and weak keys are refused right after the signature's spelling is checked: the 7 small-order encodings of libsodium's list, sign bit cleared ("public key is a small-order point"), and y ≥ p ("public key is not a canonical encoding"). Five fixtures come with it; two use new fields, `receiptText` (the receipt as text) and `publicKeyPem` (the key to verify with, in place of `public-key.pem`). The corpus is 30 fixtures, 17 of them v2.
 
 **Prerequisites already met:** Plan 1 merged into verifiable-receipts `main` as `dc2bcec` (PR #19), which holds `docs/ontology.md` and `schemas/`. Plan 2 merged into receipts-log as `1a667f0` (PR #12, CORS on the read routes), and PR #13 (`d364a8d`) added the CORS header to the server's own 503, 414 and 500 answers on those routes.
 
@@ -37,7 +39,10 @@
 | contentHash | A present contentHash (anything but absent or `null`) must be a string and is checked, so `""` fails; absent or `null` is "not run". | The rule verifiable-receipts adopts in `fix/empty-contenthash`; the port follows it. |
 | v3 | A v3 receipt fails Format with a message; a v3 tree head is "not run". | WebCrypto has no ML-DSA-65, and receipts-log signs tree heads `v2=` only. |
 | Fingerprint | `sha256:` and the first 16 hex digits of the SHA-256 of the SPKI DER. | The same name verify-receipts-action reports. |
-| Limits | 5 MB of receipt text, 1,000 receipts per run, 1 MB per log answer. | Bound the work a pasted file or a log can cause. |
+| Limits | 5 MB of receipt text, 1,000 receipts per run, 1 MB per log answer. Nesting follows verifiable-receipts at `VR_REF` exactly (VAOS 2.0 §7.2, limit 64): pasted text is counted before it is parsed, as `parseReceipt` counts it (one level more for a list); the receipt is checked first ("receipt nesting deeper than 64", the Format check); the signed text after the signature ("canonical nesting deeper than 64", the Repeated fields check); `jsonEqual` is bounded. | Bound the work a pasted file or a log can cause. The Task 3 review found that a signed receipt nested 5,000 deep made `jsonEqual` throw; PR #26 added the limit to all three verifiers, and the port and the page adopt it unchanged. |
+| A check that throws | Caught per receipt: that receipt's Format check fails ("This could not be checked: the page hit RangeError …"), the rest are not run, and the next receipt is still checked. | The page must never stay on "Checking…", and a receipt it cannot check is never valid. |
+| No WebCrypto Ed25519 at check time | `ed25519Verify` and the key reader throw `Ed25519Unavailable` on `NotSupportedError`, and the checks that need it show "not run" with "This browser cannot check Ed25519 signatures", never "failed" or "damaged key". The feature check probes both a `raw` and an `spki` import. | A missing algorithm is not a forged signature. |
+| Keys | Read strictly: whole blocks with matching BEGIN and END labels, nothing but whitespace outside them, the one base64 spelling, a DER that re-exports byte for byte (Node accepts trailing bytes; browsers do not), and no weak key: none of the small-order encodings (libsodium's list, sign bit cleared) and no y ≥ p. The list is the port's `weakKeyReason`, so reading refuses exactly the keys verification refuses (VAOS 2.0 §7.3). | Every problem is an error that says what to do, never a block silently dropped; under a small-order key forged signatures verify, as the edge vectors show. |
 | Visual tests | Screenshots at 320, 768 and 1440 px in light and dark, attached to the Playwright report and checked for horizontal overflow; not compared against stored baselines. | Baselines differ between machines; the design asks for screenshots, not a diff. |
 | Performance test | Chromium only: DevTools "Fast 3G" (562.5 ms round trip, 1.44 Mbit/s down, 675 kbit/s up) and 4× CPU slowdown on a 412×915 phone viewport; LCP must be under 1500 ms. | The design's "mid-range phone over fast 3G". |
 | Size budget | `scripts/check_budget.py`: `static/check.js` ≤ 40 KB gzip (the design), `static/styles.css` ≤ 8 KB, each page ≤ 12 KB. | The LCP target leaves room for one page and one stylesheet. |
@@ -62,10 +67,12 @@
 | `third_party/verifiable-receipts/` | `VR_REF`, `LICENSE`, `README.md`, `SHA256SUMS`, `verify-v2.mjs`, `verify-v2.d.mts`, `ontology.md` | 2 |
 | `test/fixtures/conformance/`, `test/fixtures/schemas/` | Test vectors copied from `VR_REF` | 2 |
 | `scripts/check-vendor.sh` | The drift check, which fails closed; Task 3 adds the ports to it | 2, 3 |
-| `src/bytes.ts` | UTF-8, hex, base64, SHA-256 and Ed25519 verify on WebCrypto | 3 |
+| `src/bytes.ts` | UTF-8, strict hex and base64, SHA-256 and Ed25519 verify on WebCrypto | 3 |
+| `test/bytes.test.ts`, `test/transparency.test.ts` | The byte helpers, and the inclusion-proof edges the corpus does not reach | 3 |
+| `test/fixtures/ed25519/`, `test/ed25519.test.ts`, `e2e/ed25519.spec.ts` | Sixteen Ed25519 edge vectors, checked in Node, the port and every browser | 3, 13 |
 | `src/vendor/verifiable-receipts/receipt.ts` | The browser port of `verify-v2.mjs` | 3 |
 | `src/vendor/verifiable-receipts/transparency.ts` | The browser port of the inclusion-proof verifier | 3 |
-| `src/keys.ts` | PEM to WebCrypto keys, with fingerprints | 3 |
+| `src/keys.ts` | Strict PEM to WebCrypto keys, with fingerprints; small-order keys refused | 3 |
 | `test/helpers.ts` | Fixture reading, keys and signing for tests | 3 |
 | `test/mutations.ts` | Signed receipts with changes, for property tests | 4 |
 | `scripts/make-stub-log.mjs`, `test/fixtures/log/` | The recorded log answers | 5 |
@@ -455,7 +462,7 @@ git commit --author="$A" -m "Tools: TypeScript, esbuild, ESLint, fast-check, Pla
 # Checks every file copied from verifiable-receipts against a checkout of it
 # at the commit in third_party/verifiable-receipts/VR_REF, and fails closed:
 # each vendored directory must hold exactly the files listed here, and
-# SHA256SUMS must list exactly the two sources the browser ports are made
+# SHA256SUMS must list exactly the three sources the browser ports are made
 # from. CI runs it in the vendor job; run it locally, from the repository
 # root, against an export of that commit.
 #
@@ -492,13 +499,14 @@ if [[ -e "$upstream/.git" ]]; then
   [[ "$head" == "$ref" ]] || fail "$tp/VR_REF" "the upstream checkout is at $head, not $ref"
 fi
 
-# SHA256SUMS: exactly the two ported sources, each with a matching hash.
+# SHA256SUMS: exactly the three ported sources (transparency.ts inlines
+# isHashHex from hash.ts), each with a matching hash.
 # sha256sum skips lines it cannot read and passes an empty file, so the
 # listed paths are checked first.
 [[ -f "$tp/SHA256SUMS" ]] || fail "$tp/SHA256SUMS" "is missing"
 sums_paths=$(sed -E 's/^[0-9a-f]{64}  //' "$tp/SHA256SUMS" | sort)
-[[ "$sums_paths" == "$(printf '%s\n' packages/verifiable-receipts/conformance/verify-v2.mjs packages/verifiable-receipts/src/transparency.ts | sort)" ]] ||
-  fail "$tp/SHA256SUMS" "must list exactly conformance/verify-v2.mjs and src/transparency.ts, one '<sha256>  <path>' line each"
+[[ "$sums_paths" == "$(printf '%s\n' packages/verifiable-receipts/conformance/verify-v2.mjs packages/verifiable-receipts/src/hash.ts packages/verifiable-receipts/src/transparency.ts | sort)" ]] ||
+  fail "$tp/SHA256SUMS" "must list exactly conformance/verify-v2.mjs, src/hash.ts and src/transparency.ts, one '<sha256>  <path>' line each"
 (cd "$upstream" && sha256sum --strict -c --quiet "$OLDPWD/$tp/SHA256SUMS") ||
   fail "$tp/SHA256SUMS" "a ported source changed; update the port"
 
@@ -527,22 +535,27 @@ echo "every vendored file matches verifiable-receipts at $ref"
 chmod 755 scripts/check-vendor.sh
 ```
 
-It fails closed. `SHA256SUMS` must list exactly the two ported sources, because `sha256sum -c` skips lines it cannot read and passes an empty file; each directory must hold exactly the files named here, dotfiles included, compared as sorted `LC_ALL=C` listings; it must run from this repository's root, against a verifiable-receipts tree, and when that tree is a git checkout its `HEAD` must be `VR_REF`. It does not check `src/vendor/` yet: Task 3, which creates the ports, adds that check, so no version of the script ever accepts a missing or empty `src/vendor/`.
-- [ ] **Step 2:** `VR_REF` is `fd2390b`, the merge of `fix/empty-contenthash` (PR #20). Confirm it is on `main` and holds what this plan copies:
+It fails closed. `SHA256SUMS` must list exactly the three sources the ports are made from (`transparency.ts` inlines `isHashHex` from `hash.ts`), because `sha256sum -c` skips lines it cannot read and passes an empty file; each directory must hold exactly the files named here, dotfiles included, compared as sorted `LC_ALL=C` listings; it must run from this repository's root, against a verifiable-receipts tree, and when that tree is a git checkout its `HEAD` must be `VR_REF`. It does not check `src/vendor/` yet: Task 3, which creates the ports, adds that check, so no version of the script ever accepts a missing or empty `src/vendor/`.
+- [ ] **Step 2:** `VR_REF` is `24f5c47`, the merge of PR #26 (the nesting limit). Confirm it is on `main` and holds what this plan copies:
 
 ```bash
 git -C $VR fetch origin
-VR_REF=fd2390b5cd30fb3c31c41810195ab7ec5ed51702
+VR_REF=24f5c4780dba7c4f76b159b7f7844e17d0226cd6
 git -C $VR rev-parse origin/main
 git -C $VR merge-base --is-ancestor "$VR_REF" origin/main && echo on-main
 for f in docs/ontology.md schemas/examples/tree-head.json schemas/examples/cosignature.json \
          packages/verifiable-receipts/conformance/fixtures/v2-invalid-empty-contenthash.json \
-         packages/verifiable-receipts/conformance/fixtures/v2-valid-null-contenthash.json; do
+         packages/verifiable-receipts/conformance/fixtures/v2-valid-null-contenthash.json \
+         packages/verifiable-receipts/conformance/fixtures/v2-invalid-deep-nesting.json \
+         packages/verifiable-receipts/conformance/fixtures/v2-invalid-nesting-at-limit.json \
+         packages/verifiable-receipts/conformance/fixtures/v2-invalid-duplicate-deep-key.json \
+         packages/verifiable-receipts/conformance/fixtures/v2-invalid-small-order-key.json \
+         packages/verifiable-receipts/conformance/fixtures/v2-invalid-noncanonical-key.json; do
   git -C $VR cat-file -e "$VR_REF:$f" && echo "has $f"
 done
 ```
 
-Expected: `rev-parse` prints `fd2390b5cd30fb3c31c41810195ab7ec5ed51702` (if `main` has moved on, keep `VR_REF` at `fd2390b`: moving it is a separate change, made as `CONTRIBUTING.md` says), `on-main`, and five `has` lines.
+Expected: `rev-parse` prints `24f5c4780dba7c4f76b159b7f7844e17d0226cd6` (if `main` has moved on, keep `VR_REF` at `24f5c47`: moving it is a separate change, made as `CONTRIBUTING.md` says), `on-main`, and ten `has` lines.
 
 - [ ] **Step 3:** run the drift check before anything is copied; it must fail:
 
@@ -555,13 +568,14 @@ bash scripts/check-vendor.sh "$UP"
 
 Expected: exit 1, with `::error file=third_party/verifiable-receipts/SHA256SUMS::`.
 
-- [ ] **Step 4:** write the hashes of the two sources the ports are made from, and the READMEs:
+- [ ] **Step 4:** write the hashes of the three sources the ports are made from (`verify-v2.mjs`, `transparency.ts`, and `hash.ts`, whose `isHashHex` the transparency port inlines), and the READMEs:
 
 `third_party/verifiable-receipts/SHA256SUMS`:
 
 ```text
+74097a7201ac3ae2d193ae8cc71cca09e0e5571faa73b1e17cbfcb131fd40a3c  packages/verifiable-receipts/conformance/verify-v2.mjs
+8915d41a4df646edad2a581bf211bd5d7c785844819240be7574e57e0cd59ea5  packages/verifiable-receipts/src/hash.ts
 04b4921ab45988fb54b269f8c78139bdc67762d92c85979cad8952c9ba243f0f  packages/verifiable-receipts/src/transparency.ts
-deb44e0662536ba669583bc5b601dcf01166abcd150aa7ea977e0672978aba72  packages/verifiable-receipts/conformance/verify-v2.mjs
 ```
 
 `third_party/verifiable-receipts/README.md`:
@@ -595,9 +609,11 @@ its header:
 - `src/vendor/verifiable-receipts/receipt.ts`, from `packages/verifiable-receipts/conformance/verify-v2.mjs`.
 - `src/vendor/verifiable-receipts/transparency.ts`, from `packages/verifiable-receipts/src/transparency.ts`.
 
-`SHA256SUMS` holds the SHA-256 of those two sources at `VR_REF`. When
-`VR_REF` moves to a commit where either source changed, the `vendor` job
-fails until the port is brought up to date and `SHA256SUMS` rewritten.
+`SHA256SUMS` holds the SHA-256 at `VR_REF` of those two sources and of
+`packages/verifiable-receipts/src/hash.ts`, whose `isHashHex` the
+transparency port inlines. When `VR_REF` moves to a commit where any of the
+three changed, the `vendor` job fails until the port is brought up to date
+and `SHA256SUMS` rewritten.
 ```
 
 `test/fixtures/conformance/README.md`:
@@ -631,13 +647,13 @@ Their signatures are not over their content, so the page must accept their
 shape and reject their signatures (`test/tree-head.test.ts`).
 ```
 
-These are the hashes at `fd2390b`: `transparency.ts` is unchanged since `04e459f`, and `verify-v2.mjs` has the empty-contentHash rule (it did not change in PR #20's last review round). Check them at `VR_REF`:
+These are the hashes at `24f5c47`: `transparency.ts` and `hash.ts` are unchanged since `04e459f`, and `verify-v2.mjs` has the empty-contentHash, nesting and weak-key rules. Check them at `VR_REF`:
 
 ```bash
 (cd "$UP" && sha256sum -c ~/Projects/receipts-explorer/third_party/verifiable-receipts/SHA256SUMS)
 ```
 
-Expected: both `OK`. If either fails, `VR_REF` is not `fd2390b`: stop and check Step 2.
+Expected: three `OK` lines. If one fails, `VR_REF` is not `24f5c47`: stop and check Step 2.
 
 - [ ] **Step 5:** copy the files, unchanged:
 
@@ -657,7 +673,7 @@ ls test/fixtures/conformance | wc -l
 bash scripts/check-vendor.sh "$UP"
 ```
 
-Expected: `27` (25 fixtures, `public-key.pem`, `README.md`), then `every vendored file matches verifiable-receipts at <VR_REF>`.
+Expected: `32` (30 fixtures, `public-key.pem`, `README.md`), then `every vendored file matches verifiable-receipts at <VR_REF>`.
 
 - [ ] **Step 6:** prove the check catches a change: append a space to `third_party/verifiable-receipts/ontology.md`, rerun `bash scripts/check-vendor.sh "$UP"`, and confirm `::error file=third_party/verifiable-receipts/ontology.md::differs from VR_REF`; then `show docs/ontology.md > third_party/verifiable-receipts/ontology.md` and rerun to the `matches` line.
 - [ ] **Step 7:** prove the guards bite. Run each case in a scratch copy of the repository, so the real files are never touched; each must exit 1 with the `::error` shown, and the unchanged copy must still pass:
@@ -671,6 +687,7 @@ S=third_party/verifiable-receipts/SHA256SUMS
 case_ ":"                                                   # passes
 case_ "sed -i '' '1s/^/x/' $S; echo junk >> $S"            # SHA256SUMS::must list exactly …
 case_ "sed -i '' '/transparency/d' $S"                      # SHA256SUMS::must list exactly …
+case_ "sed -i '' '/hash.ts/d' $S"                           # SHA256SUMS::must list exactly …
 case_ ": > $S"                                              # SHA256SUMS::must list exactly …
 case_ "touch third_party/verifiable-receipts/notes.txt"     # third_party/verifiable-receipts::holds … but must hold exactly …
 case_ "touch test/fixtures/conformance/stray.txt"           # test/fixtures/conformance::holds …
@@ -681,7 +698,7 @@ CLONE=$(mktemp -d) && git clone -q $VR "$CLONE" && git -C "$CLONE" checkout -q "
 case_ ":" "$CLONE"                                          # VR_REF::the upstream checkout is at …, not …
 ```
 
-(`$VR_REF~1` is the commit before the merge, so the clone is at the wrong `HEAD`. The prototype ran each of these, and the `src/vendor/` cases of Task 3: 21 cases, each exited 1 with its `::error` line, and the unchanged copy passed.)
+(`$VR_REF~1` is the commit before the merge, so the clone is at the wrong `HEAD`. The prototype ran each of these, and the `src/vendor/` cases of Task 3: 23 cases, each exited 1 with its `::error` line, and the unchanged copy passed.)
 
 - [ ] **Step 8:** commit, and confirm the script is committed executable:
 
@@ -696,7 +713,7 @@ git ls-files -s scripts/check-vendor.sh   # expect: 100755 …
 ### Task 3: the browser port of the verifier, and keys
 
 **Files:**
-- Create: `test/helpers.ts`, `test/conformance.test.ts`, `test/keys.test.ts`, `test/lint.test.ts`
+- Create: `test/helpers.ts`, `test/conformance.test.ts`, `test/keys.test.ts`, `test/lint.test.ts`, `test/bytes.test.ts`, `test/transparency.test.ts`, `test/ed25519.test.ts`, `test/fixtures/ed25519/vectors.json`, `test/fixtures/ed25519/README.md`
 - Modify: `scripts/check-vendor.sh` (the check of the ports, before its last line)
 - Create: `src/bytes.ts`, `src/vendor/verifiable-receipts/receipt.ts`, `src/vendor/verifiable-receipts/transparency.ts`, `src/keys.ts`
 
@@ -711,6 +728,7 @@ git ls-files -s scripts/check-vendor.sh   # expect: 100755 …
 import { readFileSync } from "node:fs";
 
 import { parsePublicKeys, type PublicKey } from "../src/keys.ts";
+import { parseReceipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 
 export const CONFORMANCE = new URL("./fixtures/conformance/", import.meta.url);
 export const LOG = new URL("./fixtures/log/", import.meta.url);
@@ -753,6 +771,25 @@ export async function signReceipt(body: Record<string, unknown>, privateKey: Cry
   const hash = Buffer.from(await crypto.subtle.digest("SHA-256", bytes)).toString("hex");
   return { ...body, canonical, contentHash: `sha256:${hash}`, signature: `v2=${Buffer.from(sig).toString("base64")}` };
 }
+
+export interface ConformanceCase {
+  /** The receipt; a receipt given as text (receiptText) is read with the port's parseReceipt, which may throw its reason. */
+  receipt: () => unknown;
+  /** public-key.pem, or the fixture's own publicKeyPem, imported as is: weak keys included, which parsePublicKeys refuses. */
+  key: PublicKey;
+  expected: { ok: boolean; reasonContains?: string };
+}
+
+/** A v2 conformance fixture, read as verifiable-receipts' own harness reads it. */
+export async function conformanceCase(name: string): Promise<ConformanceCase> {
+  const f = readJson(CONFORMANCE, name) as { receipt?: unknown; receiptText?: string; publicKeyPem?: string; expected: ConformanceCase["expected"] };
+  const pem = f.publicKeyPem ?? readText(CONFORMANCE, "public-key.pem");
+  const der = Buffer.from(pem.replace(/-----[A-Z ]+-----|\s/g, ""), "base64");
+  const key = await crypto.subtle.importKey("spki", der, { name: "Ed25519" }, true, ["verify"]);
+  const fingerprint = "sha256:" + Buffer.from(await crypto.subtle.digest("SHA-256", der)).toString("hex").slice(0, 16);
+  const text = f.receiptText;
+  return { receipt: () => (text === undefined ? f.receipt : parseReceipt(text)), key: { key, fingerprint }, expected: f.expected };
+}
 ```
 
 `test/conformance.test.ts`:
@@ -771,7 +808,7 @@ import { describe, it } from "node:test";
 
 import { verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 import { verifyInclusionProof } from "../src/vendor/verifiable-receipts/transparency.ts";
-import { CONFORMANCE, keyFrom, readJson } from "./helpers.ts";
+import { CONFORMANCE, conformanceCase, readJson } from "./helpers.ts";
 
 interface Expected {
   ok: boolean;
@@ -781,18 +818,24 @@ interface Expected {
 const files = readdirSync(CONFORMANCE).filter((f) => f.endsWith(".json")).sort();
 
 describe("conformance corpus", () => {
-  it("holds the 25 fixtures of the source corpus", () => {
-    assert.equal(files.length, 25);
+  it("holds the 30 fixtures of the source corpus", () => {
+    assert.equal(files.length, 30);
   });
 
   for (const name of files.filter((f) => f.startsWith("v2-"))) {
     it(`receipt ${name}`, async () => {
-      const fixture = readJson(CONFORMANCE, name) as { receipt: unknown; expected: Expected };
-      const key = await keyFrom(CONFORMANCE, "public-key.pem");
-      const result = await verifyV2Receipt(fixture.receipt, key.key);
-      assert.equal(result.ok, fixture.expected.ok, result.reason);
-      if (fixture.expected.reasonContains !== undefined) {
-        assert.match(result.reason ?? "", new RegExp(fixture.expected.reasonContains, "i"));
+      // receiptText: the receipt as text, read by parseReceipt, whose refusal is a rejection with
+      // its reason. publicKeyPem: the key to verify with, in place of public-key.pem.
+      const c = await conformanceCase(name);
+      let result: { ok: boolean; reason?: string };
+      try {
+        result = await verifyV2Receipt(c.receipt(), c.key.key);
+      } catch (e) {
+        result = { ok: false, reason: (e as Error).message };
+      }
+      assert.equal(result.ok, c.expected.ok, result.reason);
+      if (c.expected.reasonContains !== undefined) {
+        assert.match(result.reason ?? "", new RegExp(c.expected.reasonContains, "i"));
       }
     });
   }
@@ -815,6 +858,7 @@ describe("conformance corpus", () => {
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { Ed25519Unavailable } from "../src/bytes.ts";
 import { KeyError, parsePublicKeys } from "../src/keys.ts";
 import { CONFORMANCE, makeKey, readText } from "./helpers.ts";
 
@@ -845,12 +889,54 @@ describe("parsePublicKeys", () => {
     assert.deepEqual(await parsePublicKeys("  \n", "The log key"), []);
   });
 
+  it("refuses a key of small order, such as the identity", async () => {
+    const identity = Buffer.from("302a300506032b6570032100" + "01" + "00".repeat(31), "hex").toString("base64");
+    await assert.rejects(
+      parsePublicKeys(`-----BEGIN PUBLIC KEY-----\n${identity}\n-----END PUBLIC KEY-----`, "The issuer key"),
+      (e: unknown) => e instanceof KeyError && e.message.includes("small order"),
+    );
+  });
+
+  it("refuses a non-canonical key encoding (y = p + 3), as the verifier does", async () => {
+    const y = Buffer.from("302a300506032b6570032100" + "f0" + "ff".repeat(30) + "7f", "hex").toString("base64");
+    await assert.rejects(
+      parsePublicKeys(`-----BEGIN PUBLIC KEY-----\n${y}\n-----END PUBLIC KEY-----`, "The issuer key"),
+      (e: unknown) => e instanceof KeyError && e.message.includes("public key is not a canonical encoding"),
+    );
+  });
+
+  it("refuses a key with bytes after it, which Node would accept and browsers would not", async () => {
+    const der = Buffer.from(PEM.replace(/-----[A-Z ]+-----|\s/g, ""), "base64");
+    const longer = Buffer.concat([der, Buffer.from([0])]).toString("base64");
+    await assert.rejects(
+      parsePublicKeys(`-----BEGIN PUBLIC KEY-----\n${longer}\n-----END PUBLIC KEY-----`, "The issuer key"),
+      (e: unknown) => e instanceof KeyError && e.message.includes("is damaged"),
+    );
+  });
+
+  it("says this browser cannot read Ed25519 keys, not that the key is damaged, when WebCrypto has no Ed25519", async () => {
+    const original = crypto.subtle.importKey.bind(crypto.subtle);
+    crypto.subtle.importKey = (() => Promise.reject(new DOMException("no Ed25519", "NotSupportedError"))) as typeof crypto.subtle.importKey;
+    try {
+      await assert.rejects(parsePublicKeys(PEM, "The issuer key"), Ed25519Unavailable);
+    } finally {
+      crypto.subtle.importKey = original;
+    }
+  });
+
   for (const [name, text, message] of [
     // Built from parts so secret scanners do not flag a key that has no key material.
     ["a private key", `-----BEGIN ${PRIVATE}-----\nMC4CAQAwBQYDK2VwBCIEIA==\n-----END ${PRIVATE}-----`, /private key\. Paste the matching public key/],
     ["a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", /is a "CERTIFICATE"/],
     ["a damaged key", PEM.replace("MCow", "MCox"), /not an Ed25519 public key, or is damaged/],
     ["no PEM block", "MCowBQYDK2VwAyEA", /has no PEM block/],
+    ["a truncated second block", `${PEM}\n-----BEGIN PUBLIC KEY-----\nMCowBQYDK2Vw`, /block 2, has no -----END PUBLIC KEY----- line/],
+    ["mismatched labels", PEM.replace("-----END PUBLIC KEY-----", "-----END CERTIFICATE-----"), /begins "PUBLIC KEY" but ends "CERTIFICATE"/],
+    ["an END with no BEGIN", `-----END PUBLIC KEY-----\n${PEM}`, /no BEGIN line before it/],
+    ["junk before the block", `key: ${PEM}`, /text outside its PEM blocks/],
+    ["junk after the block", `${PEM}\nthanks`, /text outside its PEM blocks/],
+    ["junk between blocks", `${PEM}\n--\n${PEM}`, /text outside its PEM blocks/],
+    ["a body with non-zero padding bits", PEM.replace("Aok=", "Aol="), /is damaged/],
     ["an RSA key", "-----BEGIN PUBLIC KEY-----\nMFwwDQYJKoZIhvcNAQEBBQADSwAwSAJBAMvvHOFlR0GdV+ZFzOPWHwm1yflxQHwRJuS1J8y6xG4w2zoV+NS3Me6U5w3XrN6gI0Hf6zWbfvK7w+6s5z6kGkECAwEAAQ==\n-----END PUBLIC KEY-----", /not an Ed25519 public key/],
   ] as const) {
     it(`rejects ${name} with a message that says what to do`, async () => {
@@ -924,7 +1010,339 @@ describe("the src/ lint rules", () => {
 });
 ```
 
-`lint.test.ts` writes a probe file into `src/` (ignored by `.gitignore`), so that `src/tsconfig.json` and the `src/` rules apply to it, lints it with ESLint's API, and removes it.
+`test/bytes.test.ts`:
+
+```ts
+// Copyright 2026 Christiaan de Wet / Sovereign Matrix
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { Ed25519Unavailable, ed25519Verify, fromBase64, fromHex, toBase64, toHex, utf8 } from "../src/bytes.ts";
+
+describe("fromHex", () => {
+  it("decodes hex in either case", () => {
+    assert.equal(toHex(fromHex("00ffAb")), "00ffab");
+    assert.equal(fromHex("").length, 0);
+  });
+  for (const bad of ["zz", "abc", "ab cd", "ab\n", "0x00", "+1"]) {
+    it(`throws on ${JSON.stringify(bad)}`, () => {
+      assert.throws(() => fromHex(bad), TypeError);
+    });
+  }
+});
+
+describe("fromBase64", () => {
+  it("decodes the one spelling of some bytes", () => {
+    assert.equal(toHex(fromBase64("AAEC")), "000102");
+    assert.equal(toBase64(fromBase64("AQ==")), "AQ==");
+  });
+  for (const [name, bad] of [
+    ["a line break", "AAAA\nAAAA"],
+    ["a space", "AA AA"],
+    ["missing padding", "AQ"],
+    ["extra padding", "AQ==="],
+    ["padding in the middle", "AQ==AAAA"],
+    ["the URL-safe alphabet", "-_-_"],
+    ["non-zero padding bits", "AR=="],
+  ] as const) {
+    it(`throws on ${name}`, () => {
+      assert.throws(() => fromBase64(bad), TypeError);
+    });
+  }
+});
+
+describe("utf8", () => {
+  it("encodes beyond ASCII, and a lone surrogate as U+FFFD", () => {
+    assert.equal(toHex(utf8("é€😀")), "c3a9e282acf09f9880");
+    assert.equal(toHex(utf8("\ud800")), "efbfbd");
+  });
+});
+
+describe("ed25519Verify", () => {
+  // RFC 8032 section 7.1, test 1.
+  const PUBLIC = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const SIG = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
+
+  it("verifies RFC 8032 test 1, and not a changed signature", async () => {
+    const key = await crypto.subtle.importKey("raw", fromHex(PUBLIC), { name: "Ed25519" }, false, ["verify"]);
+    assert.equal(await ed25519Verify(key, fromHex(SIG), new Uint8Array(0)), true);
+    assert.equal(await ed25519Verify(key, fromHex("f" + SIG.slice(1)), new Uint8Array(0)), false);
+    assert.equal(await ed25519Verify(key, fromHex(SIG.slice(2)), new Uint8Array(0)), false);
+  });
+
+  it("answers false, not true, when WebCrypto refuses a key of another kind", async () => {
+    const { publicKey } = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    assert.equal(await ed25519Verify(publicKey, fromHex(SIG), new Uint8Array(0)), false);
+  });
+
+  it("throws Ed25519Unavailable when WebCrypto has no Ed25519", async () => {
+    const key = await crypto.subtle.importKey("raw", fromHex(PUBLIC), { name: "Ed25519" }, false, ["verify"]);
+    const original = crypto.subtle.verify.bind(crypto.subtle);
+    crypto.subtle.verify = () => Promise.reject(new DOMException("no Ed25519", "NotSupportedError"));
+    try {
+      await assert.rejects(ed25519Verify(key, fromHex(SIG), new Uint8Array(0)), Ed25519Unavailable);
+    } finally {
+      crypto.subtle.verify = original;
+    }
+  });
+});
+```
+
+`test/transparency.test.ts`:
+
+```ts
+// Copyright 2026 Christiaan de Wet / Sovereign Matrix
+// SPDX-License-Identifier: Apache-2.0
+
+// Edges of the inclusion-proof verifier that the conformance corpus does not
+// reach: each of these inputs is accepted by a plausible one-character bug.
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { innerHash, leafHash, verifyInclusionProof } from "../src/vendor/verifiable-receipts/transparency.ts";
+
+const a = await leafHash("a");
+const b = await leafHash("b");
+const c = await leafHash("c");
+
+describe("verifyInclusionProof edges", () => {
+  it("rejects a valid proof with an extra path entry", async () => {
+    const root = await innerHash(a, b);
+    assert.equal(await verifyInclusionProof(a, 0, 2, [b], root), true);
+    assert.equal(await verifyInclusionProof(a, 0, 2, [b, c], root), false);
+  });
+
+  it("rejects index -1, even in a one-leaf tree whose root is the leaf", async () => {
+    assert.equal(await verifyInclusionProof(a, 0, 1, [], a), true);
+    assert.equal(await verifyInclusionProof(a, -1, 1, [], a), false);
+  });
+
+  it("rejects a one-leaf tree with a non-empty path", async () => {
+    assert.equal(await verifyInclusionProof(a, 0, 1, [b], a), false);
+  });
+
+  it("rejects a tree size of 2^53, which a double cannot hold exactly", async () => {
+    // A path of 53 right-hand siblings proves index 0 in a tree of 2^53 leaves.
+    const path = Array.from({ length: 53 }, () => b);
+    let root = a;
+    for (const sib of path) root = await innerHash(root, sib);
+    assert.equal(await verifyInclusionProof(a, 0, 2 ** 53 - 1, path, root), true);
+    assert.equal(await verifyInclusionProof(a, 0, 2 ** 53, path, root), false);
+  });
+});
+```
+
+`test/ed25519.test.ts`:
+
+```ts
+// Copyright 2026 Christiaan de Wet / Sovereign Matrix
+// SPDX-License-Identifier: Apache-2.0
+
+// The Ed25519 edge vectors (test/fixtures/ed25519): Node's own verify and
+// the port's WebCrypto verify must each give the recorded answer.
+import assert from "node:assert/strict";
+import { createPublicKey, verify } from "node:crypto";
+import { describe, it } from "node:test";
+
+import { ed25519Verify, fromBase64, fromHex } from "../src/bytes.ts";
+import { readJson } from "./helpers.ts";
+
+interface Vector {
+  name: string;
+  spki: string;
+  msg: string;
+  sig: string;
+  node: boolean;
+}
+
+const VECTORS = readJson(new URL("./fixtures/ed25519/", import.meta.url), "vectors.json") as Vector[];
+
+describe("Ed25519 edge vectors", () => {
+  it("holds the 16 vectors", () => {
+    assert.equal(VECTORS.length, 16);
+  });
+  for (const v of VECTORS) {
+    it(v.name, async () => {
+      let node: boolean;
+      try {
+        node = verify(null, Buffer.from(v.msg, "hex"), createPublicKey({ key: Buffer.from(v.spki, "base64"), format: "der", type: "spki" }), Buffer.from(v.sig, "hex"));
+      } catch {
+        node = false;
+      }
+      assert.equal(node, v.node, "node:crypto");
+      let port: boolean;
+      try {
+        const key = await crypto.subtle.importKey("spki", fromBase64(v.spki), { name: "Ed25519" }, false, ["verify"]);
+        port = await ed25519Verify(key, fromHex(v.sig), fromHex(v.msg));
+      } catch {
+        port = false;
+      }
+      assert.equal(port, v.node, "the port");
+    });
+  }
+});
+```
+
+`test/fixtures/ed25519/README.md`:
+
+```markdown
+# Ed25519 edge vectors
+
+Sixteen Ed25519 signatures on the edges of RFC 8032, in the style of
+Wycheproof and "Taming the many EdDSAs" (Chalkias et al., 2020): a
+non-canonical `S` (`S + L`, `S + 2L`, `S = L`), small-order and mixed-order
+public keys, small-order and non-canonical `R`, non-canonical key encodings,
+and points not on the curve. They were built with BigInt curve arithmetic by
+the review of Plan 3, Task 3, on 24 October 2026, with fresh random keys.
+
+Each entry has the key as base64 SPKI DER (`spki`), the message and signature
+as hex (`msg`, `sig`), a `note`, and `node`: what Node's `crypto.verify`
+answers. Node, the browser port (`src/bytes.ts` `ed25519Verify`) and
+Chromium 153 agree on every one: the verification is cofactorless, `S < L`
+is enforced, and small-order keys are accepted, which is why `src/keys.ts`
+refuses them. `test/ed25519.test.ts` checks Node and the port against `node`;
+`e2e/ed25519.spec.ts` checks every browser Playwright runs. Any difference
+fails.
+```
+
+`test/fixtures/ed25519/vectors.json`:
+
+```json
+[
+ {
+  "name": "valid",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "9d1d0a20667254c45d858fbc0249efe4ab9b69e3b4876137e32127f1ff1b956d558ff6f7388f59a159bd81f81b0f47e24795c06de168bbf26679a584bf17af02",
+  "note": "control: honest signature",
+  "node": true
+ },
+ {
+  "name": "S + L (non-canonical S, malleated)",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "9d1d0a20667254c45d858fbc0249efe4ab9b69e3b4876137e32127f1ff1b956d4263ec5453f26bf92f5a799bfa0826f74795c06de168bbf26679a584bf17af12",
+  "note": "RFC 8032 requires S < L",
+  "node": false
+ },
+ {
+  "name": "S + 2^253? (S + 2L)",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "9d1d0a20667254c45d858fbc0249efe4ab9b69e3b4876137e32127f1ff1b956d2f37e2b16d557e5106f7703ed902050c4895c06de168bbf26679a584bf17af22",
+  "note": "S < 2^256 but >= L",
+  "node": false
+ },
+ {
+  "name": "S = L, R = A? (S >= L, high)",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "9d1d0a20667254c45d858fbc0249efe4ab9b69e3b4876137e32127f1ff1b956dedd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010",
+  "note": "S == L",
+  "node": false
+ },
+ {
+  "name": "identity key, R=identity, S=0",
+  "spki": "MCowBQYDK2VwAyEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "note": "small-order A; any message",
+  "node": true
+ },
+ {
+  "name": "identity key non-canonical (y=p+1), R=identity, S=0",
+  "spki": "MCowBQYDK2VwAyEA7v///////////////////////////////////////38=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "note": "non-canonical A",
+  "node": true
+ },
+ {
+  "name": "order-8 key, R=id, S=0, k%8==0",
+  "spki": "MCowBQYDK2VwAyEAxxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA3o=",
+  "msg": "6d30",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "note": "small-order A; cofactorless equation holds",
+  "node": true
+ },
+ {
+  "name": "order-8 key, R=id, S=0, k%8!=0",
+  "spki": "MCowBQYDK2VwAyEAxxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA3o=",
+  "msg": "6d31",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "note": "only a cofactored verifier accepts",
+  "node": false
+ },
+ {
+  "name": "mixed-order key, k%8!=0",
+  "spki": "MCowBQYDK2VwAyEAsl7spz7lQ9uOAuuVYeuJDmOh6yGIUFxlVRfwXfIagtk=",
+  "msg": "6d6978656430",
+  "sig": "3ed5d07abad42205859d256bdea158d937dfeeaa66926d62b995df851f834074d7cb403df9489682dbf50cf491e180cd033c4979cca502b46206b2aa06c66103",
+  "note": "only a cofactored verifier accepts",
+  "node": false
+ },
+ {
+  "name": "mixed-order key, k%8==0",
+  "spki": "MCowBQYDK2VwAyEAsl7spz7lQ9uOAuuVYeuJDmOh6yGIUFxlVRfwXfIagtk=",
+  "msg": "6d6978656434",
+  "sig": "ea2c6fa9a7333adaa12570c9a863d1a3203c4ae58ec2f413c55ec8ded59e877c0c1f39806f490738f4e676fcd7e28be9dd5aed21f78852eeb0c363c96135fe00",
+  "note": "cofactorless and cofactored both accept",
+  "node": true
+ },
+ {
+  "name": "small-order R (T8), S=k*a",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "736d616c6c52",
+  "sig": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a5ec4b25a45e5b9d3bf30ee092c5d2689b2c8c244ba195402d22af61f2fa72607",
+  "note": "only a cofactored verifier accepts",
+  "node": false
+ },
+ {
+  "name": "R = identity, S=k*a",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "696452",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000006a32cbc94f44e00b1e0dace30a1199b8747f552801a684960a2caf236ab99404",
+  "note": "R small order (order 1); cofactorless equation holds",
+  "node": true
+ },
+ {
+  "name": "non-canonical R (identity as y=p+1)",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "6e6352",
+  "sig": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fb905fb88b7c989b2813b2e73544d60c69076070d1be42dc634fc5ce41d82db00",
+  "note": "equation holds after reducing R",
+  "node": false
+ },
+ {
+  "name": "identity key with sign bit (01..80), R=id, S=0",
+  "spki": "MCowBQYDK2VwAyEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "note": "non-canonical A (x=0, sign 1)",
+  "node": true
+ },
+ {
+  "name": "key not on curve (02 00..)",
+  "spki": "MCowBQYDK2VwAyEAAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "9d1d0a20667254c45d858fbc0249efe4ab9b69e3b4876137e32127f1ff1b956d558ff6f7388f59a159bd81f81b0f47e24795c06de168bbf26679a584bf17af02",
+  "note": "invalid point",
+  "node": false
+ },
+ {
+  "name": "R not on curve",
+  "spki": "MCowBQYDK2VwAyEAJ5jX/XQtzxpU+/rXT+hhohqMDO8XoEoNfXF4xcul09Y=",
+  "msg": "726563656970742063616e6f6e6963616c",
+  "sig": "0200000000000000000000000000000000000000000000000000000000000000558ff6f7388f59a159bd81f81b0f47e24795c06de168bbf26679a584bf17af02",
+  "note": "invalid R",
+  "node": false
+ }
+]
+```
+
+`transparency.test.ts` covers the inclusion-proof edges the corpus does not reach; `ed25519.test.ts` runs the sixteen edge vectors the Task 3 review built (their README gives their provenance) through Node and the port. `lint.test.ts` writes a probe file into `src/` (ignored by `.gitignore`), so that `src/tsconfig.json` and the `src/` rules apply to it, lints it with ESLint's API, and removes it.
 - [ ] **Step 2:** run them:
 
 ```bash
@@ -957,18 +1375,27 @@ export function toHex(bytes: Uint8Array): string {
   return out;
 }
 
-/** Decodes lowercase or uppercase hex of even length; callers check the spelling first. */
+const HEX = /^(?:[0-9a-fA-F]{2})*$/;
+const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/** Decodes hex of even length; throws on any other character, an odd length or whitespace. */
 export function fromHex(hex: string): Uint8Array<ArrayBuffer> {
+  if (!HEX.test(hex)) throw new TypeError("not hex");
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(hex.slice(2 * i, 2 * i + 2), 16);
   return out;
 }
 
-/** Decodes standard base64; callers check the alphabet and padding first. */
+/**
+ * Decodes standard, padded base64; throws on any other character, whitespace,
+ * missing or extra padding, or a spelling with non-zero padding bits.
+ */
 export function fromBase64(text: string): Uint8Array<ArrayBuffer> {
+  if (!STANDARD_BASE64.test(text)) throw new TypeError("not standard base64");
   const binary = atob(text);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  if (toBase64(out) !== text) throw new TypeError("not the one spelling of these bytes");
   return out;
 }
 
@@ -991,11 +1418,30 @@ export async function sha256Hex(...parts: readonly Uint8Array[]): Promise<string
   return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", all)));
 }
 
-/** Ed25519 verification that answers false, never throws, for a malformed signature. */
+/** This browser's WebCrypto cannot verify Ed25519: no check that needs it can run. */
+export class Ed25519Unavailable extends Error {
+  constructor() {
+    super("This browser cannot check Ed25519 signatures. Use a current version of Firefox, Chrome, Edge or Safari.");
+  }
+}
+
+/** True for the errors WebCrypto gives when it has no Ed25519 at all. */
+export function isUnsupported(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "NotSupportedError";
+}
+
+/**
+ * Ed25519 verification. Answers false, never throws, for a malformed
+ * signature or a key of another kind; throws Ed25519Unavailable when this
+ * browser cannot verify Ed25519 at all, so the caller reports "not run",
+ * never "failed".
+ */
 export async function ed25519Verify(key: CryptoKey, signature: Uint8Array<ArrayBuffer>, data: Uint8Array<ArrayBuffer>): Promise<boolean> {
+  if (typeof crypto === "undefined" || typeof crypto.subtle === "undefined") throw new Ed25519Unavailable();
   try {
     return await crypto.subtle.verify({ name: "Ed25519" }, key, signature, data);
-  } catch {
+  } catch (e) {
+    if (isUnsupported(e)) throw new Ed25519Unavailable();
     return false;
   }
 }
@@ -1015,26 +1461,43 @@ export async function ed25519Verify(key: CryptoKey, signature: Uint8Array<ArrayB
 // Changed from the original, so that it runs in a browser: converted to
 // TypeScript; node:crypto and Buffer replaced by WebCrypto and ../../bytes.ts,
 // so verifyV2Receipt is async and takes a WebCrypto CryptoKey; the
-// signature-mismatch reason exported as SIGNATURE_MISMATCH_REASON. No
-// change to the checks, their order or their failure reasons.
+// non-canonical base64 test is fromBase64's round trip, caught here; the
+// public key's 32 bytes are read with WebCrypto's raw export instead of the
+// JWK x, so the key must be extractable (parsePublicKeys makes it so), and
+// the byte test is split out as weakKeyReason so that src/keys.ts refuses
+// the same keys with the same list; the signature-mismatch reason exported
+// as SIGNATURE_MISMATCH_REASON. When the browser has no WebCrypto Ed25519,
+// verifyV2Receipt throws Ed25519Unavailable instead of answering. No change
+// to the checks, their order or their failure reasons.
+// Changed in the comments only: the original's sentence on Go's
+// Receipt.UnmarshalJSON, and its paragraph on integers beyond 2^53 in the
+// Python and Go verifiers, are dropped; they describe the other verifiers.
 
 /**
  * The v2 (Ed25519) receipt verifier of the verifiable-receipts conformance
  * corpus. It makes these checks, in this order:
  *
+ *   0. The receipt nests at most 64 deep (VAOS 2.0 §7.2): the receipt
+ *      object is one level, and each array or object in it one more.
  *   1. `canonical` and `signature` are non-empty strings.
  *   2. `signature` is "v2=<base64>" with standard base64.
  *   3. `contentHash`, when present and not null, is a string equal to
  *      the hex SHA-256 of `canonical`'s UTF-8 bytes ("sha256:" prefix
  *      optional); an empty string is a mismatch, not an absent field.
- *   4. The Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
+ *   4. The public key is not a point of small order or a non-canonical
+ *      encoding (VAOS 2.0 §7.3; checked right after step 2), and the
+ *      Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
  *      exactly as given.
- *   5. `canonical` parses as a JSON object.
+ *   5. `canonical` nests at most 64 deep, counted on its text before it
+ *      is parsed, and parses as a JSON object.
  *   6. Every other top-level field of the receipt equals the same field
  *      of that object (deep JSON-value equality); a field that
  *      disagrees, or that the canonical lacks, is rejected.
+ *
+ * jsonEqual below recurses at most 64 deep, and the depth checks walk an
+ * explicit stack, so no input can overflow the call stack.
  */
-import { ed25519Verify, fromBase64, sha256Hex, toBase64, utf8 } from "../../bytes.ts";
+import { ed25519Verify, fromBase64, sha256Hex, toHex, utf8 } from "../../bytes.ts";
 
 const ENVELOPE_ONLY = new Set(["canonical", "contentHash", "signature"]);
 
@@ -1052,25 +1515,116 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
+ * The encodings of the points of small order, with the sign bit cleared:
+ * the libsodium blocklist ("Taming the many EdDSAs", Chalkias et al.). The
+ * last two are the non-canonical encodings y = p and y = p + 1.
+ */
+const SMALL_ORDER_KEYS = new Set([
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+]);
+
+/**
+ * Why a 32-byte Ed25519 public key is refused (VAOS 2.0 §7.3), or null: a
+ * point of small order, or a non-canonical encoding (y of p or more).
+ */
+export function weakKeyReason(raw: Uint8Array): string | null {
+  if (raw.length !== 32) return null;
+  const cleared = raw.slice();
+  cleared[31] = (cleared[31] ?? 0) & 0x7f;
+  if (SMALL_ORDER_KEYS.has(toHex(cleared))) return "public key is a small-order point";
+  const y = BigInt("0x" + toHex(cleared.slice().reverse()));
+  if (y >= 2n ** 255n - 19n) return "public key is not a canonical encoding";
+  return null;
+}
+
+/**
+ * Why the Ed25519 public key is refused, or null. A key that is not Ed25519
+ * is left to the signature check, which fails.
+ */
+async function ed25519KeyProblem(publicKey: CryptoKey): Promise<string | null> {
+  if (publicKey.algorithm.name !== "Ed25519") return null;
+  if (!publicKey.extractable) throw new TypeError("verifyV2Receipt needs an extractable key, to check it is not weak");
+  return weakKeyReason(new Uint8Array(await crypto.subtle.exportKey("raw", publicKey)));
+}
+
+/** The nesting limit of VAOS 2.0 §7.2. */
+export const MAX_NESTING = 64;
+
+/**
+ * Whether `value` nests deeper than MAX_NESTING: `value` is one level
+ * when it is an array or object, and each array or object inside it one
+ * more. Walks an explicit stack, so it cannot overflow the call stack.
+ */
+export function nestsTooDeep(value: unknown): boolean {
+  const stack: [unknown, number][] = [[value, 1]];
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    const [v, level] = top;
+    if (v === null || typeof v !== "object") continue;
+    if (level > MAX_NESTING) return true;
+    for (const child of Array.isArray(v) ? (v as unknown[]) : Object.values(v)) {
+      if (child !== null && typeof child === "object") stack.push([child, level + 1]);
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether JSON text opens more than MAX_NESTING arrays and objects at
+ * once, read from the start, valid JSON or not: outside strings `[` and
+ * `{` open one and `]` and `}` close one (when one is open); a string
+ * runs from `"` to the next `"` not escaped by `\`.
+ */
+export function textNestsTooDeep(text: string): boolean {
+  let open = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === "[" || c === "{") {
+      if (++open > MAX_NESTING) return true;
+    } else if ((c === "]" || c === "}") && open > 0) {
+      open--;
+    }
+  }
+  return false;
+}
+
+/**
  * Deep JSON-value equality; object key order does not matter. A number of
  * magnitude 2^53 or more equals nothing: JSON.parse reads 2^53 + 1 as
  * 2^53, so such a number in a repeated field is rejected in every
  * verifier rather than compared differently.
+ *
+ * Bounded at MAX_NESTING: `depth` is the level of `a` and `b` (1 at the
+ * top), and arrays or objects deeper than MAX_NESTING equal nothing, so
+ * no input, even from a caller other than verifyV2Receipt, recurses
+ * deeper than that.
  */
-export function jsonEqual(a: unknown, b: unknown): boolean {
+export function jsonEqual(a: unknown, b: unknown, depth = 1): boolean {
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
+      depth <= MAX_NESTING &&
       Array.isArray(a) &&
       Array.isArray(b) &&
       a.length === b.length &&
-      a.every((x: unknown, i: number) => jsonEqual(x, b[i]))
+      a.every((x: unknown, i: number) => jsonEqual(x, b[i], depth + 1))
     );
   }
   if (isObject(a) || isObject(b)) {
-    if (!isObject(a) || !isObject(b)) return false;
+    if (depth > MAX_NESTING || !isObject(a) || !isObject(b)) return false;
     const ka = Object.keys(a);
     if (ka.length !== Object.keys(b).length) return false;
-    return ka.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k]));
+    return ka.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k], depth + 1));
   }
   if (typeof a === "number" && typeof b === "number") {
     return Math.abs(a) < 2 ** 53 && Math.abs(b) < 2 ** 53 && a === b;
@@ -1078,8 +1632,28 @@ export function jsonEqual(a: unknown, b: unknown): boolean {
   return a === b; // null, booleans, strings
 }
 
+/**
+ * Reads a receipt from JSON text, counting its depth on the text first
+ * (VAOS 2.0 §7.2), so a duplicate key that JSON.parse discards still
+ * counts. Throws an Error whose message is the reason: "receipt nesting
+ * deeper than 64", "receipt is not valid JSON" or "receipt is not a JSON
+ * object".
+ */
+export function parseReceipt(text: string): Record<string, unknown> {
+  if (textNestsTooDeep(text)) throw new Error("receipt nesting deeper than 64");
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("receipt is not valid JSON");
+  }
+  if (!isObject(value)) throw new Error("receipt is not a JSON object");
+  return value;
+}
+
 export async function verifyV2Receipt(receipt: unknown, publicKey: CryptoKey): Promise<VerifyResult> {
   if (!isObject(receipt)) return { ok: false, reason: "receipt must be an object" };
+  if (nestsTooDeep(receipt)) return { ok: false, reason: "receipt nesting deeper than 64" };
   const { canonical, signature, contentHash } = receipt;
   if (typeof canonical !== "string" || canonical === "") {
     return { ok: false, reason: "missing canonical projection" };
@@ -1093,11 +1667,16 @@ export async function verifyV2Receipt(receipt: unknown, publicKey: CryptoKey): P
   if (!STANDARD_BASE64.test(signature.slice(3))) {
     return { ok: false, reason: "signature base64 invalid" };
   }
-  const sigBytes = fromBase64(signature.slice(3));
-  // Reject non-canonical spellings (non-zero padding bits).
-  if (toBase64(sigBytes) !== signature.slice(3)) {
+  let sigBytes: Uint8Array<ArrayBuffer>;
+  try {
+    // Reject non-canonical spellings (non-zero padding bits): fromBase64
+    // throws for them, and only for them once the pattern above has passed.
+    sigBytes = fromBase64(signature.slice(3));
+  } catch {
     return { ok: false, reason: "signature base64 invalid: not canonical" };
   }
+  const keyProblem = await ed25519KeyProblem(publicKey);
+  if (keyProblem) return { ok: false, reason: keyProblem };
   const canonicalBytes = utf8(canonical);
 
   if (contentHash != null && typeof contentHash !== "string") {
@@ -1115,6 +1694,9 @@ export async function verifyV2Receipt(receipt: unknown, publicKey: CryptoKey): P
   }
 
   // Only now parse the canonical: these bytes are authenticated.
+  if (textNestsTooDeep(canonical)) {
+    return { ok: false, reason: "canonical nesting deeper than 64" };
+  }
   let signed: unknown;
   try {
     signed = JSON.parse(canonical);
@@ -1161,8 +1743,14 @@ export async function verifyV2Receipt(receipt: unknown, publicKey: CryptoKey): P
 // verifyInclusionProof are async; leafHash takes a string only;
 // verifyInclusionProof's parameters are typed unknown, since a log's answer
 // is untrusted, and it returns false when an audit-path entry is missing,
-// which the original left to the length check alone; isHashHex and isCount
-// are exported. No change to the checks or the algorithm.
+// which the original left to the length check alone; isHashHex, which the
+// original imports from packages/verifiable-receipts/src/hash.ts, is
+// inlined from that file, and isHashHex and isCount are exported. No change
+// to the checks or the algorithm.
+// Changed in the comments only: the module overview is cut to the
+// verification half, the domain-separator sentences on leafHash and
+// innerHash are dropped, and SignedTreeHead's signature comment is narrowed
+// to v2=, the only kind this page checks.
 
 /**
  * RFC 6962 / RFC 9162 Merkle tree primitives for checking that a receipt
@@ -1311,8 +1899,13 @@ Every difference must be one the header lists: types, the imports, `Buffer` and 
 // SPDX-License-Identifier: Apache-2.0
 
 // Reads Ed25519 public keys from PEM text into WebCrypto keys, each named
-// by the same fingerprint verify-receipts-action reports.
-import { fromBase64, sha256Hex } from "./bytes.ts";
+// by the same fingerprint verify-receipts-action reports. The reading is
+// strict: every block must be whole, nothing but whitespace may sit
+// between blocks, the body must be the one spelling of its bytes, and the
+// key must re-export to exactly those bytes. A problem is an error that
+// says what to do, never a block silently dropped.
+import { Ed25519Unavailable, fromBase64, isUnsupported, sha256Hex, toHex } from "./bytes.ts";
+import { weakKeyReason } from "./vendor/verifiable-receipts/receipt.ts";
 
 /** An Ed25519 public key and the short name it is reported under. */
 export interface PublicKey {
@@ -1323,21 +1916,52 @@ export interface PublicKey {
 
 export class KeyError extends Error {}
 
-const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]+)-----([\s\S]*?)-----END \1-----/g;
-const BASE64_BODY = /^[A-Za-z0-9+/]+={0,2}$/;
+const MARKER = /-----(BEGIN|END) ([A-Z0-9 ]+)-----/g;
+
+/** The SPKI DER prefix of an Ed25519 public key (RFC 8410): the 32 key bytes follow it. */
+const ED25519_SPKI_PREFIX = "302a300506032b6570032100";
+
+/**
+ * Why the verifier would refuse this key (a small-order point, or a
+ * non-canonical encoding), or null. The list is the port's own
+ * (weakKeyReason in the vendored receipt.ts), so the page refuses at
+ * reading exactly the keys verification refuses.
+ */
+function weakKey(der: Uint8Array): string | null {
+  if (der.length !== 44 || !toHex(der).startsWith(ED25519_SPKI_PREFIX)) return null;
+  return weakKeyReason(der.slice(12));
+}
 
 /**
  * Reads every PEM block in `text` and returns the Ed25519 public keys, in
- * order, without repeats. A private key, a block of another kind, an
- * unreadable block, or text with no PEM block at all is an error that
- * says what to do. `source` names the field in messages ("The issuer key").
+ * order, without repeats. `source` names the field in messages ("The
+ * issuer key"). Throws KeyError for any problem, or Ed25519Unavailable when
+ * this browser cannot read Ed25519 keys at all.
  */
 export async function parsePublicKeys(text: string, source: string): Promise<PublicKey[]> {
   const keys: PublicKey[] = [];
   let blocks = 0;
-  for (const match of text.matchAll(PEM_BLOCK)) {
+  let at = 0;
+  let open: { label: string; start: number } | undefined;
+  for (const m of text.matchAll(MARKER)) {
+    const [whole, kind, label = ""] = m;
+    if (kind === "BEGIN") {
+      if (open !== undefined) {
+        throw new KeyError(`${source}, block ${String(blocks + 1)}, has no -----END ${open.label}----- line. Copy the whole block again.`);
+      }
+      if (text.slice(at, m.index).trim() !== "") {
+        throw new KeyError(`${source} has text outside its PEM blocks. Paste only the blocks, from -----BEGIN to -----END.`);
+      }
+      open = { label, start: m.index + whole.length };
+      continue;
+    }
+    if (open === undefined) {
+      throw new KeyError(`${source} has an -----END ${label}----- line with no BEGIN line before it. Copy the whole block again.`);
+    }
     blocks++;
-    const label = match[1] ?? "";
+    if (label !== open.label) {
+      throw new KeyError(`${source}, block ${String(blocks)}, begins "${open.label}" but ends "${label}". Copy the whole block again.`);
+    }
     if (label.includes("PRIVATE")) {
       throw new KeyError(
         `${source}, block ${String(blocks)}, is a private key. Paste the matching public key instead (openssl pkey -pubout prints it), and keep the private key to yourself.`,
@@ -1346,26 +1970,53 @@ export async function parsePublicKeys(text: string, source: string): Promise<Pub
     if (label !== "PUBLIC KEY") {
       throw new KeyError(`${source}, block ${String(blocks)}, is a "${label}". Paste a "PUBLIC KEY" block.`);
     }
-    const body = (match[2] ?? "").replace(/\s+/g, "");
-    let key: CryptoKey;
-    try {
-      if (!BASE64_BODY.test(body)) throw new KeyError("not base64");
-      key = await crypto.subtle.importKey("spki", fromBase64(body), { name: "Ed25519" }, true, ["verify"]);
-    } catch {
-      throw new KeyError(
-        `${source}, block ${String(blocks)}, is not an Ed25519 public key, or is damaged. Copy the whole block again, from -----BEGIN to -----END.`,
-      );
-    }
-    const der = new Uint8Array(await crypto.subtle.exportKey("spki", key));
-    const fingerprint = "sha256:" + (await sha256Hex(der)).slice(0, 16);
-    if (!keys.some((k) => k.fingerprint === fingerprint)) keys.push({ key, fingerprint });
+    keys.push(...(await readKey(text.slice(open.start, m.index), source, blocks, keys)));
+    open = undefined;
+    at = m.index + whole.length;
   }
-  if (blocks === 0 && text.trim() !== "") {
+  if (open !== undefined) {
+    throw new KeyError(`${source}, block ${String(blocks + 1)}, has no -----END ${open.label}----- line. Copy the whole block again.`);
+  }
+  if (text.slice(at).trim() !== "") {
     throw new KeyError(
-      `${source} has no PEM block. Include the -----BEGIN PUBLIC KEY----- and -----END PUBLIC KEY----- lines.`,
+      blocks === 0
+        ? `${source} has no PEM block. Include the -----BEGIN PUBLIC KEY----- and -----END PUBLIC KEY----- lines.`
+        : `${source} has text outside its PEM blocks. Paste only the blocks, from -----BEGIN to -----END.`,
     );
   }
   return keys;
+}
+
+async function readKey(body: string, source: string, n: number, seen: readonly PublicKey[]): Promise<PublicKey[]> {
+  const damaged = new KeyError(
+    `${source}, block ${String(n)}, is not an Ed25519 public key, or is damaged. Copy the whole block again, from -----BEGIN to -----END.`,
+  );
+  let der: Uint8Array<ArrayBuffer>;
+  try {
+    der = fromBase64(body.replace(/[ \t\r\n]+/g, ""));
+  } catch {
+    throw damaged;
+  }
+  const weak = weakKey(der);
+  if (weak === "public key is a small-order point") {
+    throw new KeyError(`${source}, block ${String(n)}, is a key of small order, under which forged signatures verify. No real issuer, log or witness uses one: check where it came from.`);
+  }
+  if (weak !== null) {
+    throw new KeyError(`${source}, block ${String(n)}, is not the canonical encoding of its key (${weak}). No real issuer, log or witness writes one: check where it came from.`);
+  }
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey("spki", der, { name: "Ed25519" }, true, ["verify"]);
+  } catch (e) {
+    if (isUnsupported(e)) throw new Ed25519Unavailable();
+    throw damaged;
+  }
+  const exported = new Uint8Array(await crypto.subtle.exportKey("spki", key));
+  // Node accepts an SPKI with bytes after the key, and browsers do not:
+  // only the exact encoding is accepted everywhere.
+  if (toHex(exported) !== toHex(der)) throw damaged;
+  const fingerprint = "sha256:" + (await sha256Hex(exported)).slice(0, 16);
+  return seen.some((k) => k.fingerprint === fingerprint) ? [] : [{ key, fingerprint }];
 }
 ```
 
@@ -1398,17 +2049,37 @@ Expected: the `matches` line, then `exit 1` with each `::error`.
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: tsc and ESLint print nothing; `# pass 35`, `# fail 0` (26 conformance: the count and 25 fixtures; 8 keys; 1 lint).
+Expected: tsc and ESLint print nothing; `# pass 91`, `# fail 0` (31 conformance: the count and 30 fixtures; 19 keys; 1 lint; 19 bytes; 4 transparency; 17 Ed25519 vectors: the count and 16 vectors).
 
 - [ ] **Step 8:** prove the type and lint guards bite.
   - Lint: delete `"setHTMLUnsafe",` from `eslint.config.js`, run `node --test test/lint.test.ts`, and confirm `# fail 1` with `el.setHTMLUnsafe(s); not flagged by no-restricted-properties`. Restore the line.
   - Types: write `src/tsc-probe.ts` holding `import { createHash } from "node:crypto"; export const h = createHash("sha256"); export const b = Buffer.from("x"); export const e = process.env;`, run `npx tsc -p src/tsconfig.json`, and confirm `TS2307: Cannot find module 'node:crypto'` and `TS2591: Cannot find name 'Buffer'` and `'process'`. Move the probe to `~/.Trash/`.
 
-- [ ] **Step 9:** commit:
+- [ ] **Step 9:** prove each new test kills its mutant. Make each change below in turn, run the test named, confirm `# fail 1` or more, and restore the line (`git diff` must show nothing before the next one). The prototype killed all fifteen, and the fourteen later mutants of Tasks 4, 6 and 7.
+
+| Mutant | In | Change | Killed by |
+|---|---|---|---|
+| UTF-8 read as Latin-1 | `src/bytes.ts` `utf8` | `return encoder.encode(text);` to `return Uint8Array.from(text, (c) => c.charCodeAt(0) & 0xff);` | `test/port.properties.test.ts` (Task 4; `test/bytes.test.ts` too) |
+| `<` for `!==` | `transparency.ts` | `proof.length !== inner + border` to `proof.length < inner + border` | `test/transparency.test.ts` |
+| index −1 allowed | `transparency.ts` `isCount` | `>= 0` to `>= -1` | `test/transparency.test.ts` |
+| a one-leaf tree ignores its path | `transparency.ts` | `return proof.length === 0 && leafHashHex === rootHashHex;` to `return leafHashHex === rootHashHex;` | `test/transparency.test.ts` |
+| any integer as a count | `transparency.ts` `isCount` | `Number.isSafeInteger(n)` to `Number.isInteger(n)` | `test/transparency.test.ts` |
+| true on a throw | `src/bytes.ts` `ed25519Verify` | the final `return false;` to `return true;` | `test/bytes.test.ts` |
+| unavailable as a bad signature | `src/bytes.ts` `ed25519Verify` | delete `if (isUnsupported(e)) throw new Ed25519Unavailable();` | `test/bytes.test.ts` |
+| lenient hex | `src/bytes.ts` `fromHex` | delete its `if (!HEX.test(hex)) throw …` line | `test/bytes.test.ts` |
+| lenient base64 | `src/bytes.ts` `fromBase64` | delete its `if (!STANDARD_BASE64.test(text)) throw …` line | `test/bytes.test.ts` |
+| no base64 round trip | `src/bytes.ts` `fromBase64` | delete its `if (toBase64(out) !== text) throw …` line | `test/bytes.test.ts` (and the conformance fixture `v2-invalid-noncanonical-base64.json`) |
+| no DER round trip | `src/keys.ts` | delete `if (toHex(exported) !== toHex(der)) throw damaged;` | `test/keys.test.ts` |
+| weak keys accepted | `src/keys.ts` | `const weak = weakKey(der);` to `const weak = null;` | `test/keys.test.ts` |
+| text outside the blocks ignored | `src/keys.ts` | the last `if (text.slice(at).trim() !== "") {` to `if (blocks === 0 && text.slice(at).trim() !== "") {` | `test/keys.test.ts` |
+| labels not compared | `src/keys.ts` | `if (label !== open.label) {` to `if (false) {` | `test/keys.test.ts` |
+| unavailable as a damaged key | `src/keys.ts` `readKey` | delete `if (isUnsupported(e)) throw new Ed25519Unavailable();` | `test/keys.test.ts` |
+
+- [ ] **Step 10:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "Browser port of the v2 verifier and the inclusion-proof verifier" -m "verify-v2.mjs and transparency.ts from verifiable-receipts at VR_REF, on WebCrypto instead of node:crypto and Buffer, so they run in a page; same checks, order and reasons. PEM keys become WebCrypto keys named by the fingerprint verify-receipts-action reports. Every conformance fixture gets the reference verdict and reason." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "Browser port of the v2 verifier and the inclusion-proof verifier" -m "verify-v2.mjs and transparency.ts from verifiable-receipts at VR_REF, on WebCrypto instead of node:crypto and Buffer, so they run in a page; same checks, order and reasons. PEM keys are read strictly (whole, matching blocks, nothing outside them, one spelling, exact DER, no weak key, by the verifier's own list) into WebCrypto keys named by the fingerprint verify-receipts-action reports. A browser without Ed25519 is told apart from a bad signature. Every conformance fixture gets the reference verdict and reason, and Node and the port agree on 16 Ed25519 edge vectors." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 4: the port against the original, on random receipts
@@ -1428,8 +2099,25 @@ git commit --author="$A" -m "Browser port of the v2 verifier and the inclusion-p
 // differential corpus makes, for the property tests.
 import fc from "fast-check";
 
-/** A body like a real receipt's, with keys in a random order. */
-export const body = fc.dictionary(fc.string({ minLength: 1, maxLength: 8 }), fc.jsonValue({ maxDepth: 2 }), { maxKeys: 5 }).map((d) => ({ receiptId: "r", ...d }));
+/** A body like a real receipt's, with keys in a random order. Strings use all of Unicode, lone surrogates included, so UTF-8 encoding is tested. */
+export const body = fc.oneof(
+  { arbitrary: plainBody(), weight: 4 },
+  // Now and then a field nested near the limit of 64: the canonical (the body is one level) and the receipt.
+  { arbitrary: fc.tuple(plainBody(), fc.integer({ min: 61, max: 66 })).map(([d, n]) => ({ ...d, nest: nested(n) })), weight: 1 },
+);
+
+function plainBody(): fc.Arbitrary<Record<string, unknown>> {
+  return fc
+    .dictionary(fc.string({ minLength: 1, maxLength: 8, unit: "binary" }), fc.jsonValue({ maxDepth: 2, stringUnit: "binary" }), { maxKeys: 5 })
+    .map((d) => ({ receiptId: "r", ...d }));
+}
+
+/** `n` arrays, each holding the next. */
+export function nested(n: number): unknown {
+  let v: unknown = [];
+  for (let i = 1; i < n; i++) v = [v];
+  return v;
+}
 
 /** One change to a signed receipt, of the kinds the differential corpus makes. */
 export const mutation = fc.oneof(
@@ -1439,6 +2127,7 @@ export const mutation = fc.oneof(
   fc.record({ kind: fc.constant("set" as const), field: fc.string({ maxLength: 8 }), value: fc.jsonValue({ maxDepth: 2 }) }),
   fc.record({ kind: fc.constant("respell" as const), suffix: fc.constantFrom("\n", " ", "=", "A") }),
   fc.record({ kind: fc.constant("hash" as const), value: fc.constantFrom("", null, 0, false, "sha256:", "SHA256:", []) }),
+  fc.record({ kind: fc.constant("set" as const), field: fc.constantFrom("nest", "extra"), value: fc.integer({ min: 62, max: 66 }).map(nested) }),
 );
 
 export type Mutation = { kind: "none" } | { kind: "char"; field: string; pos: number; delta: number } | { kind: "drop"; field: string } | { kind: "set"; field: string; value: unknown } | { kind: "respell"; suffix: string } | { kind: "hash"; value: unknown };
@@ -1488,11 +2177,11 @@ import { describe, it } from "node:test";
 
 import fc from "fast-check";
 
-import { verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
+import { jsonEqual, verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 import { innerHash, leafHash, verifyInclusionProof } from "../src/vendor/verifiable-receipts/transparency.ts";
-import { verifyV2Receipt as original } from "../third_party/verifiable-receipts/verify-v2.mjs";
+import { jsonEqual as originalEqual, verifyV2Receipt as original } from "../third_party/verifiable-receipts/verify-v2.mjs";
 import { makeKey, signReceipt } from "./helpers.ts";
-import { body, mutate, mutation } from "./mutations.ts";
+import { body, mutate, mutation, nested } from "./mutations.ts";
 
 const NUM_RUNS = Number(process.env.FC_NUM_RUNS ?? "200");
 fc.configureGlobal({ numRuns: Number.isSafeInteger(NUM_RUNS) && NUM_RUNS > 0 ? NUM_RUNS : 200 });
@@ -1543,6 +2232,56 @@ describe("inclusion proofs", () => {
     );
   });
 });
+
+describe("weak keys", () => {
+  const SMALL_ORDER = [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  ];
+  /** A weak key: a small-order point, or y = p + k for k from 0 to 18 (non-canonical), with either sign bit. */
+  const weak = fc.tuple(
+    fc.oneof(
+      fc.constantFrom(...SMALL_ORDER),
+      fc.integer({ min: 0, max: 18 }).map((k) => {
+        const y = 2n ** 255n - 19n + BigInt(k);
+        return Buffer.from(y.toString(16).padStart(64, "0"), "hex").reverse().toString("hex");
+      }),
+    ),
+    fc.boolean(),
+  ).map(([hex, sign]) => {
+    const raw = Buffer.from(hex, "hex");
+    if (sign) raw[31] = (raw[31] ?? 0) | 0x80;
+    return Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]);
+  });
+
+  it("the port refuses each weak key with the original's reason", async () => {
+    await fc.assert(
+      fc.asyncProperty(body, weak, async (b, der) => {
+        const receipt = await signReceipt(b, issuer.privateKey);
+        const portKey = await crypto.subtle.importKey("spki", der, { name: "Ed25519" }, true, ["verify"]);
+        const nodeKey = createPublicKey({ key: der, format: "der", type: "spki" });
+        const port = await verifyV2Receipt(receipt, portKey);
+        assert.deepEqual(port, original(receipt, nodeKey));
+        // Only a receipt too deep is refused before the key is looked at.
+        assert.match(port.reason ?? "", /^(public key is (a small-order point|not a canonical encoding)|receipt nesting deeper than 64)$/);
+      }),
+    );
+  });
+});
+
+describe("jsonEqual is bounded", () => {
+  it("equals nothing nested deeper than 64, as the original, and never overflows the stack", () => {
+    for (let n = 60; n <= 70; n++) assert.equal(jsonEqual(nested(n), nested(n)), originalEqual(nested(n), nested(n)), String(n));
+    assert.equal(jsonEqual(nested(64), nested(64)), true);
+    assert.equal(jsonEqual(nested(65), nested(65)), false);
+    assert.equal(jsonEqual(nested(100_000), nested(100_000)), false);
+  });
+});
 ```
 
 `port.properties.test.ts` imports the unchanged original, `third_party/verifiable-receipts/verify-v2.mjs`, which uses `node:crypto`, with its upstream types from `verify-v2.d.mts`, so the import needs no `@ts-expect-error`: the two verifiers judge the same receipts and must give the same verdict and reason.
@@ -1553,10 +2292,10 @@ describe("inclusion proofs", () => {
 FC_NUM_RUNS=2000 node --test test/port.properties.test.ts 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 2`, `# fail 0`, in about three seconds.
+Expected: `# pass 4`, `# fail 0`, in about ten seconds.
 
-- [ ] **Step 3:** prove the property catches a broken port. In `src/vendor/verifiable-receipts/receipt.ts`, change `if (toBase64(sigBytes) !== signature.slice(3))` to `if (false)`, rerun the command, and confirm `# fail 1`, with a counterexample that changes one character of the signature: a spelling with a non-zero padding bit, which the original rejects and the broken port accepts. Restore the line and rerun to `# fail 0`. Then change `if (contentHash != null) {` to `if (contentHash) {`, the rule before `fix/empty-contenthash`, rerun `node --test test/port.properties.test.ts`, and confirm `# fail 1` with a counterexample ending `{"kind":"hash","value":""}`; restore it.
-- [ ] **Step 4:** run the whole check (npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'): `# pass 37`, `# fail 0`.
+- [ ] **Step 3:** prove the property catches a broken port, three ways, restoring each change before the next. In `src/bytes.ts`, delete the line `if (toBase64(out) !== text) throw …` in `fromBase64`, rerun the command, and confirm `# fail 1`, with a counterexample that changes one character of the signature: a spelling with a non-zero padding bit, which the original rejects and the broken port accepts. In `src/bytes.ts`, change `utf8`'s `return encoder.encode(text);` to `return Uint8Array.from(text, (c) => c.charCodeAt(0) & 0xff);` and confirm `# fail 1`: the bodies use all of Unicode (`unit: "binary"`), so text beyond Latin-1 must be signed as UTF-8. Then change `if (contentHash != null) {` to `if (contentHash) {`, the rule before `fix/empty-contenthash`, rerun `node --test test/port.properties.test.ts`, and confirm `# fail 1` with a counterexample ending `{"kind":"hash","value":""}`; restore it. Then the two rules of PR #26, each with the command above (2,000 runs) and restored after: delete `if (nestsTooDeep(receipt)) return { ok: false, reason: "receipt nesting deeper than 64" };` from `verifyV2Receipt` and confirm `# fail 2` (the deep bodies, and a field set 62 to 66 arrays deep); delete `if (keyProblem) return { ok: false, reason: keyProblem };` and confirm `# fail 1` (the weak-key property). Also move the canonical depth check before `ed25519KeyProblem` and confirm `# fail 1`: the original counts the canonical only after the signature, so the order matters.
+- [ ] **Step 4:** run the whole check (npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'): `# pass 95`, `# fail 0`.
 - [ ] **Step 5:** commit:
 
 ```bash
@@ -1852,7 +2591,7 @@ describe("canonicalTreeHead", () => {
 // "v2=" and the standard, padded base64 of a 64-byte Ed25519 signature,
 // in its one valid spelling. Used for receipts, tree heads and
 // cosignatures.
-import { ed25519Verify, fromBase64, toBase64, utf8 } from "./bytes.ts";
+import { ed25519Verify, fromBase64, utf8 } from "./bytes.ts";
 
 const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
@@ -1866,9 +2605,12 @@ export function parseV2Signature(signature: unknown): ParsedSignature {
   if (!signature.startsWith("v2=")) return { ok: false, problem: "not-v2" };
   const body = signature.slice(3);
   if (!STANDARD_BASE64.test(body)) return { ok: false, problem: "bad-base64" };
-  const bytes = fromBase64(body);
-  if (toBase64(bytes) !== body) return { ok: false, problem: "not-canonical" };
-  return { ok: true, bytes };
+  try {
+    // Once the pattern has passed, fromBase64 throws only for a spelling with non-zero padding bits.
+    return { ok: true, bytes: fromBase64(body) };
+  } catch {
+    return { ok: false, problem: "not-canonical" };
+  }
 }
 
 /** True iff `signature` is a well-spelled v2= signature over the UTF-8 bytes of `text` under `key`. */
@@ -1968,7 +2710,7 @@ export async function checkTreeHead(value: unknown, logKey: CryptoKey): Promise<
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 65`, `# fail 0`.
+Expected: `# pass 123`, `# fail 0`.
 
 - [ ] **Step 6:** commit:
 
@@ -2060,7 +2802,7 @@ describe("LogClient", () => {
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { MAX_RECEIPTS, parseReceipts } from "../src/input.ts";
+import { MAX_NESTING, MAX_RECEIPTS, nestingDepth, parseReceipts } from "../src/input.ts";
 import { parseLogAddress } from "../src/log-client.ts";
 
 describe("parseReceipts", () => {
@@ -2073,6 +2815,7 @@ describe("parseReceipts", () => {
   });
   for (const [name, text, reason] of [
     ["empty text", "  ", /Paste a receipt/],
+    ["a value that is not an object", "42", /This is not a receipt/],
     ["text that is not JSON", "{canonical:", /not valid JSON/],
     ["an empty list", "[]", /empty list/],
     ["too many receipts", JSON.stringify(Array.from({ length: MAX_RECEIPTS + 1 }, () => ({}))), /up to 1000/],
@@ -2082,6 +2825,34 @@ describe("parseReceipts", () => {
       assert.ok(!r.ok && reason.test(r.reason));
     });
   }
+});
+
+describe("nesting", () => {
+  const deep = (n: number): string => "[".repeat(n) + "]".repeat(n);
+  it("counts arrays and objects as the verifier does: not inside strings, and never below zero", () => {
+    assert.equal(nestingDepth('{"a":[1,{"b":"[[[{{{"}]}'), 3);
+    assert.equal(nestingDepth('"\\"[[['), 0);
+    assert.equal(nestingDepth("]]][["), 2);
+    assert.equal(nestingDepth("[".repeat(100_000)), 100_000);
+  });
+  it(`reads a receipt ${String(MAX_NESTING)} deep, and refuses one a level deeper, with the verifier's reason`, () => {
+    // The receipt object is one level, so a field holds MAX_NESTING - 1 arrays at the limit.
+    assert.ok(parseReceipts(`{"canonical":"{}","f":${deep(MAX_NESTING - 1)}}`).ok);
+    const r = parseReceipts(`{"canonical":"{}","f":${deep(MAX_NESTING)}}`);
+    assert.ok(!r.ok && r.reason.includes("receipt nesting deeper than 64"));
+  });
+  it("counts the text, so a deep duplicate key that JSON.parse discards is still refused", () => {
+    const r = parseReceipts(`{"canonical":"{}","overall":${deep(MAX_NESTING)},"overall":"pass"}`);
+    assert.ok(!r.ok && r.reason.includes("receipt nesting deeper than 64"));
+  });
+  it("allows a list one level more than a receipt, and no more", () => {
+    assert.ok(parseReceipts(`[{"canonical":"{}","f":${deep(MAX_NESTING - 1)}}]`).ok);
+    const r = parseReceipts(`[{"canonical":"{}","f":${deep(MAX_NESTING)}}]`);
+    assert.ok(!r.ok && r.reason.includes("receipt nesting deeper than 64"));
+  });
+  it("leaves signed text to the checks: its depth is counted after the signature, as the verifier counts it", () => {
+    assert.ok(parseReceipts(JSON.stringify({ canonical: `{"a":${deep(200)}}`, signature: "v2=" })).ok);
+  });
 });
 
 describe("parseLogAddress", () => {
@@ -2220,33 +2991,79 @@ export function logError(body: unknown): string {
 // SPDX-License-Identifier: Apache-2.0
 
 // Reads what the visitor pasted or dropped as the receipt: one receipt (a
-// JSON object) or an array of them. Never throws; a problem comes back as
+// JSON object) or an array of them. A receipt is read as verifiable-
+// receipts' parseReceipt reads it: its nesting is counted on the text
+// before the text is parsed (VAOS 2.0 §7.2), so a duplicate key that
+// JSON.parse discards still counts. Never throws; a problem comes back as
 // a sentence that says what to do.
+import { MAX_NESTING, parseReceipt } from "./vendor/verifiable-receipts/receipt.ts";
 
+export { MAX_NESTING };
 export const MAX_INPUT_CHARS = 5_000_000;
 export const MAX_RECEIPTS = 1000;
 
 export type ParsedReceipts = { ok: true; receipts: unknown[] } | { ok: false; reason: string };
+
+const NOT_JSON = "The receipt is not valid JSON. Paste the whole file, from the first { to the last }.";
+const TOO_DEEP = `The receipt nests arrays and objects more than ${String(MAX_NESTING)} levels deep (receipt nesting deeper than 64), which no verifier accepts. It is not a valid receipt.`;
+
+/**
+ * How many arrays and objects `text` has open at once at most, counted as
+ * the vendored textNestsTooDeep counts: outside strings `[` and `{` open
+ * one, and `]` and `}` close one when one is open. Never recurses.
+ */
+export function nestingDepth(text: string): number {
+  let open = 0;
+  let deepest = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === "[" || c === "{") {
+      if (++open > deepest) deepest = open;
+    } else if ((c === "]" || c === "}") && open > 0) {
+      open--;
+    }
+  }
+  return deepest;
+}
 
 export function parseReceipts(text: string): ParsedReceipts {
   if (text.trim() === "") return { ok: false, reason: "Paste a receipt, or choose a receipt file." };
   if (text.length > MAX_INPUT_CHARS) {
     return { ok: false, reason: "The receipt text is longer than 5 million characters. Check one file of receipts at a time." };
   }
+  if (!text.trimStart().startsWith("[")) {
+    // One receipt: exactly the vendored parseReceipt.
+    try {
+      return { ok: true, receipts: [parseReceipt(text)] };
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : "";
+      if (reason === "receipt nesting deeper than 64") return { ok: false, reason: TOO_DEEP };
+      if (reason === "receipt is not a JSON object") {
+        return { ok: false, reason: "This is not a receipt: a receipt is a JSON object with canonical and signature fields. Check that you pasted the receipt, not a key or a tree head." };
+      }
+      return { ok: false, reason: NOT_JSON };
+    }
+  }
+  // A list: the list is one level more, so each receipt in it may reach MAX_NESTING + 1 on the text.
+  if (nestingDepth(text) > MAX_NESTING + 1) return { ok: false, reason: TOO_DEEP };
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return { ok: false, reason: "The receipt is not valid JSON. Paste the whole file, from the first { to the last }." };
+    return { ok: false, reason: NOT_JSON };
   }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return { ok: false, reason: "The file holds an empty list. Choose a file with at least one receipt." };
-    if (value.length > MAX_RECEIPTS) {
-      return { ok: false, reason: `The file holds ${String(value.length)} receipts; this page checks up to ${String(MAX_RECEIPTS)} at a time. Split the file.` };
-    }
-    return { ok: true, receipts: value };
+  if (!Array.isArray(value)) return { ok: false, reason: NOT_JSON };
+  if (value.length === 0) return { ok: false, reason: "The file holds an empty list. Choose a file with at least one receipt." };
+  if (value.length > MAX_RECEIPTS) {
+    return { ok: false, reason: `The file holds ${String(value.length)} receipts; this page checks up to ${String(MAX_RECEIPTS)} at a time. Split the file.` };
   }
-  return { ok: true, receipts: [value] };
+  return { ok: true, receipts: value as unknown[] };
 }
 ```
 
@@ -2256,13 +3073,16 @@ export function parseReceipts(text: string): ParsedReceipts {
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 80`, `# fail 0`.
+Expected: `# pass 144`, `# fail 0`.
 
-- [ ] **Step 5:** commit:
+`MAX_NESTING` is the vendored verifier's, 64 at `VR_REF`. One receipt is read with the port's `parseReceipt`, which counts depth on the text before parsing; a list may be one level deeper. The signed text is left to the checks, which count it after the signature, as the verifier does.
+
+- [ ] **Step 5:** prove the text is counted: in the port's `parseReceipt`, move the `textNestsTooDeep(text)` test after `JSON.parse` as `if (nestsTooDeep(value)) throw …`, run `node --test test/input.test.ts`, and confirm `# fail 1` (the deep duplicate key). Restore it, then delete the list's `if (nestingDepth(text) > MAX_NESTING + 1) …` line and confirm `# fail 1`. Restore it.
+- [ ] **Step 6:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "Log client: GET only, no credentials, network errors are not verdicts" -m "src/log-client.ts is the only code that makes requests: GET to the https address the visitor typed, with no credentials, referrer, cache or redirects, and a 15 s timeout. A request that does not complete is a network error; an answer, 503 included, comes back with its status. Receipt text is read as one receipt or a list of up to 1000." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "Log client: GET only, no credentials, network errors are not verdicts" -m "src/log-client.ts is the only code that makes requests: GET to the https address the visitor typed, with no credentials, referrer, cache or redirects, and a 15 s timeout. A request that does not complete is a network error; an answer, 503 included, comes back with its status. Receipt text is read as one receipt (with the vendored parseReceipt, depth counted on the text) or a list of up to 1000, and refused when it nests deeper than 64 levels." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 7: the seven checks
@@ -2322,8 +3142,9 @@ import { describe, it } from "node:test";
 
 import { checkOffline, checkReceipts, type CheckResult, type Inputs, type ReceiptReport } from "../src/checks.ts";
 import { LogClient } from "../src/log-client.ts";
+import { verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 import { leafHash } from "../src/vendor/verifiable-receipts/transparency.ts";
-import { CONFORMANCE, LOG, fixtureReceipt, keyFrom, readJson } from "./helpers.ts";
+import { CONFORMANCE, LOG, conformanceCase, fixtureReceipt, keyFrom, makeKey, readJson } from "./helpers.ts";
 import { LOG_BASE, stubLog, type StubAnswer } from "./stub-log.ts";
 
 const valid = fixtureReceipt("v2-valid-001.json") as { canonical: string };
@@ -2363,11 +3184,19 @@ function check(report: ReceiptReport, id: CheckResult["id"]): CheckResult {
 describe("checks 1 to 4 on the conformance receipts", () => {
   for (const name of readdirSync(CONFORMANCE).filter((f) => f.startsWith("v2-")).sort()) {
     it(`${name}: all pass, or the content hash is not run, exactly when the fixture is valid`, async () => {
-      const fixture = readJson(CONFORMANCE, name) as { receipt: unknown; expected: { ok: boolean } };
-      const report = await checkOffline(fixture.receipt, [issuer]);
-      assert.equal(report.valid, fixture.expected.ok);
-      const offlineOk = report.checks.every((c) => c.status === "passed" || (c.id === "content-hash" && c.status === "not-run"));
-      assert.equal(offlineOk, fixture.expected.ok, JSON.stringify(report.checks));
+      const c = await conformanceCase(name);
+      let receipt: unknown;
+      try {
+        receipt = c.receipt();
+      } catch {
+        // parseReceipt refused the text, as the page's input reader does: never checked, never valid.
+        assert.equal(c.expected.ok, false);
+        return;
+      }
+      const report = await checkOffline(receipt, [c.key]);
+      assert.equal(report.valid, c.expected.ok);
+      const offlineOk = report.checks.every((x) => x.status === "passed" || (x.id === "content-hash" && x.status === "not-run"));
+      assert.equal(offlineOk, c.expected.ok, JSON.stringify(report.checks));
     });
   }
 });
@@ -2430,6 +3259,61 @@ describe("checks without a log", () => {
       reports.map((r) => r.valid),
       [true, false],
     );
+  });
+});
+
+describe("checks that throw", () => {
+  it("a receipt nested 5,000 deep fails Format with the verifier's reason, and nothing recurses", async () => {
+    const receipt = { ...(valid as Record<string, unknown>), extra: JSON.parse("[".repeat(5000) + "]".repeat(5000)) as unknown };
+    const r = await one(receipt, inputs(undefined));
+    assert.equal(r.valid, false);
+    assert.equal(check(r, "format").status, "failed");
+    assert.match(check(r, "format").detail, /receipt nesting deeper than 64/);
+  });
+
+  it("signed text nested 65 deep fails the repeated fields with the verifier's reason", async () => {
+    const k = await makeKey();
+    const canonical = `{"a":${"[".repeat(64)}${"]".repeat(64)}}`;
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, k.privateKey, new TextEncoder().encode(canonical)));
+    const receipt = { canonical, signature: `v2=${Buffer.from(sig).toString("base64")}` };
+    assert.deepEqual(await verifyV2Receipt(receipt, k.publicKey.key), { ok: false, reason: "canonical nesting deeper than 64" });
+    const [r] = await checkReceipts([receipt], { issuerKeys: [k.publicKey], log: undefined });
+    assert.ok(r);
+    assert.equal(check(r, "signature").status, "passed");
+    assert.equal(check(r, "repeated-fields").status, "failed");
+    assert.match(check(r, "repeated-fields").detail, /canonical nesting deeper than 64/);
+    assert.equal(r.valid, false);
+  });
+
+  it("a receipt whose check throws fails, and the next receipt is still checked", async () => {
+    const throwing = Object.defineProperty({ signature: "v2=" }, "canonical", {
+      enumerable: true,
+      get(): never {
+        throw new RangeError("Maximum call stack size exceeded");
+      },
+    });
+    const reports = await checkReceipts([throwing, valid], inputs(undefined));
+    const [r, next] = reports;
+    assert.ok(r && next);
+    assert.equal(r.valid, false);
+    assert.equal(check(r, "format").status, "failed");
+    assert.match(check(r, "format").detail, /^This could not be checked: the page hit RangeError/);
+    assert.equal(next.valid, true);
+  });
+
+  it("no WebCrypto Ed25519: the signature checks are not run, never failed", async () => {
+    const original = crypto.subtle.verify.bind(crypto.subtle);
+    crypto.subtle.verify = () => Promise.reject(new DOMException("no Ed25519", "NotSupportedError"));
+    try {
+      const r = await one(valid, inputs(GOOD));
+      for (const id of ["format", "signature", "tree-head", "witnesses"] as const) {
+        assert.equal(check(r, id).status, "not-run", id);
+      }
+      assert.match(check(r, "signature").detail, /This browser cannot check Ed25519 signatures/);
+      assert.equal(r.valid, false);
+    } finally {
+      crypto.subtle.verify = original;
+    }
   });
 });
 
@@ -2564,12 +3448,12 @@ describe("checks with a stubbed log", () => {
 // is never shown as passed, and a network error is never a verdict.
 // Checks 1 to 4 agree with the vendored verifier: a receipt passes all
 // four exactly when verifyV2Receipt accepts it (test/checks.test.ts).
-import { sha256Hex, utf8, ed25519Verify } from "./bytes.ts";
+import { Ed25519Unavailable, sha256Hex, utf8, ed25519Verify } from "./bytes.ts";
 import type { PublicKey } from "./keys.ts";
 import { logError, type LogClient } from "./log-client.ts";
 import { parseV2Signature, verifyV2Text } from "./signature.ts";
 import { canonicalTreeHead, checkTreeHead, type TreeHeadCheck } from "./tree-head.ts";
-import { jsonEqual, verifyV2Receipt } from "./vendor/verifiable-receipts/receipt.ts";
+import { MAX_NESTING, jsonEqual, nestsTooDeep, textNestsTooDeep, verifyV2Receipt, weakKeyReason } from "./vendor/verifiable-receipts/receipt.ts";
 import { leafHash, verifyInclusionProof } from "./vendor/verifiable-receipts/transparency.ts";
 
 export type Status = "passed" | "failed" | "not-run";
@@ -2643,6 +3527,9 @@ function formatCheck(receipt: unknown): CheckResult {
   if (!isObject(receipt)) {
     return result(id, "failed", "This is not a receipt: a receipt is a JSON object with canonical and signature fields. Check that you pasted the receipt, not a key or a tree head.");
   }
+  if (nestsTooDeep(receipt)) {
+    return result(id, "failed", `The receipt nests arrays and objects more than ${String(MAX_NESTING)} levels deep (receipt nesting deeper than 64), which no verifier accepts. It is not a valid receipt.`);
+  }
   if (typeof receipt.canonical !== "string" || receipt.canonical === "") {
     return result(id, "failed", "The receipt has no canonical text, so there is nothing to check. Check that the file is a whole receipt.");
   }
@@ -2672,10 +3559,20 @@ async function signatureCheck(receipt: unknown, format: CheckResult, keys: reado
   }
   const parsed = parseV2Signature(receipt.signature);
   if (!parsed.ok) return { check: result(id, "not-run", "Not run: the receipt's format is wrong."), key: undefined };
+  const refused: string[] = [];
   for (const k of keys) {
+    // The verifier refuses a weak key before it verifies anything (VAOS 2.0 §7.3).
+    const weak = k.key.algorithm.name === "Ed25519" ? weakKeyReason(new Uint8Array(await crypto.subtle.exportKey("raw", k.key))) : null;
+    if (weak !== null) {
+      refused.push(`${k.fingerprint} (${weak})`);
+      continue;
+    }
     if (await ed25519Verify(k.key, parsed.bytes, utf8(receipt.canonical))) {
       return { check: result(id, "passed", `Signed by the key ${k.fingerprint}.`), key: k.fingerprint };
     }
+  }
+  if (refused.length === keys.length) {
+    return { check: result(id, "failed", `The key is refused: ${refused.join(", ")}. Under such a key forged signatures verify; get the issuer's real key.`), key: undefined };
   }
   const tried = keys.map((k) => k.fingerprint).join(", ");
   return {
@@ -2706,6 +3603,9 @@ function repeatedFieldsCheck(receipt: unknown, signature: CheckResult): { check:
   const id = "repeated-fields";
   if (signature.status !== "passed" || !isObject(receipt) || typeof receipt.canonical !== "string") {
     return { check: result(id, "not-run", "Not run: the signature did not verify, so the signed text cannot be trusted to compare against."), action: undefined, repeated: [] };
+  }
+  if (textNestsTooDeep(receipt.canonical)) {
+    return { check: result(id, "failed", `The signed text nests arrays and objects more than ${String(MAX_NESTING)} levels deep (canonical nesting deeper than 64), which no verifier accepts. The issuer signed something that is not a receipt.`), action: undefined, repeated: [] };
   }
   let signed: unknown;
   try {
@@ -2843,14 +3743,52 @@ async function witnessesCheck(log: LogInputs | undefined, head: TreeHeadCheck | 
 }
 
 /** All seven checks for every receipt; the log is asked for one tree head and one list of cosignatures per run. */
+/**
+ * The result of check `id` when checking threw: "not run" when this browser
+ * has no WebCrypto Ed25519, and "failed" for anything else, so that a
+ * receipt the page cannot check is never left on "Checking…" and never valid.
+ */
+function trouble(id: CheckId, e: unknown): CheckResult {
+  if (e instanceof Ed25519Unavailable) return result(id, "not-run", `Not run: ${e.message}`);
+  const what = e instanceof Error ? e.name : "an error";
+  return result(id, "failed", `This could not be checked: the page hit ${what}. A receipt this page cannot check is not valid here; check it with the verifiable-receipts library.`);
+}
+
+/** All seven checks for every receipt; the log is asked for one tree head and one list of cosignatures per run. Never throws. */
 export async function checkReceipts(receipts: readonly unknown[], inputs: Inputs): Promise<ReceiptReport[]> {
-  const { check: treeHead, head } = await treeHeadCheck(inputs.log);
-  const witnesses = await witnessesCheck(inputs.log, head);
+  let treeHead: CheckResult;
+  let head: TreeHeadCheck | undefined;
+  try {
+    ({ check: treeHead, head } = await treeHeadCheck(inputs.log));
+  } catch (e) {
+    treeHead = trouble("tree-head", e);
+  }
+  let witnesses: CheckResult;
+  try {
+    witnesses = await witnessesCheck(inputs.log, head);
+  } catch (e) {
+    witnesses = trouble("witnesses", e);
+  }
   const reports: ReceiptReport[] = [];
   for (const receipt of receipts) {
-    const report = await checkOffline(receipt, inputs.issuerKeys);
-    report.checks.push(treeHead, await inLogCheck(receipt, inputs.log, head), witnesses);
-    reports.push(report);
+    try {
+      const report = await checkOffline(receipt, inputs.issuerKeys);
+      report.checks.push(treeHead, await inLogCheck(receipt, inputs.log, head), witnesses);
+      reports.push(report);
+    } catch (e) {
+      const first = trouble("format", e);
+      const rest = (["signature", "content-hash", "repeated-fields", "in-log"] as const).map((id) =>
+        first.status === "not-run" ? trouble(id, e) : result(id, "not-run", "Not run: the receipt could not be checked."),
+      );
+      const [signature, contentHash, repeated, inLog] = rest;
+      reports.push({
+        checks: [first, signature, contentHash, repeated, treeHead, inLog, witnesses].filter((c): c is CheckResult => c !== undefined),
+        valid: false,
+        key: undefined,
+        action: undefined,
+        repeated: [],
+      });
+    }
   }
   return reports;
 }
@@ -2862,14 +3800,15 @@ export async function checkReceipts(receipts: readonly unknown[], inputs: Inputs
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 111`, `# fail 0`.
+Expected: `# pass 184`, `# fail 0`.
 
 - [ ] **Step 5:** prove check 6 never trusts the log's own root. In `inLogCheck`, change `sth.rootHash)` in the `verifyInclusionProof` call to `proof.rootHashHex)`, run `node --test test/checks.test.ts`, and confirm `a proof whose own rootHashHex agrees with it, but the signed root does not, fails` fails. Restore it and rerun to `# fail 0`.
-- [ ] **Step 6:** commit:
+- [ ] **Step 6:** prove that a receipt that throws is a failed check, never a hang: in `checkReceipts`, add `throw e;` as the first line of the per-receipt `catch (e) {` block, run `node --test test/checks.test.ts`, and confirm `# fail 1` or more (the receipt whose field throws, and the next one never checked). Then delete `if (e instanceof Ed25519Unavailable) return result(id, "not-run", …);` from `trouble` and confirm `# fail 1` (no WebCrypto Ed25519 must be "not run", never "failed"). Restore both. Then, one at a time and restored after, confirm `# fail 1` for each of: `if (nestsTooDeep(receipt)) {` in `formatCheck` to `if (false) {`; `if (textNestsTooDeep(receipt.canonical)) {` in `repeatedFieldsCheck` to `if (false) {`; and `if (weak !== null) {` in `signatureCheck` to `if (false) {` (the key fixtures of the per-fixture loop).
+- [ ] **Step 7:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "The seven checks: passed, failed or not run, never a guess" -m "Format, signature, content hash and repeated fields agree with the vendored verifier on every conformance receipt. The tree head is fetched once per run and checked under the log key given; each receipt's leaf hash is computed here and its proof checked against the signed root, never the proof's own rootHashHex; witnesses count cosignatures over a tree head with the same log, size and root, whose canonical text is rebuilt and whose signature verifies under that witness's key; the timestamp may differ." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "The seven checks: passed, failed or not run, never a guess" -m "Format, signature, content hash and repeated fields agree with the vendored verifier on every conformance receipt. The tree head is fetched once per run and checked under the log key given; each receipt's leaf hash is computed here and its proof checked against the signed root, never the proof's own rootHashHex; witnesses count cosignatures over a tree head with the same log, size and root, whose canonical text is rebuilt and whose signature verifies under that witness's key; the timestamp may differ. A receipt whose check throws fails, and the next receipt is still checked; a browser without WebCrypto Ed25519 gets not run." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 8: input handling never throws, and checks 1 to 4 match the verifier
@@ -2960,7 +3899,7 @@ FC_NUM_RUNS=2000 node --test test/parsing.properties.test.ts 2>&1 | grep -E '^# 
 
 Expected: `# pass 5`, `# fail 0`.
 
-- [ ] **Step 3:** run the whole check: `# pass 116`, `# fail 0`.
+- [ ] **Step 3:** run the whole check: `# pass 189`, `# fail 0`.
 - [ ] **Step 4:** commit:
 
 ```bash
@@ -3042,18 +3981,27 @@ The page's behaviour is tested end to end in Tasks 13 and 14, against the built 
 // SPDX-License-Identifier: Apache-2.0
 
 // Whether this browser's WebCrypto verifies Ed25519: RFC 8032 section 7.1,
-// test 1 (the empty message).
+// test 1 (the empty message), with the key imported both raw and as SPKI,
+// the form the page reads keys in.
 import { fromHex } from "./bytes.ts";
 
 const PUBLIC = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+/** The SPKI DER prefix of an Ed25519 public key (RFC 8410). */
+const SPKI_PREFIX = "302a300506032b6570032100";
 const SIGNATURE =
   "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
 
 export async function hasEd25519(): Promise<boolean> {
   try {
     if (typeof crypto === "undefined" || typeof crypto.subtle === "undefined") return false;
-    const key = await crypto.subtle.importKey("raw", fromHex(PUBLIC), { name: "Ed25519" }, false, ["verify"]);
-    return await crypto.subtle.verify({ name: "Ed25519" }, key, fromHex(SIGNATURE), new Uint8Array(0));
+    for (const [format, bytes] of [
+      ["raw", fromHex(PUBLIC)],
+      ["spki", fromHex(SPKI_PREFIX + PUBLIC)],
+    ] as const) {
+      const key = await crypto.subtle.importKey(format, bytes, { name: "Ed25519" }, false, ["verify"]);
+      if (!(await crypto.subtle.verify({ name: "Ed25519" }, key, fromHex(SIGNATURE), new Uint8Array(0)))) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -3233,7 +4181,13 @@ async function run(doc: Document): Promise<void> {
     renderProblems(doc, form.problems);
     return;
   }
-  const reports = await checkReceipts(form.receipts, form.inputs);
+  let reports: ReceiptReport[];
+  try {
+    reports = await checkReceipts(form.receipts, form.inputs);
+  } catch {
+    status.textContent = "The checks stopped on an error this page did not expect. Nothing was sent; reload the page and try again.";
+    return;
+  }
   list.replaceChildren(...reports.map((r, i) => renderReport(doc, r, i, reports.length)));
   const retry = reports.some((r) => r.checks.some((c) => c.retry));
   byId(doc, "retry").hidden = !retry;
@@ -3362,14 +4316,14 @@ wc -c build/check.js && gzip -9 -c build/check.js | wc -c
 npm run bundle && shasum -a 256 build/check.js && npm run bundle && shasum -a 256 build/check.js
 ```
 
-Expected: `# pass 116`, `# fail 0`; `build/check.js` about 26.3 KB and about 9.0 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
+Expected: `# pass 189`, `# fail 0`; `build/check.js` about 32.6 KB and about 10.8 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
 
 - [ ] **Step 5:** prove the lint rules hold: add `document.body.innerHTML = "";` to the end of `start` in `src/ui.ts` and run `npx eslint src/ui.ts`; confirm `Build elements with textContent; never parse input as HTML`. Remove the line.
 - [ ] **Step 6:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "The page script: one bundle, no dependencies, nothing stored or sent" -m "src/ui.ts reads the form, runs the checks and renders each with textContent, linking it to its term; problems are listed and focused, results announced and focused, and a network error offers a retry. A browser without WebCrypto Ed25519 is told so and runs nothing. esbuild bundles it to build/check.js, about 9 KB compressed." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "The page script: one bundle, no dependencies, nothing stored or sent" -m "src/ui.ts reads the form, runs the checks and renders each with textContent, linking it to its term; problems are listed and focused, results announced and focused, and a network error offers a retry. A browser without WebCrypto Ed25519 (raw or SPKI) is told so and runs nothing, and an error the checks did not expect is reported, never left on Checking. esbuild bundles it to build/check.js, about 11 KB compressed." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 10: the site's words and the terms
@@ -4681,7 +5635,7 @@ uvx ruff@0.17.0 check . && uvx ruff@0.17.0 format --check .
 python3 build.py && python3 scripts/check_budget.py
 ```
 
-Expected: `Ran 18 tests`, `OK`; ruff clean; `Built 27 pages, 404.html, sitemap.xml and robots.txt` (the count is 3 plus the number of terms in `ontology.md` at `VR_REF`); `static/check.js: 8973 bytes compressed (budget 40960)` (give or take a few bytes), `static/styles.css: 2032 bytes compressed (budget 8192)`, `every file is within its budget`.
+Expected: `Ran 18 tests`, `OK`; ruff clean; `Built 27 pages, 404.html, sitemap.xml and robots.txt` (the count is 3 plus the number of terms in `ontology.md` at `VR_REF`); `static/check.js: 10809 bytes compressed (budget 40960)` (give or take a few bytes), `static/styles.css: 2032 bytes compressed (budget 8192)`, `every file is within its budget`.
 
 - [ ] **Step 5:** look at it (with the sandbox off, since the server binds a port). `python3 serve.py`, then open <http://127.0.0.1:8000/receipts-explorer/>: paste `test/fixtures/conformance/v2-valid-001.json`'s `receipt` and `test/fixtures/conformance/public-key.pem`, press **Check**, and read the seven results (four passed, three not run). Then `python3 serve.py --dist 8080` and open <http://127.0.0.1:8080/receipts-explorer/terms/>. Stop both with Ctrl+C.
 - [ ] **Step 6:** commit:
@@ -4694,7 +5648,7 @@ git commit --author="$A" -m "build.py and serve.py, and a size budget the build 
 ### Task 13: Playwright, every flow of the check page
 
 **Files:**
-- Create: `playwright.config.ts`, `e2e/helpers.ts`, `e2e/check.spec.ts`
+- Create: `playwright.config.ts`, `e2e/helpers.ts`, `e2e/check.spec.ts`, `e2e/ed25519.spec.ts`
 
 The tests run against the built `dist/`, served by `serve.py --dist` as GitHub Pages serves it. The log is stubbed with `page.route` from `test/fixtures/log`, with the CORS header receipts-log sends, so no test reaches a live log.
 
@@ -4985,6 +5939,50 @@ test("the whole flow works from the keyboard", async ({ page, browserName }) => 
 });
 ```
 
+`e2e/ed25519.spec.ts`:
+
+```ts
+// Copyright 2026 Christiaan de Wet / Sovereign Matrix
+// SPDX-License-Identifier: Apache-2.0
+
+// The Ed25519 edge vectors (test/fixtures/ed25519) in every browser
+// Playwright runs: each browser's WebCrypto must give the answer Node gives.
+// A browser that verified differently would judge receipts differently.
+import { readFileSync } from "node:fs";
+
+import { expect, test } from "@playwright/test";
+
+interface Vector {
+  name: string;
+  spki: string;
+  msg: string;
+  sig: string;
+  node: boolean;
+}
+
+const VECTORS = JSON.parse(readFileSync(new URL("../test/fixtures/ed25519/vectors.json", import.meta.url), "utf8")) as Vector[];
+
+test("WebCrypto Ed25519 agrees with Node on every edge vector", async ({ page }) => {
+  await page.goto("./");
+  const got = await page.evaluate(async (vectors: Vector[]) => {
+    const hex = (h: string): Uint8Array<ArrayBuffer> => new Uint8Array((h.match(/../g) ?? []).map((b) => Number.parseInt(b, 16)));
+    const b64 = (s: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
+    const out: Record<string, boolean> = {};
+    for (const v of vectors) {
+      try {
+        const key = await crypto.subtle.importKey("spki", b64(v.spki), { name: "Ed25519" }, false, ["verify"]);
+        out[v.name] = await crypto.subtle.verify({ name: "Ed25519" }, key, hex(v.sig), hex(v.msg));
+      } catch {
+        out[v.name] = false;
+      }
+    }
+    return out;
+  }, VECTORS);
+  expect(got).toEqual(Object.fromEntries(VECTORS.map((v) => [v.name, v.node])));
+});
+```
+
+`ed25519.spec.ts` runs the sixteen Ed25519 edge vectors of Task 3 through each browser's WebCrypto and requires Node's answer on every one. A browser that verified differently would judge receipts differently, so a difference fails the run rather than being skipped.
 - [ ] **Step 3:** run them before building, so they fail:
 
 ```bash
@@ -4998,10 +5996,10 @@ Expected, after a minute: `FileNotFoundError` for `dist/404.html` from the serve
 ```bash
 npm run typecheck && npx eslint .
 npm run build
-npx playwright test e2e/check.spec.ts
+npx playwright test e2e/check.spec.ts e2e/ed25519.spec.ts
 ```
 
-Expected: `39 passed` (13 tests in Chromium, Firefox and WebKit). The prototype ran Chromium only (`13 passed`). If a WebKit test fails in `beforeEach` because the form stays hidden, that WebKit build lacks WebCrypto Ed25519: confirm with `npx playwright test --project=webkit e2e/pages.spec.ts` after Task 14, and if so, skip the check-page flows on WebKit with `test.skip(browserName === "webkit", "this WebKit build has no WebCrypto Ed25519")` in `beforeEach`, keeping the no-Ed25519 test, and note it in the pull request.
+Expected: `42 passed` (14 tests in Chromium, Firefox and WebKit). The prototype ran Chromium only (`14 passed`; Chromium agreed with Node on all sixteen vectors, as Chromium 153 did in the review). If Firefox or WebKit disagrees on a vector, stop and report it: it is a real difference in what receipts that browser accepts. If a WebKit test fails in `beforeEach` because the form stays hidden, that WebKit build lacks WebCrypto Ed25519: confirm with `npx playwright test --project=webkit e2e/pages.spec.ts` after Task 14, and if so, skip the check-page flows on WebKit with `test.skip(browserName === "webkit", "this WebKit build has no WebCrypto Ed25519")` in `beforeEach`, keeping the no-Ed25519 test, and note it in the pull request.
 
 - [ ] **Step 5:** commit:
 
@@ -5207,7 +6205,7 @@ npm run build
 npx playwright test
 ```
 
-Expected: `76 passed`: Chromium 32 (13 flows, 9 page tests, 6 screenshots, 4 LCP), Firefox 22 and WebKit 22 (no screenshots or LCP). The LCP lines print about 1270 to 1290 ms each. The prototype ran Chromium only (`32 passed`).
+Expected: `79 passed`: Chromium 33 (13 flows, 1 Ed25519, 9 page tests, 6 screenshots, 4 LCP), Firefox 23 and WebKit 23 (no screenshots or LCP). The LCP lines print about 1240 to 1260 ms each. The prototype ran Chromium only (`33 passed`).
 
 - [ ] **Step 3:** prove the axe test catches a contrast failure: in `static/styles.css`, set `--muted: #9aa1a6;` in the light block, rebuild, run `npx playwright test --project=chromium e2e/pages.spec.ts`, and confirm `color-contrast` in the failure. Restore the value.
 - [ ] **Step 4:** look at the screenshots: `npx playwright show-report`, open each `check page at … px` test, and read its attachment: no text cut off, nothing overlapping, focus outlines visible in both schemes.
@@ -5623,7 +6621,7 @@ npm run build && $PY -m unittest discover -s tests -t . && python3 scripts/check
 npx playwright test 2>&1 | tail -1
 ```
 
-Expected: the `matches` line; `# pass 116`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `76 passed`.
+Expected: the `matches` line; `# pass 189`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `79 passed`.
 
 - [ ] **Step 5:** commit:
 
