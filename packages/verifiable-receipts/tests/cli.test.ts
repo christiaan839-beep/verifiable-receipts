@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -237,6 +237,34 @@ describe("verifiable-receipts CLI — usage errors", () => {
     ]);
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/not a valid PEM/);
+  });
+
+  it("exits 2 when --pubkey is a small-order point (VAOS 2.0 section 7.3)", () => {
+    const identity = Buffer.alloc(32);
+    identity[0] = 1;
+    const weak = join(tmp, "identity.pem");
+    writeFileSync(
+      weak,
+      createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: identity.toString("base64url") }, format: "jwk" })
+        .export({ type: "spki", format: "pem" })
+        .toString(),
+    );
+    const r = runCli(["verify", "--manifest", manifestPath, "--pubkey", weak]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/public key is a small-order point/);
+  });
+
+  it("exits 1 with nesting-too-deep when the manifest text nests deeper than 64, duplicate keys included", () => {
+    const signed = readFileSync(manifestPath, "utf8").trim();
+    // A duplicate key the parser discards still counts (VAOS 2.0 section 7.2).
+    const deep = join(tmp, "deep-manifest.json");
+    writeFileSync(deep, `{"extra":${"[".repeat(64)}${"]".repeat(64)},"extra":1,${signed.slice(1)}`);
+    const r = runCli(["verify", "--manifest", deep, "--pubkey", pemPath, "--json"]);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toEqual({ ok: false, reason: "nesting-too-deep" });
+    const atLimit = join(tmp, "at-limit-manifest.json");
+    writeFileSync(atLimit, `{"extra":${"[".repeat(63)}${"]".repeat(63)},${signed.slice(1)}`);
+    expect(runCli(["verify", "--manifest", atLimit, "--pubkey", pemPath]).status).toBe(0);
   });
 
   it("exits 2 when --manifest contains malformed JSON", () => {

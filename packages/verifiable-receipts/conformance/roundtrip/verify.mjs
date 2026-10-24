@@ -10,7 +10,7 @@
  */
 import { createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { verifyV2Receipt } from "../verify-v2.mjs";
+import { parseReceipt, verifyV2Receipt } from "../verify-v2.mjs";
 import { verifyGuardianAttestation } from "../../dist/index.js";
 
 const [keyPath, kind, path] = process.argv.slice(2);
@@ -21,7 +21,14 @@ if (!keyPath || !path || (kind !== "receipt" && kind !== "guardian")) {
   process.exit(2);
 }
 const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
-const receipt = JSON.parse(readFileSync(path, "utf8"));
+// Depth counted on the text first (VAOS 2.0 section 7.2), as Python and Go do.
+let receipt;
+try {
+  receipt = parseReceipt(readFileSync(path, "utf8"));
+} catch (err) {
+  console.log(`rejected: ${err.message}`);
+  process.exit(1);
+}
 
 const verdict =
   kind === "receipt"

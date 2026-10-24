@@ -12,6 +12,8 @@
  * - `threshold`: m-of-n co-signed receipts.
  * - `stream-attestation`: a Merkle commitment over a stream's chunks.
  * - `vapt`: short-lived, scoped Ed25519 payment tokens.
+ * - `loadEd25519PublicKey`: loads a verification key, refusing the weak
+ *   keys of VAOS 2.0 section 7.3.
  *
  * The wire formats are in SPEC.md and docs/specs/.
  *
@@ -93,6 +95,8 @@ export {
   canonicalizeSth,
   type SignedTreeHead,
 } from "./transparency.js";
+
+export { ed25519PublicKeyProblem, loadEd25519PublicKey } from "./ed25519-key.js";
 
 export {
   TransparencyLog,

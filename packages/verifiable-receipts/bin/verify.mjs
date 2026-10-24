@@ -24,8 +24,9 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createPublicKey, verify as nodeVerify } from "node:crypto";
-import { verifyManifest } from "../dist/index.js";
+import { verify as nodeVerify } from "node:crypto";
+import { loadEd25519PublicKey, verifyManifest } from "../dist/index.js";
+import { textNestsDeeperThan } from "../dist/nesting.js";
 import { fail, parseArgs, readStdin } from "./cli.mjs";
 
 function printHelp() {
@@ -78,7 +79,7 @@ async function main() {
   }
   let pubKey;
   try {
-    pubKey = createPublicKey({ key: pemBytes, format: "pem" });
+    pubKey = loadEd25519PublicKey(pemBytes);
   } catch (err) {
     fail(`--pubkey is not a valid PEM public key: ${err.message}`);
   }
@@ -98,9 +99,12 @@ async function main() {
     fail("--manifest <path> required (or pipe manifest JSON via stdin)");
   }
 
+  // Depth is counted on the text before it is parsed (VAOS 2.0 §7.2), so
+  // a duplicate key that JSON.parse would discard still counts.
+  const tooDeep = textNestsDeeperThan(raw);
   let manifest;
   try {
-    manifest = JSON.parse(raw);
+    manifest = tooDeep ? {} : JSON.parse(raw);
   } catch (err) {
     fail(`manifest JSON parse failed: ${err.message}`);
   }
@@ -126,7 +130,9 @@ async function main() {
     }
   };
 
-  const verdict = verifyManifest(manifest, verifyFn);
+  const verdict = tooDeep
+    ? { ok: false, reason: "nesting-too-deep" }
+    : verifyManifest(manifest, verifyFn);
   const emitJson = flags.json === "true";
 
   if (verdict.ok) {
@@ -173,6 +179,7 @@ async function main() {
         "                      the supplied public key. Wrong key or forged signature.",
         "  wrong-type          File is not a verifiable-receipt-bundle manifest.",
         "  wrong-version       Manifest version is unsupported by this CLI.",
+        "  nesting-too-deep    The manifest nests deeper than 64 (VAOS 2.0 §7.2).",
         "",
       ].join("\n"),
     );

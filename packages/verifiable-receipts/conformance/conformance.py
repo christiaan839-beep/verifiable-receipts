@@ -28,6 +28,8 @@ if str(SDK_DIR) not in sys.path:
     sys.path.insert(0, str(SDK_DIR))
 
 from sovereign_matrix.verifiable_receipts import (  # noqa: E402
+    VerifyResult,
+    parse_receipt,
     verify_inclusion_proof,
     verify_v2_receipt,
 )
@@ -59,9 +61,21 @@ def test_loads_at_least_10_fixtures(fixtures: list[dict]) -> None:
 def test_fixture_outcome_matches(fixture: dict) -> None:
     expected_ok = fixture["expected"]["ok"]
 
-    if "receipt" in fixture:
+    if "receiptText" in fixture:
+        # A receipt given as text, read with its depth counted on the text.
+        try:
+            verdict = verify_v2_receipt(parse_receipt(fixture["receiptText"]), PUBLIC_KEY_PEM)
+        except ValueError as err:
+            verdict = VerifyResult(False, str(err))
+        assert verdict.ok is expected_ok, f"{fixture['__filename']}: got {verdict}"
+        reason_contains = fixture["expected"].get("reasonContains")
+        if reason_contains and not verdict.ok:
+            assert re.search(reason_contains, verdict.reason or "", re.IGNORECASE), verdict
+    elif "receipt" in fixture:
         receipt = fixture["receipt"]
-        verdict = verify_v2_receipt(receipt, PUBLIC_KEY_PEM)
+        # A key fixture carries its own key, used instead of public-key.pem.
+        pem = fixture.get("publicKeyPem")
+        verdict = verify_v2_receipt(receipt, pem.encode() if pem else PUBLIC_KEY_PEM)
         assert verdict.ok is expected_ok, (
             f"{fixture['__filename']}: expected ok={expected_ok}, "
             f"got ok={verdict.ok} reason={verdict.reason}"

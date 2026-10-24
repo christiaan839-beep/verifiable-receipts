@@ -8,7 +8,13 @@ signs receipts with it, and writes <out-dir>/cases.jsonl: one object per
 line, {"id", "kind": "receipt" | "inclusion", "raw": <JSON text>}. Each
 verifier parses "raw" with its own language's JSON parser, as a caller
 would. Most cases start valid and get one or two mutations, so they sit
-near the edge of what a verifier accepts.
+near the edge of what a verifier accepts. Some nest a receipt or its
+canonical near the depth limit of 64 (VAOS 2.0 section 7) or far past it,
+up to 20,000 deep; their JSON text is built by hand, since json.dumps
+cannot write it. A few are Guardian attestations shaped like runGuardian's,
+whose runId or unsigned evidence nests near the limit or past it. Some
+repeat a field, once shallow and once deep, in either order: the parser
+keeps the last copy, but the depth counted on the text includes both.
 """
 
 from __future__ import annotations
@@ -157,6 +163,129 @@ def receipt_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
     return raw
 
 
+def nest(rng: random.Random, levels: int) -> str:
+    """JSON text nested `levels` deep: arrays and objects, mixed at random."""
+    opens, closes = [], []
+    for _ in range(levels):
+        if rng.random() < 0.5:
+            opens.append("[")
+            closes.append("]")
+        else:
+            opens.append('{"k":')
+            closes.append("}")
+    return "".join(opens) + "0" + "".join(reversed(closes))
+
+
+def depth_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A signed receipt whose canonical, or a field beside it, nests deep.
+
+    The canonical {"d": X} nests one deeper than X, and so does a receipt
+    with the field "d": X; 63 levels in X is the deepest every verifier
+    accepts.
+    """
+    levels = rng.choice(
+        [rng.randrange(1, 63), 62, 63, 63, 64, 64, 65, rng.randrange(65, 300), 1000, 5000, 20000]
+    )
+    value = nest(rng, levels)
+    shape = rng.randrange(6)
+    if shape == 0:  # brackets inside strings do not count
+        hidden = json.dumps("[" * levels + '\\"' + "{" * levels)
+        canonical = '{"s":' + hidden + ',"d":' + value + "}"
+    elif shape == 1:  # deep and not valid JSON
+        canonical = '{"d":' + value[: rng.randrange(len(value))]
+    elif shape == 2:  # a shallow canonical; the depth is beside it
+        canonical = '{"a":1}'
+    else:
+        canonical = '{"d":' + value + "}"
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    fields = [
+        '"canonical":' + json.dumps(canonical),
+        '"contentHash":"sha256:' + hashlib.sha256(canonical.encode()).hexdigest() + '"',
+        '"signature":"' + sig + '"',
+    ]
+    beside = rng.randrange(4)
+    if beside == 1 or shape == 2:  # the same value beside the canonical
+        fields.append('"d":' + value)
+    elif beside == 2:  # a value nested another depth
+        fields.append('"d":' + nest(rng, rng.choice([levels - 1, levels + 1, 64, 65]) or 1))
+    rng.shuffle(fields)
+    return "{" + ",".join(fields) + "}"
+
+
+def duplicate_deep_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A receipt whose field "d" appears twice: once 1, once nested deep.
+
+    JSON parsers keep the last copy, so the deep one is discarded when it
+    comes first. A verifier reading the text still counts it (VAOS 2.0
+    section 7.2): 63 levels make the receipt 64 deep, 64 levels 65.
+    """
+    canonical = '{"d":1}'
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    deep = '"d":' + nest(rng, rng.choice([62, 63, 64, 65, 1000, 20000]))
+    copies = [deep, '"d":1'] if rng.random() < 0.5 else ['"d":1', deep]
+    return (
+        '{"canonical":'
+        + json.dumps(canonical)
+        + ',"contentHash":"sha256:'
+        + hashlib.sha256(canonical.encode()).hexdigest()
+        + '","signature":"'
+        + sig
+        + '",'
+        + ",".join(copies)
+        + "}"
+    )
+
+
+def guardian_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A Guardian attestation shaped like runGuardian's, nested near the limit.
+
+    Its canonical is runGuardian's JSON.stringify, which the TypeScript
+    library re-derives; the runId may nest deep (the canonical one level
+    deeper) and so may a rule's unsigned evidence (the attestation three
+    levels deeper: the attestation, rules and the rule).
+    """
+    run_levels = rng.choice([0, 0, rng.randrange(1, 63), 62, 63, 64, 65, 1000, 20000])
+    evidence_levels = rng.choice([0, 0, rng.randrange(1, 61), 60, 61, 62, 63, 1000, 20000])
+    run_id = nest(rng, run_levels) if run_levels else json.dumps(f"run_{rng.randrange(10**6)}")
+    overall = rng.choice(["pass", "warn", "block"])
+    rule = {"ruleId": "r1", "verdict": overall, "reason": rng.choice([None, "why"])}
+    canonical = (
+        '{"v":1,"type":"guardian-verdict","verdictId":"v1","runId":'
+        + run_id
+        + ',"agentSlug":"agent","tokenId":null,"overall":'
+        + json.dumps(overall)
+        + ',"rules":['
+        + json.dumps(rule, separators=(",", ":"))
+        + '],"issuedAt":"2026-10-24T00:00:00.000Z"}'
+    )
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    evidence = nest(rng, evidence_levels) if evidence_levels else '{"n":1}'
+    envelope_rule = (
+        '{"ruleId":"r1","verdict":'
+        + json.dumps(overall)
+        + ',"reason":'
+        + json.dumps(rule["reason"])
+        + ',"evidence":'
+        + evidence
+        + ',"durationMs":2}'
+    )
+    if rng.random() < 0.1:  # an envelope that disagrees with its canonical
+        overall = "pass" if overall != "pass" else "block"
+    return (
+        '{"verdictId":"v1","overall":'
+        + json.dumps(overall)
+        + ',"rules":['
+        + envelope_rule
+        + '],"totalMs":3,"issuedAt":"2026-10-24T00:00:00.000Z","canonical":'
+        + json.dumps(canonical)
+        + ',"contentHash":"'
+        + hashlib.sha256(canonical.encode()).hexdigest()
+        + '","signature":"'
+        + sig
+        + '"}'
+    )
+
+
 def inclusion_case(rng: random.Random) -> str:
     size = rng.choice(
         [
@@ -216,7 +345,16 @@ def main() -> int:
     with (out / "cases.jsonl").open("w", encoding="utf-8") as fh:
         for i in range(count):
             kind = "receipt" if rng.random() < 0.6 else "inclusion"
-            raw = receipt_case(rng, key) if kind == "receipt" else inclusion_case(rng)
+            if kind == "receipt" and rng.random() < 0.05:
+                kind = "guardian"
+            if kind == "guardian":
+                raw = guardian_case(rng, key)
+            elif kind == "inclusion":
+                raw = inclusion_case(rng)
+            elif rng.random() < 0.08:
+                raw = depth_case(rng, key) if rng.random() < 0.85 else duplicate_deep_case(rng, key)
+            else:
+                raw = receipt_case(rng, key)
             fh.write(json.dumps({"id": i, "kind": kind, "raw": raw}) + "\n")
     print(f"{count} cases, seed {seed}")
     return 0

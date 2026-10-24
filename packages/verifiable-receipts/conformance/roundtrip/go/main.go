@@ -7,7 +7,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -34,8 +33,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(2)
 	}
-	var receipt vaos.Receipt
-	if err := json.Unmarshal(data, &receipt); err != nil {
+	receipt, err := vaos.ParseReceipt(data)
+	if err != nil {
 		fmt.Println("rejected:", err)
 		os.Exit(1)
 	}

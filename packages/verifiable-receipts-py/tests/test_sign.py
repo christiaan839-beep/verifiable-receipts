@@ -180,3 +180,22 @@ class TestSignV2Receipt:
     def test_refuses_a_key_that_is_not_ed25519(self) -> None:
         with pytest.raises(TypeError, match="Ed25519PrivateKey"):
             sign_v2_receipt(BODY, b"not a key")  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("levels", [64, 5_000, 20_000])
+    def test_refuses_a_body_nested_deeper_than_64(self, levels: int) -> None:
+        # The body object is one level; its field adds `levels` more.
+        priv, _ = _make_keypair()
+        value: list = []
+        for _ in range(levels - 1):
+            value = [value]
+        with pytest.raises(ValueError, match="nesting deeper than 64"):
+            sign_v2_receipt({"d": value}, priv)
+
+    def test_signs_a_body_nested_exactly_64_deep(self) -> None:
+        priv, pub_pem = _make_keypair()
+        value: list = []
+        for _ in range(62):
+            value = [value]
+        receipt = sign_v2_receipt({"d": value}, priv)
+        assert receipt["canonical"] == '{"d":' + "[" * 63 + "]" * 63 + "}"
+        assert verify_v2_receipt(receipt, pub_pem).ok is True

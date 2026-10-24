@@ -17,11 +17,13 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
+    Ed25519PublicKey,
 )
 from sovereign_matrix.verifiable_receipts import (
     VerifyResult,
     inner_hash,
     leaf_hash,
+    parse_receipt,
     verify_guardian_attestation,
     verify_inclusion_proof,
     verify_v2_receipt,
@@ -244,6 +246,149 @@ class TestEnvelopeConsistency:
             result = verify_v2_receipt(receipt, pub_pem)
             assert result.ok is False
             assert result.reason == "canonical is not valid JSON"
+
+
+def _nested(levels: int) -> list:
+    """A value ``levels`` lists deep, built without recursion."""
+    value: list = []
+    for _ in range(levels - 1):
+        value = [value]
+    return value
+
+
+def _nested_text(levels: int) -> str:
+    return "[" * levels + "]" * levels
+
+
+_P = 2**255 - 19
+_IDENTITY_KEY = (1).to_bytes(32, "little")
+_IDENTITY_P_PLUS_1_KEY = (_P + 1).to_bytes(32, "little")  # y = p + 1: the identity again
+_NONCANONICAL_KEY = (_P + 3).to_bytes(32, "little")  # y = p + 3: a point of large order
+# Under the identity key this signature verifies every message.
+_UNIVERSAL_SIGNATURE = "v2=" + base64.b64encode(_IDENTITY_KEY + bytes(32)).decode()
+
+
+def _pem_of(raw: bytes) -> bytes:
+    return Ed25519PublicKey.from_public_bytes(raw).public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+class TestWeakPublicKeys:
+    """VAOS 2.0 section 7.3: small-order and non-canonical keys are refused."""
+
+    @pytest.mark.parametrize(
+        ("raw", "reason"),
+        [
+            (_IDENTITY_KEY, "public key is a small-order point"),
+            (_IDENTITY_KEY[:31] + b"\x80", "public key is a small-order point"),
+            (_IDENTITY_P_PLUS_1_KEY, "public key is a small-order point"),
+            (_NONCANONICAL_KEY, "public key is not a canonical encoding"),
+        ],
+        ids=["identity", "identity-sign-bit", "y=p+1", "y=p+3"],
+    )
+    def test_refuses_a_weak_key(self, raw: bytes, reason: str) -> None:
+        receipt = {"canonical": '{"a":1}', "signature": _UNIVERSAL_SIGNATURE}
+        assert verify_v2_receipt(receipt, _pem_of(raw)) == VerifyResult(False, reason)
+
+    def test_accepts_a_valid_key(self) -> None:
+        priv, pub_pem = _make_keypair()
+        receipt = {"canonical": '{"a":1}', "signature": _sign_v2(priv, '{"a":1}')}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(True)
+
+
+class TestNestingDepth:
+    """VAOS 2.0 section 7.2: nothing nested deeper than 64 is compared or parsed."""
+
+    def test_accepts_a_receipt_and_canonical_nested_exactly_64_deep(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"d":' + _nested_text(63) + "}"
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical), "d": _nested(63)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(True)
+
+    def test_rejects_a_receipt_nested_65_deep_first(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"a":1}'
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical), "d": _nested(64)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
+
+    @pytest.mark.parametrize(
+        "canonical",
+        ['{"d":' + _nested_text(64) + "}", '{"d":' + "[" * 64, "x" + "{" * 65],
+        ids=["valid", "unterminated", "not-json"],
+    )
+    def test_rejects_a_canonical_nested_65_deep_valid_json_or_not(self, canonical: str) -> None:
+        priv, pub_pem = _make_keypair()
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(
+            False, "canonical nesting deeper than 64"
+        )
+
+    def test_does_not_count_brackets_inside_strings(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"s":"' + "[" * 100 + '\\\\\\"' + "{" * 100 + '"}'
+        json.loads(canonical)
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(True)
+
+    @pytest.mark.parametrize("levels", [64, 20_000])
+    def test_parse_receipt_refuses_text_nested_deeper_than_64(self, levels: int) -> None:
+        # The receipt object is one level; the field adds `levels` more.
+        text = '{"canonical":"{}","signature":"v2=AA==","d":' + _nested_text(levels) + "}"
+        with pytest.raises(ValueError, match="^receipt nesting deeper than 64$"):
+            parse_receipt(text)
+
+    def test_parse_receipt_reads_a_receipt_64_deep(self) -> None:
+        text = '{"canonical":"{}","d":' + _nested_text(63) + "}"
+        assert parse_receipt(text.encode())["canonical"] == "{}"
+        with pytest.raises(ValueError, match="not a JSON object"):
+            parse_receipt("[1]")
+        with pytest.raises(ValueError, match="not valid JSON"):
+            parse_receipt('{"a":NaN}')
+
+    def test_json_equal_is_bounded_at_64(self) -> None:
+        from sovereign_matrix.verifiable_receipts.verify import _json_equal
+
+        assert _json_equal(_nested(64), _nested(64)) is True
+        assert _json_equal(_nested(65), _nested(65)) is False
+        assert _json_equal(_nested(20_000), _nested(20_000)) is False
+
+    @pytest.mark.parametrize(("levels", "ok"), [(61, True), (62, False)])
+    def test_guardian_counts_unsigned_evidence(self, levels: int, ok: bool) -> None:
+        # attestation, rules and the rule are three levels; the unsigned
+        # evidence adds the rest: 64 deep is accepted, 65 deep rejected.
+        priv, pub_pem = _make_keypair()
+        canonical = '{"overall":"pass","rules":[{"ruleId":"r","verdict":"pass","reason":null}]}'
+        attestation = {
+            "canonical": canonical,
+            "signature": _sign_v2(priv, canonical),
+            "overall": "pass",
+            "rules": [{"ruleId": "r", "verdict": "pass", "evidence": _nested(levels)}],
+        }
+        too_deep = VerifyResult(False, "receipt nesting deeper than 64")
+        expected = VerifyResult(True) if ok else too_deep
+        assert verify_guardian_attestation(attestation, pub_pem) == expected
+
+    @pytest.mark.parametrize("depth", [5_000, 20_000])
+    def test_returns_a_verdict_at_depth(self, depth: int) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"d":' + _nested_text(depth) + "}"
+        signature = _sign_v2(priv, canonical)
+        deep = {"canonical": canonical, "signature": signature, "d": _nested(depth)}
+        assert verify_v2_receipt(deep, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
+        assert verify_v2_receipt({"canonical": canonical, "signature": signature}, pub_pem) == (
+            VerifyResult(False, "canonical nesting deeper than 64")
+        )
+        rules = [{"ruleId": "r", "verdict": "pass", "reason": _nested(depth)}]
+        attestation = {"canonical": canonical, "signature": signature, "rules": rules}
+        assert verify_guardian_attestation(attestation, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
 
 
 class TestGuardianAttestation:

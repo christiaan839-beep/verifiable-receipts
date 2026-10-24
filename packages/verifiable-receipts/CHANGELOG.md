@@ -46,6 +46,49 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line escapes control characters, U+2028/U+2029 and the
   bidirectional controls, and strings from the log are printed quoted. `--interval` below 60 or not a number is
   a usage error.
+- `verifyGuardianAttestation` returns `{ ok: false, reason:
+  "nesting-too-deep" }`, checked first, for an attestation nested deeper
+  than 64 (VAOS 2.0 §7.2), or a `canonical` whose text nests deeper than
+  64; a `canonical` that is not a string gets `"canonical-mismatch"`. Before, a signed attestation whose
+  `runId` nested 64 deep was accepted, which the Python and Go verifiers
+  reject, and one nested 20,000 deep made it throw `RangeError` (stack
+  overflow).
+- `verifyManifest` returns `{ ok: false, reason: "nesting-too-deep" }`
+  for a manifest nested deeper than 64, checked first. Before, one
+  nested 5,000 deep made it throw `RangeError`. `"nesting-too-deep"` is a
+  new member of its reason type.
+- The `verifiable-receipts` CLI refuses a `--pubkey` that is a point of
+  small order or a non-canonical encoding (VAOS 2.0 §7.3). Under the
+  identity key, for one, a signature verifies every message.
+- The `verifiable-receipts` and `verifiable-receipts-sign` CLIs count the
+  depth of the manifest or body on its text before parsing it, so a
+  duplicate key that `JSON.parse` discards still counts: a manifest
+  deeper than 64 fails with `nesting-too-deep`, a body is refused.
+- The conformance v2 verifier (`conformance/verify-v2.mjs`) rejects a
+  receipt nested deeper than 64 before any other check, and a
+  `canonical` whose text nests deeper than 64 before parsing it, with
+  the reasons `receipt nesting deeper than 64` and `canonical nesting
+  deeper than 64`, as the Python and Go verifiers now do. Before, a
+  receipt whose canonical and field nested 5,000 deep made it throw
+  `RangeError`. Its `jsonEqual` treats arrays and objects deeper than 64
+  as unequal, so no caller can make it recurse deeper, and it refuses a
+  weak public key as `loadEd25519PublicKey` does. It also exports
+  `nestsTooDeep`, `textNestsTooDeep` and `parseReceipt`, which reads a
+  receipt from text with its depth counted on the text first, as
+  Python's `parse_receipt` and Go's `ParseReceipt` do.
+
+### Added
+
+- `loadEd25519PublicKey(pem)` loads an Ed25519 verification key and
+  throws on a key that is a point of small order or a non-canonical
+  encoding; `ed25519PublicKeyProblem(raw)` says why a raw key is refused
+  (VAOS 2.0 §7.3).
+
+### Changed
+
+- `canonicalJson`, and with it `verifiable-receipts-sign`, refuses a
+  body nested deeper than 64 with an error instead of overflowing the
+  stack at a few thousand levels: no verifier accepts such a receipt.
 
 ## [0.4.0] — 2026-10-23
 

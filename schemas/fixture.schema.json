@@ -7,6 +7,11 @@
   "required": ["description", "expected"],
   "properties": {
     "description": { "type": "string", "minLength": 1 },
+    "publicKeyPem": {
+      "description": "A key fixture's own Ed25519 public key (PEM, SPKI), used instead of public-key.pem.",
+      "type": "string",
+      "pattern": "^-----BEGIN PUBLIC KEY-----"
+    },
     "expected": {
       "type": "object",
       "required": ["ok"],
@@ -16,6 +21,15 @@
   },
   "oneOf": [
     { "required": ["receipt"], "properties": { "receipt": { "type": "object" } } },
+    {
+      "required": ["receiptText"],
+      "properties": {
+        "receiptText": {
+          "description": "A receipt given as JSON text, for what parsing the fixture would lose, such as a duplicate key.",
+          "type": "string"
+        }
+      }
+    },
     { "required": ["leafHashHex", "leafIndex", "treeSize", "auditPath", "rootHashHex"] }
   ]
 }

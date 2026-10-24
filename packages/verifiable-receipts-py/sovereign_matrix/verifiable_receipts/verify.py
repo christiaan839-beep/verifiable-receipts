@@ -5,6 +5,9 @@ v2 only: v3 (Ed25519 + ML-DSA-65) needs a post-quantum dependency and
 is not verified here.
 
 What ``verify_v2_receipt`` checks, in this order:
+  0. The receipt nests at most 64 deep (VAOS 2.0 section 7.2): the
+     receipt mapping is one level, and each list or mapping in it one
+     more.
   1. ``canonical`` and ``signature`` are non-empty strings.
   2. ``signature`` is "v2=<base64>" with standard base64.
   3. ``contentHash``, when present and not null, is a string equal to
@@ -13,7 +16,8 @@ What ``verify_v2_receipt`` checks, in this order:
      field.
   4. The Ed25519 signature verifies over the UTF-8 bytes of
      ``canonical``, exactly as given.
-  5. ``canonical`` parses as a JSON object.
+  5. ``canonical`` nests at most 64 deep, counted on its text before it
+     is parsed, and parses as a JSON object.
   6. Every other top-level field of the receipt (all but
      ``canonical``, ``contentHash`` and ``signature``) is present in
      that object with an equal JSON value. A field that disagrees, or
@@ -23,6 +27,9 @@ What ``verify_v2_receipt`` checks, in this order:
 The verifier does not re-derive ``canonical`` from the other fields:
 the signed bytes are the ``canonical`` string itself, whatever key
 order the issuer used.
+
+With both sides at most 64 deep, the recursive comparison never goes
+deeper than 64 frames, so no input reaches Python's recursion limit.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +47,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
     load_pem_public_key,
 )
 
@@ -60,6 +70,11 @@ class VerifyResult:
     reason: str | None = None
 
 
+_STANDARD_BASE64 = re.compile(
+    r"(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
+)
+
+
 def _decode_v2_signature(signature: str) -> bytes:
     """Strip the 'v2=' prefix and base64-decode. Raises ValueError on malformed input."""
     if not isinstance(signature, str):
@@ -67,10 +82,11 @@ def _decode_v2_signature(signature: str) -> bytes:
     if not signature.startswith("v2="):
         raise ValueError("signature is not v2 (expected 'v2=<base64>')")
     raw = signature[3:]
-    try:
-        decoded = base64.b64decode(raw, validate=True)
-    except ValueError as exc:  # binascii.Error is a ValueError
-        raise ValueError(f"signature base64 invalid: {exc}") from exc
+    # The same two steps, with the same reasons, as the TypeScript and Go
+    # verifiers: the shape of padded standard base64, then one spelling.
+    if _STANDARD_BASE64.fullmatch(raw) is None:
+        raise ValueError("signature base64 invalid")
+    decoded = base64.b64decode(raw, validate=True)
     # Reject non-canonical spellings (non-zero padding bits), so one
     # signature has exactly one valid string form.
     if base64.b64encode(decoded).decode("ascii") != raw:
@@ -78,14 +94,104 @@ def _decode_v2_signature(signature: str) -> bytes:
     return decoded
 
 
+# The encodings of the points of small order, with the sign bit cleared:
+# the libsodium blocklist ("Taming the many EdDSAs", Chalkias et al.).
+# The last two are the non-canonical encodings y = p and y = p + 1.
+_SMALL_ORDER_KEYS = frozenset(
+    bytes.fromhex(h)
+    for h in (
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    )
+)
+_P = 2**255 - 19
+
+
+def _ed25519_key_problem(raw: bytes) -> str | None:
+    """Why a raw 32-byte Ed25519 public key is refused (VAOS 2.0 section 7.3), or None."""
+    cleared = raw[:31] + bytes([raw[31] & 0x7F])
+    if cleared in _SMALL_ORDER_KEYS:
+        return "public key is a small-order point"
+    if int.from_bytes(cleared, "little") >= _P:
+        return "public key is not a canonical encoding"
+    return None
+
+
 def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
-    """Load an Ed25519 public key from PEM bytes. Raises ValueError on mismatch."""
+    """Load an Ed25519 public key from PEM bytes. Raises ValueError on mismatch.
+
+    Refuses a key that is a point of small order or a non-canonical
+    encoding (VAOS 2.0 section 7.3).
+    """
     key = load_pem_public_key(pem)
     if not isinstance(key, Ed25519PublicKey):
         raise ValueError(
             f"expected Ed25519 public key, got {type(key).__name__}",
         )
+    problem = _ed25519_key_problem(key.public_bytes(Encoding.Raw, PublicFormat.Raw))
+    if problem is not None:
+        raise ValueError(problem)
     return key
+
+
+# The nesting limit of VAOS 2.0 section 7.2.
+_MAX_NESTING = 64
+
+
+def _nests_too_deep(value: Any) -> bool:
+    """Whether ``value`` nests deeper than _MAX_NESTING.
+
+    ``value`` is one level when it is a list, tuple or mapping, and each
+    one inside it one more. Walks an explicit stack, not the call stack.
+    """
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, Mapping):
+            children = item.values()
+        elif isinstance(item, (list, tuple)):
+            children = item
+        else:
+            continue
+        if level > _MAX_NESTING:
+            return True
+        stack.extend((child, level + 1) for child in children)
+    return False
+
+
+def _text_nests_too_deep(text: str) -> bool:
+    """Whether JSON text opens more than _MAX_NESTING arrays and objects at once.
+
+    Read from the start, valid JSON or not: outside strings ``[`` and
+    ``{`` open one and ``]`` and ``}`` close one (when one is open); a
+    string runs from ``"`` to the next ``"`` not escaped by a backslash.
+    """
+    open_ = 0
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if in_string:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+        elif c in "[{":
+            open_ += 1
+            if open_ > _MAX_NESTING:
+                return True
+        elif c in "]}" and open_ > 0:
+            open_ -= 1
+        i += 1
+    return False
 
 
 def _reject_constant(name: str) -> Any:
@@ -105,7 +211,7 @@ def _parse_canonical(canonical: str) -> Any:
 _UNSAFE = 2**53
 
 
-def _json_equal(a: Any, b: Any) -> bool:
+def _json_equal(a: Any, b: Any, depth: int = 1) -> bool:
     """Deep JSON-value equality.
 
     Same JSON type and same value: numbers by numeric value (1 equals
@@ -115,6 +221,10 @@ def _json_equal(a: Any, b: Any) -> bool:
     only number type JavaScript's JSON.parse has, cannot tell 2**53 from
     2**53 + 1, so every verifier rejects such a number in a repeated
     field rather than disagree about it.
+
+    Bounded at _MAX_NESTING: ``depth`` is the level of ``a`` and ``b`` (1
+    at the top), and lists or mappings deeper than that equal nothing,
+    so no input recurses deeper than _MAX_NESTING.
     """
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
@@ -124,35 +234,59 @@ def _json_equal(a: Any, b: Any) -> bool:
         return abs(a) < _UNSAFE and abs(b) < _UNSAFE and a == b
     if isinstance(a, str) or isinstance(b, str):
         return isinstance(a, str) and isinstance(b, str) and a == b
+    if depth > _MAX_NESTING:
+        return False
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         return len(a) == len(b) and all(
-            _json_equal(x, y) for x, y in zip(a, b, strict=True)
+            _json_equal(x, y, depth + 1) for x, y in zip(a, b, strict=True)
         )
     if isinstance(a, Mapping) and isinstance(b, Mapping):
         return set(a.keys()) == set(b.keys()) and all(
-            _json_equal(a[k], b[k]) for k in a
+            _json_equal(a[k], b[k], depth + 1) for k in a
         )
     return False
 
 
+def parse_receipt(text: str | bytes) -> dict[str, Any]:
+    """Read a receipt from JSON text, counting its depth first.
+
+    Raises:
+        ValueError: "receipt nesting deeper than 64" when the text nests
+            deeper than 64 (VAOS 2.0 section 7.2), the reason the
+            verifiers give, at any depth: ``json.loads`` alone raises
+            RecursionError on text nested some thousands deep. Also when
+            the text is not JSON, or not a JSON object.
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8")
+    if _text_nests_too_deep(text):
+        raise ValueError("receipt nesting deeper than 64")
+    try:
+        value = json.loads(text, parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("receipt is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("receipt is not a JSON object")
+    return value
+
+
 def _check_envelope(receipt: Mapping[str, Any], canonical: str) -> str | None:
     """Return a reason string when the envelope disagrees with canonical."""
+    if _text_nests_too_deep(canonical):
+        return "canonical nesting deeper than 64"
     try:
         signed = _parse_canonical(canonical)
     except ValueError as exc:
         return str(exc)
     if not isinstance(signed, dict):
         return "canonical is not a JSON object"
-    try:
-        for key in sorted(receipt, key=str):
-            if key in _ENVELOPE_ONLY:
-                continue
-            if key not in signed:
-                return f'envelope field "{key}" is not in the signed canonical'
-            if not _json_equal(receipt[key], signed[key]):
-                return f'envelope field "{key}" disagrees with the signed canonical'
-    except RecursionError:
-        return "envelope is nested too deeply to compare"
+    for key in sorted(receipt, key=str):
+        if key in _ENVELOPE_ONLY:
+            continue
+        if key not in signed:
+            return f'envelope field "{key}" is not in the signed canonical'
+        if not _json_equal(receipt[key], signed[key]):
+            return f'envelope field "{key}" disagrees with the signed canonical'
     return None
 
 
@@ -177,6 +311,8 @@ def verify_v2_receipt(
     """
     if not isinstance(receipt, Mapping):
         return VerifyResult(False, "receipt must be a mapping")
+    if _nests_too_deep(receipt):
+        return VerifyResult(False, "receipt nesting deeper than 64")
 
     canonical = receipt.get("canonical")
     signature = receipt.get("signature")
@@ -253,8 +389,10 @@ def _guardian_rules_in_canonical_order(rules: list[Any], canonical: Any) -> list
     generic check rejects the envelope's ``rules``.
     """
     projected = [_guardian_rule_projection(r) for r in rules]
+    if not isinstance(canonical, str) or _text_nests_too_deep(canonical):
+        return projected
     try:
-        signed = _parse_canonical(canonical) if isinstance(canonical, str) else None
+        signed = _parse_canonical(canonical)
     except ValueError:
         return projected
     signed_rules = signed.get("rules") if isinstance(signed, dict) else None
@@ -304,6 +442,10 @@ def verify_guardian_attestation(
     """
     if not isinstance(attestation, Mapping):
         return VerifyResult(False, "receipt must be a mapping")
+    # Before the rules are projected and compared: the attestation as
+    # given, fields that are not signed included, nests at most 64 deep.
+    if _nests_too_deep(attestation):
+        return VerifyResult(False, "receipt nesting deeper than 64")
     view = {k: v for k, v in attestation.items() if k != _GUARDIAN_UNSIGNED}
     rules = view.get("rules")
     if isinstance(rules, list):

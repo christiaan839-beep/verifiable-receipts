@@ -42,7 +42,8 @@ A signed receipt is a JSON object with three fields the signer adds:
 Every other field of the receipt repeats a field of the parsed
 `canonical`. Verifiers check `canonical` as given and do not rebuild
 it; they reject a receipt whose other fields disagree with the parsed
-`canonical` or are missing from it (VAOS 2.0 §5 and §7).
+`canonical` or are missing from it (VAOS 2.0 §5 and §7). Neither the
+receipt nor `canonical` may nest deeper than 64 (VAOS 2.0 §7.2).
 
 ### Canonical projection
 
@@ -52,7 +53,8 @@ it; they reject a receipt whose other fields disagree with the parsed
 2. Sort object keys at every depth (JavaScript `Array.prototype.sort`,
    which orders by UTF-16 code unit). A `__proto__` key is kept as an
    ordinary key.
-3. `JSON.stringify` with no whitespace.
+3. `JSON.stringify` with no whitespace. A body nested deeper than 64 is
+   refused with an error.
 
 The Python `canonicalize` sorts by code point and refuses floats. The
 two agree on keys made only of characters in the Basic Multilingual

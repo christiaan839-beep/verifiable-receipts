@@ -48,6 +48,7 @@ import {
   sign as edSign,
 } from "node:crypto";
 import { canonicalJson } from "../dist/canonical-json.js";
+import { textNestsDeeperThan } from "../dist/nesting.js";
 import { formatV3Wire, signMlDsa65 } from "../dist/pq-sign.js";
 import { fail, parseArgs, readStdin } from "./cli.mjs";
 
@@ -125,6 +126,11 @@ async function main() {
     fail("--input <path> required (or pipe JSON via stdin)");
   }
 
+  // Depth is counted on the text first (VAOS 2.0 section 7.2), so a
+  // duplicate key that JSON.parse would discard still counts.
+  if (textNestsDeeperThan(rawInput)) {
+    fail("input nests deeper than 64 (VAOS 2.0 section 7.2); no verifier would accept the receipt");
+  }
   let body;
   try {
     body = JSON.parse(rawInput);
@@ -159,7 +165,12 @@ async function main() {
   }
 
   const fields = withoutSignerFields(body);
-  const canonical = canonicalJson(fields);
+  let canonical;
+  try {
+    canonical = canonicalJson(fields);
+  } catch (err) {
+    fail(`could not canonicalize the receipt: ${err.message}`);
+  }
   const canonicalBytes = Buffer.from(canonical, "utf8");
   const contentHash =
     "sha256:" + createHash("sha256").update(canonicalBytes).digest("hex");

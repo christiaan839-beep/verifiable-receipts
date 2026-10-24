@@ -13,7 +13,8 @@ It refuses floats (including NaN and the infinities): JavaScript and
 Python print them differently (``1.0`` against ``1``), so a float would
 make the same body canonicalize differently in each language. It
 accepts only dicts with string keys, lists, strings, ints, bools and
-None.
+None, nested at most 64 deep (VAOS 2.0 section 7.2), since every verifier
+rejects a receipt nested deeper.
 
 ``sign_v2_receipt(body, private_key)`` signs that projection and
 returns the receipt, which ``verify_v2_receipt`` and the Go
@@ -35,13 +36,22 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 # Fields the signer writes; a body's own copies are dropped first.
 _SIGNER_FIELDS = ("canonical", "contentHash", "signature")
 
+# The nesting limit of VAOS 2.0 section 7.2.
+_MAX_NESTING = 64
+
 
 def _utf16_key(key: str) -> bytes:
     # Big-endian UTF-16 bytes compare in code-unit order.
     return key.encode("utf-16-be", "surrogatepass")
 
 
-def _encode(value: Any, path: str) -> str:
+def _encode(value: Any, path: str, level: int = 1) -> str:
+    # ``level`` is the depth ``value`` has when it is a list or dict.
+    if isinstance(value, (list, dict)) and level > _MAX_NESTING:
+        raise ValueError(
+            f"body nesting deeper than {_MAX_NESTING} (a list or dict at depth {level}), "
+            "which verifiers reject"
+        )
     if value is None:
         return "null"
     if value is True:
@@ -59,7 +69,7 @@ def _encode(value: Any, path: str) -> str:
         return json.dumps(value, ensure_ascii=False)
     if isinstance(value, list):
         return "[" + ",".join(
-            _encode(item, f"{path}[{i}]") for i, item in enumerate(value)
+            _encode(item, f"{path}[{i}]", level + 1) for i, item in enumerate(value)
         ) + "]"
     if isinstance(value, dict):
         for key in value:
@@ -68,7 +78,9 @@ def _encode(value: Any, path: str) -> str:
                     f"{path} has a non-string key {key!r}; JSON object keys are strings"
                 )
         parts = [
-            json.dumps(key, ensure_ascii=False) + ":" + _encode(value[key], f"{path}.{key}")
+            json.dumps(key, ensure_ascii=False)
+            + ":"
+            + _encode(value[key], f"{path}.{key}", level + 1)
             for key in sorted(value, key=_utf16_key)
         ]
         return "{" + ",".join(parts) + "}"
@@ -89,7 +101,7 @@ def canonicalize(body: Any) -> str:
             non-string object key, or any value that is not a dict,
             list, str, int, bool or None.
         ValueError: when a string holds a lone surrogate, which has no
-            UTF-8 encoding.
+            UTF-8 encoding, or ``body`` nests deeper than 64.
     """
     out = _encode(body, "body")
     try:
