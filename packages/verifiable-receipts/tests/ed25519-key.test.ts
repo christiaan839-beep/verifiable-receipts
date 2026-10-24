@@ -40,7 +40,7 @@ describe("loadEd25519PublicKey", () => {
     const { publicKey } = generateKeyPairSync("ed25519");
     const pem = publicKey.export({ type: "spki", format: "pem" }).toString();
     expect(loadEd25519PublicKey(pem).asymmetricKeyType).toBe("ed25519");
-    const rsa = generateKeyPairSync("rsa", { modulusLength: 1024 }).publicKey;
+    const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey;
     expect(() => loadEd25519PublicKey(rsa.export({ type: "spki", format: "pem" }).toString())).toThrow(
       "not an Ed25519 public key",
     );
