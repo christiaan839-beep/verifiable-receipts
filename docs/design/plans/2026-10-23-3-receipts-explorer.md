@@ -10,7 +10,7 @@
 
 **Design:** `docs/design/2026-10-23-ontology-and-proof-explorer.md` (verifiable-receipts), Part 2.
 
-**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `24f5c47`, the `VR_REF`: 189 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 33 Playwright tests on Chromium (Largest Contentful Paint 1.24 to 1.26 s under the fast 3G profile), 29 mutants of the port, the key reader, the byte helpers, the input reader and the checks were each killed by the test that names them, ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export and a clone of `24f5c47` while failing, each with its `::error` line, in 23 broken copies (bad, missing, empty or extra `SHA256SUMS` lines, a wrong hash, `hash.ts` dropped from it, an extra, missing or changed file in each vendored directory, an empty or missing `src/vendor/`, a wrong upstream path, the wrong directory, and an upstream clone at the wrong `HEAD`). `static/check.js` is 32,577 bytes, 10,809 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
+**As built, and rehearsed:** Tasks 1 to 6 are built and reviewed in `~/Projects/receipts-explorer`, branch `feat/explorer`, as six commits on the licence commit `654ab33`: `360d718` (Task 1), `e722345` (Task 2), `e7038bc` (Task 3), `f47ae49` (Task 4), `ec5490d` (Task 5) and `5220929` (Task 6). Every code block and commit message of those tasks is that commit's, read with `git show`, and their counts are what that commit runs: 91, 95, 168 and 205 node tests after Tasks 3 to 6. Tasks 7 to 16 were rehearsed on a clone of that branch on 24 October 2026, task by task: 255 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 33 Playwright tests on Chromium (Largest Contentful Paint 1.24 to 1.27 s under the fast 3G profile), ruff, ESLint and both type checks clean, zizmor pedantic with no findings. 36 mutants were each killed by the test that names them, all run against the as-built code: 29 across Tasks 3 to 7, and 7 more for Task 7 (the proof's own root trusted, the signature size, the three unreadable mappings, the unreadable retry, and the v3 shape). `scripts/check-vendor.sh` passed against an export and a clone of `24f5c47` and failed, each with its `::error` line, in 23 broken copies. `static/check.js` is 35,608 bytes, 11,905 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
 
 **Repository:** `~/Projects/receipts-explorer` (new), published in Task 17 as github.com/christiaan839-beep/receipts-explorer.
 
@@ -33,7 +33,7 @@
 | Hosting URL (confirmed by Christiaan) | `https://christiaan839-beep.github.io/receipts-explorer/`. Every link carries the `/receipts-explorer` base path; `serve.py` serves under it too, so development and production paths match. `build.py` still writes `robots.txt`, but it has no effect on a project path: crawlers read it only at the host root, and there is no `christiaan839-beep.github.io` site. `sitemap.xml` works when submitted to a search console. A custom domain would fix both. | GitHub Pages project site; no custom domain exists. |
 | How the log address and key are chosen (key confirmed by Christiaan) | The visitor types it: no default, `https://` only (CSP `connect-src https:` enforces it too), no user name, query or fragment; never stored, never put in the page URL. The log's public key must be pasted; the page never fetches `/v1/public-key`. | There is no public log yet, and receipts-log's `API.md` says a key fetched from the log proves nothing. |
 | Optional inputs | No issuer key: Signature is not run. A log address without a log key: checks 5 to 7 are not run, and the log is not asked. Witness keys without an address: an input error. | "A check that cannot run shows as not run." |
-| Network errors and log errors | A request that does not complete (unreachable, DNS, TLS, CORS refusal, a redirect, 15 s timeout) is a network error: shown as **Network error**, counted as not run, with a **Try the log again** button. A 5xx answer (503 busy, 500) is not run, quoting the log's error, with the same button. Any other non-200 answer (400, 414) is not run, with no retry. A 404 from the inclusion route is a failed check. | Since receipts-log PR #13 its 503, 414 and 500 carry the CORS header, so the page reads and explains them instead of seeing an opaque failure. |
+| Network errors and log errors | A request that does not complete (unreachable, DNS, TLS, CORS refusal, a redirect, 15 s timeout) is a network error: shown as **Network error**, counted as not run, with a **Try the log again** button. An answer larger than 1,000,000 bytes, or not JSON, is unreadable: not run, with its own sentence and the same button. A 5xx answer (503 busy, 500) is not run, quoting the log's error, with the same button. Any other non-200 answer (400, 414) is not run, with no retry. A 404 from the inclusion route is a failed check. | Since receipts-log PR #13 its 503, 414 and 500 carry the CORS header, so the page reads and explains them instead of seeing an opaque failure. |
 | Requests per check | One `GET /v1/sth` and one `GET /v1/cosignatures` per run, one `GET /v1/proof/inclusion` per receipt. | A pasted array may hold many receipts; they share one tree head. |
 | Witnesses passed or failed (**chosen by Christiaan**, 24 October 2026) | A cosignature counts when the tree head it covers has the same `logId`, `treeSize` and `rootHash` as the tree head the page fetched; its timestamp may differ. Its `sthCanonical` is never trusted as sent: it must parse to a well-formed tree head whose canonical text, rebuilt from its own fields, equals it byte for byte, and its signature must verify over it under that witness's key. Passed when at least one given witness has such a cosignature, with "k of n" in the message; failed when none does. | The design says "this exact tree head", but receipts-log re-signs its tree head hourly with a new timestamp, so an exact match would often read 0 of n while witnesses lag. The same log, size and root is what rules out a fork. This deviates from the design's wording on purpose. |
 | contentHash | A present contentHash (anything but absent or `null`) must be a string and is checked, so `""` fails; absent or `null` is "not run". | The rule verifiable-receipts adopts in `fix/empty-contenthash`; the port follows it. |
@@ -106,7 +106,8 @@
 - git, gh, `npm install` and Playwright's browser download need the Bash sandbox off, as do Playwright runs (they bind a local port). If the Write and Edit tools fail on a security-guidance hook error, write files with a heredoc or a short Python script.
 - The shell is zsh. Commands here use only syntax that zsh and bash share; `scripts/check-vendor.sh` runs under bash.
 - Node 22.18 or later (`node --version`). If `npm` fails with `EACCES` on `~/.npm`, add `--cache "$TMPDIR/npm-cache"`.
-- Python tests: `PY=/opt/homebrew/bin/python3.12`; ruff: `uvx ruff@0.17.0`; zizmor: `uvx zizmor@1.30.1`.
+- Python tests: `PY=/opt/homebrew/bin/python3.12`; ruff: `uvx ruff@0.17.0`; zizmor: `uvx zizmor@1.30.1`. Run them with `uvx` only, never `uv run` or `uv lock`: those treat `pyproject.toml` as a uv project and leave a `uv.lock` (with `requires-python = ">=3.14"`) in the repository root, and the repository has no uv project. If a `uv.lock` appears, move it to the Trash; never commit it.
+- Write each file from its code block with a method that keeps the text exactly, backslash escapes such as `‎` included: the Write tool, or a short Python script. A zsh heredoc or `echo` can turn escapes into the characters they name, and the tests and lint rules then see different code. The plan itself is generated by a Python script for the same reason.
 - `VR=~/Projects/verifiable-receipts` and, from Task 2, `VR_REF=$(cat third_party/verifiable-receipts/VR_REF)`.
 - Every TypeScript task ends with `npm run typecheck && npx eslint . && npm test`, which must print nothing from tsc and ESLint and `# fail 0` from the tests. `npm run typecheck` runs `tsc` twice: on `tsconfig.json` (tests, end-to-end tests and tools, with Node's types) and on `src/tsconfig.json` (the page, without them).
 - Commit with this identity; no global git identity is set:
@@ -673,7 +674,7 @@ ls test/fixtures/conformance | wc -l
 bash scripts/check-vendor.sh "$UP"
 ```
 
-Expected: `32` (30 fixtures, `public-key.pem`, `README.md`), then `every vendored file matches verifiable-receipts at <VR_REF>`.
+Expected: `32` (30 fixtures, `public-key.pem`, `README.md`), then `every vendored file matches verifiable-receipts at 24f5c4780dba7c4f76b159b7f7844e17d0226cd6`.
 
 - [ ] **Step 6:** prove the check catches a change: append a space to `third_party/verifiable-receipts/ontology.md`, rerun `bash scripts/check-vendor.sh "$UP"`, and confirm `::error file=third_party/verifiable-receipts/ontology.md::differs from VR_REF`; then `show docs/ontology.md > third_party/verifiable-receipts/ontology.md` and rerun to the `matches` line.
 - [ ] **Step 7:** prove the guards bite. Run each case in a scratch copy of the repository, so the real files are never touched; each must exit 1 with the `::error` shown, and the unchanged copy must still pass:
@@ -703,8 +704,13 @@ case_ ":" "$CLONE"                                          # VR_REF::the upstre
 - [ ] **Step 8:** commit, and confirm the script is committed executable:
 
 ```bash
+git add scripts/check-vendor.sh third_party/verifiable-receipts test/fixtures/conformance test/fixtures/schemas
+git status --short   # expect nothing unstaged and nothing untracked but uv.lock, if uv left one
+```
+
+```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "Vendor verifiable-receipts at VR_REF, with a drift check" -m "The conformance fixtures and key, the schema examples, docs/ontology.md and the original verify-v2.mjs and its types, byte for byte; SHA-256 of the two sources the browser ports are made from. scripts/check-vendor.sh compares them all with a checkout at VR_REF and fails closed: exact file sets, exact SHA256SUMS paths, the upstream HEAD, and where it runs." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "Vendor verifiable-receipts at VR_REF, with a drift check" -m "The conformance fixtures and key, the schema examples, docs/ontology.md and the original verify-v2.mjs and its types, byte for byte; SHA-256 of the three sources the browser ports are made from (verify-v2.mjs, transparency.ts, and hash.ts, whose isHashHex the transparency port inlines). scripts/check-vendor.sh compares them all with a checkout at VR_REF and fails closed: exact file sets, exact SHA256SUMS paths, the upstream HEAD, and where it runs." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 ```bash
 git ls-files -s scripts/check-vendor.sh   # expect: 100755 …
@@ -1349,7 +1355,7 @@ fails.
 npm test
 ```
 
-Expected: fails, `ERR_MODULE_NOT_FOUND` for `src/keys.ts`.
+Expected: fails with `ERR_MODULE_NOT_FOUND` for `src/bytes.ts` (three test files import it first), `src/vendor/verifiable-receipts/receipt.ts` and `src/vendor/verifiable-receipts/transparency.ts`.
 
 - [ ] **Step 3:** write the byte helpers and the two ports. Each port's header states what changed from its source:
 
@@ -1469,9 +1475,14 @@ export async function ed25519Verify(key: CryptoKey, signature: Uint8Array<ArrayB
 // as SIGNATURE_MISMATCH_REASON. When the browser has no WebCrypto Ed25519,
 // verifyV2Receipt throws Ed25519Unavailable instead of answering. No change
 // to the checks, their order or their failure reasons.
-// Changed in the comments only: the original's sentence on Go's
-// Receipt.UnmarshalJSON, and its paragraph on integers beyond 2^53 in the
-// Python and Go verifiers, are dropped; they describe the other verifiers.
+// Changed in the comments only: the opening paragraph, on the conformance
+// harness that uses the original, is rewritten for this port; the
+// original's sentence on Go's Receipt.UnmarshalJSON, its paragraph on
+// integers beyond 2^53 in the Python and Go verifiers, and parseReceipt's
+// mention of Python's parse_receipt and Go's ParseReceipt are dropped,
+// since they describe the other verifiers; and the JSDoc @param and
+// @returns tags of parseReceipt and verifyV2Receipt are dropped, since
+// TypeScript states the types.
 
 /**
  * The v2 (Ed25519) receipt verifier of the verifiable-receipts conformance
@@ -2020,7 +2031,7 @@ async function readKey(body: string, source: string, n: number, seen: readonly P
 }
 ```
 
-- [ ] **Step 6:** add the ports to the drift check. In `scripts/check-vendor.sh`, insert this just before the last line (`echo "every vendored file matches …"`):
+- [ ] **Step 6:** add the ports to the drift check. In `scripts/check-vendor.sh`, insert this directly after the blank line that follows the schema-examples loop, so that it ends right before the last line (`echo "every vendored file matches verifiable-receipts at $ref"`), with no blank line between them:
 
 ```bash
 # The ports: exactly these files, each naming VR_REF.
@@ -2041,7 +2052,7 @@ case_ "rm -r src/vendor"                                   # src/vendor/verifiab
 case_ "sed -i '' 's|VR_REF|REF|g' src/vendor/verifiable-receipts/receipt.ts"   # …/receipt.ts::does not name …
 ```
 
-Expected: the `matches` line, then `exit 1` with each `::error`.
+Expected: `every vendored file matches verifiable-receipts at 24f5c4780dba7c4f76b159b7f7844e17d0226cd6`, then `exit 1` with each `::error`.
 
 - [ ] **Step 7:** run the whole check:
 
@@ -2076,6 +2087,11 @@ Expected: tsc and ESLint print nothing; `# pass 91`, `# fail 0` (31 conformance:
 | unavailable as a damaged key | `src/keys.ts` `readKey` | delete `if (isUnsupported(e)) throw new Ed25519Unavailable();` | `test/keys.test.ts` |
 
 - [ ] **Step 10:** commit:
+
+```bash
+git add scripts/check-vendor.sh src/bytes.ts src/keys.ts src/vendor test/helpers.ts test/conformance.test.ts test/keys.test.ts test/lint.test.ts test/bytes.test.ts test/transparency.test.ts test/ed25519.test.ts test/fixtures/ed25519
+git status --short   # expect nothing left over
+```
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
@@ -2127,10 +2143,17 @@ export const mutation = fc.oneof(
   fc.record({ kind: fc.constant("set" as const), field: fc.string({ maxLength: 8 }), value: fc.jsonValue({ maxDepth: 2 }) }),
   fc.record({ kind: fc.constant("respell" as const), suffix: fc.constantFrom("\n", " ", "=", "A") }),
   fc.record({ kind: fc.constant("hash" as const), value: fc.constantFrom("", null, 0, false, "sha256:", "SHA256:", []) }),
+  // The same bytes in a spelling no signer writes: the signature's last base64
+  // character before "==" with non-zero padding bits, or the content hash in
+  // upper case. Every canonical-spelling check then meets one on most runs.
+  fc.record({ kind: fc.constant("padbits" as const), low: fc.integer({ min: 1, max: 15 }) }),
+  fc.record({ kind: fc.constant("upperhash" as const) }),
   fc.record({ kind: fc.constant("set" as const), field: fc.constantFrom("nest", "extra"), value: fc.integer({ min: 62, max: 66 }).map(nested) }),
 );
 
-export type Mutation = { kind: "none" } | { kind: "char"; field: string; pos: number; delta: number } | { kind: "drop"; field: string } | { kind: "set"; field: string; value: unknown } | { kind: "respell"; suffix: string } | { kind: "hash"; value: unknown };
+export type Mutation = { kind: "none" } | { kind: "char"; field: string; pos: number; delta: number } | { kind: "drop"; field: string } | { kind: "set"; field: string; value: unknown } | { kind: "respell"; suffix: string } | { kind: "hash"; value: unknown } | { kind: "padbits"; low: number } | { kind: "upperhash" };
+
+const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 export function mutate(receipt: Record<string, unknown>, m: Mutation): Record<string, unknown> {
   const r = { ...receipt };
@@ -2155,6 +2178,18 @@ export function mutate(receipt: Record<string, unknown>, m: Mutation): Record<st
       return r;
     case "hash":
       r.contentHash = m.value;
+      return r;
+    case "padbits": {
+      // A 64-byte signature ends in one character and "==": that character's low four bits are padding.
+      const sig = typeof r.signature === "string" ? r.signature : "";
+      const i = sig.length - 3;
+      const v = B64.indexOf(sig.charAt(i));
+      if (!sig.endsWith("==") || v < 0) return r;
+      r.signature = sig.slice(0, i) + B64.charAt((v & 0x30) | m.low) + sig.slice(i + 1);
+      return r;
+    }
+    case "upperhash":
+      if (typeof r.contentHash === "string") r.contentHash = r.contentHash.toUpperCase();
       return r;
   }
 }
@@ -2292,9 +2327,9 @@ describe("jsonEqual is bounded", () => {
 FC_NUM_RUNS=2000 node --test test/port.properties.test.ts 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 4`, `# fail 0`, in about ten seconds.
+Expected: `# pass 4`, `# fail 0`, in about 2.5 seconds.
 
-- [ ] **Step 3:** prove the property catches a broken port, three ways, restoring each change before the next. In `src/bytes.ts`, delete the line `if (toBase64(out) !== text) throw …` in `fromBase64`, rerun the command, and confirm `# fail 1`, with a counterexample that changes one character of the signature: a spelling with a non-zero padding bit, which the original rejects and the broken port accepts. In `src/bytes.ts`, change `utf8`'s `return encoder.encode(text);` to `return Uint8Array.from(text, (c) => c.charCodeAt(0) & 0xff);` and confirm `# fail 1`: the bodies use all of Unicode (`unit: "binary"`), so text beyond Latin-1 must be signed as UTF-8. Then change `if (contentHash != null) {` to `if (contentHash) {`, the rule before `fix/empty-contenthash`, rerun `node --test test/port.properties.test.ts`, and confirm `# fail 1` with a counterexample ending `{"kind":"hash","value":""}`; restore it. Then the two rules of PR #26, each with the command above (2,000 runs) and restored after: delete `if (nestsTooDeep(receipt)) return { ok: false, reason: "receipt nesting deeper than 64" };` from `verifyV2Receipt` and confirm `# fail 2` (the deep bodies, and a field set 62 to 66 arrays deep); delete `if (keyProblem) return { ok: false, reason: keyProblem };` and confirm `# fail 1` (the weak-key property). Also move the canonical depth check before `ed25519KeyProblem` and confirm `# fail 1`: the original counts the canonical only after the signature, so the order matters.
+- [ ] **Step 3:** prove the property catches a broken port, three ways, restoring each change before the next. In `src/bytes.ts`, delete the line `if (toBase64(out) !== text) throw …` in `fromBase64`, rerun the command, and confirm `# fail 1`, with a counterexample holding a `padbits` change: the signature's last character before `==` respelled with non-zero padding bits, which the original rejects and the broken port accepts. The `padbits` and `upperhash` kinds aim at the canonical-spelling checks, so this mutant fails every run at 2,000 cases: the prototype ran it ten times and it failed ten times (without them, six times in ten). In `src/bytes.ts`, change `utf8`'s `return encoder.encode(text);` to `return Uint8Array.from(text, (c) => c.charCodeAt(0) & 0xff);` and confirm `# fail 1`: the bodies use all of Unicode (`unit: "binary"`), so text beyond Latin-1 must be signed as UTF-8. Then change `if (contentHash != null) {` to `if (contentHash) {`, the rule before `fix/empty-contenthash`, rerun `node --test test/port.properties.test.ts`, and confirm `# fail 1` with a counterexample ending `{"kind":"hash","value":""}`; restore it. Then the two rules of PR #26, each with the command above (2,000 runs) and restored after: delete `if (nestsTooDeep(receipt)) return { ok: false, reason: "receipt nesting deeper than 64" };` from `verifyV2Receipt` and confirm `# fail 2` (the deep bodies, and a field set 62 to 66 arrays deep); delete `if (keyProblem) return { ok: false, reason: keyProblem };` and confirm `# fail 1` (the weak-key property). Also move the canonical depth check before `ed25519KeyProblem` and confirm `# fail 1`: the original counts the canonical only after the signature, so the order matters.
 - [ ] **Step 4:** run the whole check (npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'): `# pass 95`, `# fail 0`.
 - [ ] **Step 5:** commit:
 
@@ -2308,6 +2343,9 @@ git commit --author="$A" -m "Property tests: the port agrees with the original v
 **Files:**
 - Create: `scripts/make-stub-log.mjs`, `test/fixtures/log/README.md`; generated: `test/fixtures/log/*.json`, `test/fixtures/log/*.pem`
 - Create: `test/signature.test.ts`, `test/tree-head.test.ts`, `src/signature.ts`, `src/tree-head.ts`
+- Modify: `test/helpers.ts` (adds `WELL_FORMED_V3`)
+
+As built, after the review of this task: the field checks of a tree head are shared by `checkTreeHead` and `canonicalTreeHead`, and follow verifiable-receipts' `bin/witness.mjs` (`sthShapeError`): a `logId` free of the control characters, line separators and text-direction marks of its `UNSAFE_TEXT`; a timestamp that is a real instant, exactly as `toISOString` writes it; and, for an empty tree, the root `SHA-256("")`. A `v2=` signature must decode to exactly 64 bytes, with its own reason (`bad-length`). A `v3=` signature is reported as v3 only in its one well-formed shape (`WELL_FORMED_V3`); any other `v3=` is not a v2 signature. `checkTreeHead` and `verifyV2Text` take a `PublicKey`, not a bare `CryptoKey`.
 
 - [ ] **Step 1:** write the generator of the recorded log answers and its README, then run it:
 
@@ -2448,6 +2486,13 @@ Expected: `wrote …/test/fixtures/log/`, then `README.md`, `busy.json`, `cosign
 
 - [ ] **Step 2:** write the tests:
 
+In `test/helpers.ts`, add this after the `LOG` line:
+
+```ts
+/** A v3= signature in the one shape verifiable-receipts accepts: 64 bytes, ".", then 3,309 bytes. */
+export const WELL_FORMED_V3 = "v3=" + "A".repeat(85) + "A==." + "A".repeat(4412);
+```
+
 `test/signature.test.ts`:
 
 ```ts
@@ -2458,32 +2503,46 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { parseV2Signature, verifyV2Text } from "../src/signature.ts";
-import { LOG, keyFrom, readJson } from "./helpers.ts";
+import { LOG, WELL_FORMED_V3, keyFrom, readJson } from "./helpers.ts";
 
 const SCHEMA_EXAMPLES = new URL("./fixtures/schemas/", import.meta.url);
 const cosignature = readJson(SCHEMA_EXAMPLES, "cosignature.json") as { sthCanonical: string; signature: string };
 const sth = readJson(LOG, "sth.json") as { canonical: string; signature: string };
 
+/** "v2=" and the base64 of `n` zero bytes. */
+const v2Of = (n: number): string => "v2=" + Buffer.alloc(n).toString("base64");
+
 describe("v2= signatures", () => {
   it("reads the schema example's signature as well formed, but it is not over its text", async () => {
     assert.equal(parseV2Signature(cosignature.signature).ok, true);
     const w1 = await keyFrom(LOG, "witness-1.pem");
-    assert.equal(await verifyV2Text(cosignature.signature, cosignature.sthCanonical, w1.key), false);
+    assert.equal(await verifyV2Text(cosignature.signature, cosignature.sthCanonical, w1), false);
   });
 
   it("verifies the stub log's tree head under its key, and not under another", async () => {
-    assert.equal(await verifyV2Text(sth.signature, sth.canonical, (await keyFrom(LOG, "log-public-key.pem")).key), true);
-    assert.equal(await verifyV2Text(sth.signature, sth.canonical, (await keyFrom(LOG, "other-public-key.pem")).key), false);
+    assert.equal(await verifyV2Text(sth.signature, sth.canonical, await keyFrom(LOG, "log-public-key.pem")), true);
+    assert.equal(await verifyV2Text(sth.signature, sth.canonical, await keyFrom(LOG, "other-public-key.pem")), false);
+  });
+
+  it("reads 64 bytes as well formed", () => {
+    const parsed = parseV2Signature(v2Of(64));
+    assert.ok(parsed.ok);
+    assert.equal(parsed.bytes.length, 64);
   });
 
   for (const [name, value, problem] of [
     ["nothing", undefined, "missing"],
     ["an empty string", "", "missing"],
-    ["a v3= signature", "v3=AAAA.BBBB", "v3"],
+    ["a v3= signature", WELL_FORMED_V3, "v3"],
+    ["a v3= prefix on something that is not a v3= signature", "v3=AAAA.BBBB", "not-v2"],
+    ["a v3= signature one character short", WELL_FORMED_V3.slice(0, -1), "not-v2"],
     ["another prefix", "v1=AAAA", "not-v2"],
     ["URL-safe base64", "v2=-_-_", "bad-base64"],
     ["a line break", "v2=AAAA\nAAAA", "bad-base64"],
     ["non-zero padding bits", "v2=AB==", "not-canonical"],
+    ["no bytes after v2=", "v2=", "bad-length"],
+    ["63 bytes", v2Of(63), "bad-length"],
+    ["65 bytes", v2Of(65), "bad-length"],
   ] as const) {
     it(`names the problem with ${name}`, () => {
       assert.deepEqual(parseV2Signature(value), { ok: false, problem });
@@ -2499,14 +2558,16 @@ describe("v2= signatures", () => {
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
-import { canonicalTreeHead, checkTreeHead } from "../src/tree-head.ts";
-import { LOG, keyFrom, readJson } from "./helpers.ts";
+import { EMPTY_ROOT, canonicalTreeHead, checkTreeHead } from "../src/tree-head.ts";
+import { LOG, WELL_FORMED_V3, keyFrom, makeKey, readJson } from "./helpers.ts";
 
 const SCHEMA_EXAMPLES = new URL("./fixtures/schemas/", import.meta.url);
 const logKey = await keyFrom(LOG, "log-public-key.pem");
 const sth = readJson(LOG, "sth.json") as Record<string, unknown>;
+const forged = readJson(LOG, "sth-forged.json") as Record<string, unknown>;
 
 /** The same 64 bytes in a spelling no signer writes: a non-zero padding bit. */
 function respell(signature: string): string {
@@ -2515,21 +2576,60 @@ function respell(signature: string): string {
   return signature.slice(0, i) + (B64[B64.indexOf(signature.charAt(i)) | 1] ?? "") + signature.slice(i + 1);
 }
 
+/** A tree head's canonical text, written as the log writes it. */
+function canon(h: Record<string, unknown>): string {
+  return JSON.stringify({ logId: h.logId, rootHash: h.rootHash, timestamp: h.timestamp, treeSize: h.treeSize, v: h.v });
+}
+
+/** Control characters, C1, line separators and text-direction marks: witness.mjs refuses each in a logId. */
+const UNSAFE_LOG_IDS = ["stub\u0000log", "stub\u001blog", "stub\u007flog", "stub\u0085log", "stub\u2028log", "stub\u2029log", "stub\u200elog", "stub\u202elog", "stub\u2066log"];
+
+/** Timestamps in the right form that are not a real instant, or not as toISOString writes it. */
+const IMPOSSIBLE_TIMESTAMPS = [
+  ["30 February", "2026-02-30T12:00:00.000Z"],
+  ["hour 25", "2026-10-23T25:00:00.000Z"],
+  ["hour 24", "2026-10-23T24:00:00.000Z"],
+  ["second 60", "2026-10-23T12:00:60.000Z"],
+  ["month 13", "2026-13-23T12:00:00.000Z"],
+] as const;
+
+const NOT_EMPTY_ROOT = sth.rootHash as string;
+
+describe("EMPTY_ROOT", () => {
+  it("is the SHA-256 of no bytes", () => {
+    assert.equal(EMPTY_ROOT, createHash("sha256").digest("hex"));
+  });
+});
+
 describe("checkTreeHead", () => {
   it("passes the stub log's tree head under its key", async () => {
-    const r = await checkTreeHead(sth, logKey.key);
+    const r = await checkTreeHead(sth, logKey);
     assert.equal(r.status, "passed");
   });
 
   it("passes it without the optional canonical field", async () => {
     const rest = Object.fromEntries(Object.entries(sth).filter(([k]) => k !== "canonical"));
-    assert.equal((await checkTreeHead(rest, logKey.key)).status, "passed");
+    assert.equal((await checkTreeHead(rest, logKey)).status, "passed");
+  });
+
+  it("passes an empty tree whose root is the SHA-256 of no bytes", async () => {
+    const { privateKey, publicKey } = await makeKey();
+    const head = { v: 1, logId: "empty-log", treeSize: 0, rootHash: EMPTY_ROOT, timestamp: "2026-10-23T12:00:00.000Z" };
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: "Ed25519" }, privateKey, new TextEncoder().encode(canon(head))));
+    const r = await checkTreeHead({ ...head, signature: "v2=" + Buffer.from(sig).toString("base64") }, publicKey);
+    assert.equal(r.status, "passed");
   });
 
   it("fails the schema example: right shape, but its signature is not over it", async () => {
-    const r = await checkTreeHead(readJson(SCHEMA_EXAMPLES, "tree-head.json"), logKey.key);
+    const r = await checkTreeHead(readJson(SCHEMA_EXAMPLES, "tree-head.json"), logKey);
     assert.ok(r.status === "failed");
     assert.match(r.reason, /does not verify under the log key/);
+  });
+
+  it("fails forged fields sent with the genuine canonical text and signature", async () => {
+    const r = await checkTreeHead({ ...sth, rootHash: forged.rootHash }, logKey);
+    assert.ok(r.status === "failed");
+    assert.match(r.reason, /canonical text does not match its own fields/);
   });
 
   for (const [name, change, reason] of [
@@ -2538,24 +2638,31 @@ describe("checkTreeHead", () => {
     ["uppercase hex", { rootHash: (sth.rootHash as string).toUpperCase() }, /64 lowercase hex/],
     ["a fractional size", { treeSize: 1.5 }, /whole number/],
     ["a size beyond 2^53 - 1", { treeSize: 2 ** 53 }, /whole number/],
-    ["a timestamp without milliseconds", { timestamp: "2026-10-23T12:00:00Z" }, /timestamp/],
+    ["a timestamp without milliseconds", { timestamp: "2026-10-23T12:00:00Z" }, /timestamp is not a real time/],
+    ...IMPOSSIBLE_TIMESTAMPS.map(([what, timestamp]) => [`a timestamp on ${what}`, { timestamp }, /timestamp is not a real time/] as const),
+    ...UNSAFE_LOG_IDS.map((logId) => [`a logId with U+${logId.codePointAt(4)?.toString(16).padStart(4, "0") ?? ""}`, { logId }, /logId contains control characters/] as const),
+    ["size 0 and a root that is not the empty tree's", { treeSize: 0, rootHash: NOT_EMPTY_ROOT }, /says the log is empty/],
     ["a canonical that is not its fields", { canonical: "{}" }, /canonical text does not match/],
     ["a non-canonical signature spelling", { signature: respell(sth.signature as string) }, /well-formed v2=/],
+    ["a v3= prefix on something that is not a v3= signature", { signature: "v3=AAAA.BBBB" }, /well-formed v2=/],
+    ["a signature of 63 bytes", { signature: "v2=" + Buffer.alloc(63).toString("base64") }, /not 64 bytes/],
+    ["a signature of 65 bytes", { signature: "v2=" + Buffer.alloc(65).toString("base64") }, /not 64 bytes/],
+    ["an empty v2= signature", { signature: "v2=" }, /not 64 bytes/],
   ] as const) {
     it(`fails a tree head with ${name}`, async () => {
-      const r = await checkTreeHead({ ...sth, ...change }, logKey.key);
+      const r = await checkTreeHead({ ...sth, ...change }, logKey);
       assert.ok(r.status === "failed");
       assert.match(r.reason, reason);
     });
   }
 
   it("does not run on a v3= tree head, rather than failing it", async () => {
-    const r = await checkTreeHead({ ...sth, signature: "v3=AAAA.BBBB" }, logKey.key);
+    const r = await checkTreeHead({ ...sth, signature: WELL_FORMED_V3 }, logKey);
     assert.equal(r.status, "not-run");
   });
 
   it("fails anything that is not an object", async () => {
-    for (const v of [null, [], "sth", 3]) assert.equal((await checkTreeHead(v, logKey.key)).status, "failed");
+    for (const v of [null, [], "sth", 3]) assert.equal((await checkTreeHead(v, logKey)).status, "failed");
   });
 });
 
@@ -2564,12 +2671,20 @@ describe("canonicalTreeHead", () => {
   it("reads the canonical text of a tree head", () => {
     assert.deepEqual(canonicalTreeHead(text), { v: 1, logId: "stub-log", treeSize: 3, rootHash: sth.rootHash, timestamp: sth.timestamp });
   });
+  it("reads the canonical text of an empty tree", () => {
+    const empty = { ...sth, treeSize: 0, rootHash: EMPTY_ROOT };
+    assert.equal(canonicalTreeHead(canon(empty))?.treeSize, 0);
+  });
   for (const [name, changed] of [
     ["a space added", text.replace(":3,", ": 3,")],
     ["keys in another order", JSON.stringify({ v: 1, logId: "stub-log", rootHash: sth.rootHash, timestamp: sth.timestamp, treeSize: 3 })],
     ["an extra field", text.replace('"v":1}', '"v":1,"x":0}')],
     ["uppercase hex", text.replace(sth.rootHash as string, (sth.rootHash as string).toUpperCase())],
     ["text that is not JSON", "{"],
+    ["a timestamp without milliseconds", canon({ ...sth, timestamp: "2026-10-23T12:00:00Z" })],
+    ...IMPOSSIBLE_TIMESTAMPS.map(([what, timestamp]) => [`a timestamp on ${what}`, canon({ ...sth, timestamp })] as const),
+    ...UNSAFE_LOG_IDS.map((logId) => [`a logId with U+${logId.codePointAt(4)?.toString(16).padStart(4, "0") ?? ""}`, canon({ ...sth, logId })] as const),
+    ["size 0 and a root that is not the empty tree's", canon({ ...sth, treeSize: 0, rootHash: NOT_EMPTY_ROOT })],
   ] as const) {
     it(`rejects ${name}`, () => {
       assert.equal(canonicalTreeHead(changed), undefined);
@@ -2578,7 +2693,7 @@ describe("canonicalTreeHead", () => {
 });
 ```
 
-- [ ] **Step 3:** run `npm test`. Expected: fails, `ERR_MODULE_NOT_FOUND` for `src/signature.ts`.
+- [ ] **Step 3:** run `npm test`. Expected: fails with `ERR_MODULE_NOT_FOUND` for `src/signature.ts` and `src/tree-head.ts`.
 - [ ] **Step 4:** write the code:
 
 `src/signature.ts`:
@@ -2592,31 +2707,40 @@ describe("canonicalTreeHead", () => {
 // in its one valid spelling. Used for receipts, tree heads and
 // cosignatures.
 import { ed25519Verify, fromBase64, utf8 } from "./bytes.ts";
+import type { PublicKey } from "./keys.ts";
 
 const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// The one shape of a v3= signature (verifiable-receipts bin/witness.mjs,
+// V3_SIGNATURE, at VR_REF): a 64-byte Ed25519 half, ".", and a 3,309-byte
+// ML-DSA-65 half. Anything else after "v3=" is not a v3= signature, and
+// is reported as not a v2= one.
+const V3_SIGNATURE = /^v3=[A-Za-z0-9+/]{85}[AQgw]==\.[A-Za-z0-9+/]{4412}$/;
+const ED25519_SIGNATURE_BYTES = 64;
 
 export type ParsedSignature =
   | { ok: true; bytes: Uint8Array<ArrayBuffer> }
-  | { ok: false; problem: "missing" | "v3" | "not-v2" | "bad-base64" | "not-canonical" };
+  | { ok: false; problem: "missing" | "v3" | "not-v2" | "bad-base64" | "not-canonical" | "bad-length" };
 
 export function parseV2Signature(signature: unknown): ParsedSignature {
   if (typeof signature !== "string" || signature === "") return { ok: false, problem: "missing" };
-  if (signature.startsWith("v3=")) return { ok: false, problem: "v3" };
+  if (V3_SIGNATURE.test(signature)) return { ok: false, problem: "v3" };
   if (!signature.startsWith("v2=")) return { ok: false, problem: "not-v2" };
   const body = signature.slice(3);
   if (!STANDARD_BASE64.test(body)) return { ok: false, problem: "bad-base64" };
+  let bytes: Uint8Array<ArrayBuffer>;
   try {
     // Once the pattern has passed, fromBase64 throws only for a spelling with non-zero padding bits.
-    return { ok: true, bytes: fromBase64(body) };
+    bytes = fromBase64(body);
   } catch {
     return { ok: false, problem: "not-canonical" };
   }
+  return bytes.length === ED25519_SIGNATURE_BYTES ? { ok: true, bytes } : { ok: false, problem: "bad-length" };
 }
 
 /** True iff `signature` is a well-spelled v2= signature over the UTF-8 bytes of `text` under `key`. */
-export async function verifyV2Text(signature: unknown, text: string, key: CryptoKey): Promise<boolean> {
+export async function verifyV2Text(signature: unknown, text: string, key: PublicKey): Promise<boolean> {
   const parsed = parseV2Signature(signature);
-  return parsed.ok && (await ed25519Verify(key, parsed.bytes, utf8(text)));
+  return parsed.ok && (await ed25519Verify(key.key, parsed.bytes, utf8(text)));
 }
 ```
 
@@ -2627,20 +2751,67 @@ export async function verifyV2Text(signature: unknown, text: string, key: Crypto
 // SPDX-License-Identifier: Apache-2.0
 
 // Checks a signed tree head from a log: the shape that
-// schemas/tree-head.schema.json (verifiable-receipts) states, the canonical
-// text rebuilt from the fields, and the log's v2= signature over it.
+// schemas/tree-head.schema.json (verifiable-receipts) states, with the
+// field checks of bin/witness.mjs's sthShapeError, the canonical text
+// rebuilt from the fields, and the log's v2= signature over it.
+import type { PublicKey } from "./keys.ts";
 import { verifyV2Text, parseV2Signature } from "./signature.ts";
 import { canonicalizeSth, isCount, isHashHex, type SignedTreeHead } from "./vendor/verifiable-receipts/transparency.ts";
 
+/** The root of the empty tree: the SHA-256 of no bytes (RFC 6962 section 2.1). */
+export const EMPTY_ROOT = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 const FIELDS = new Set(["v", "logId", "treeSize", "rootHash", "timestamp", "signature", "canonical"]);
 const TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+
+/**
+ * Control characters (C0, DEL and C1), the line separators U+2028 and
+ * U+2029, and the bidirectional controls, which can make a logId read as
+ * something other than its bytes. Copied from verifiable-receipts
+ * bin/witness.mjs (UNSAFE_TEXT) at VR_REF.
+ */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/;
 
 export type TreeHeadCheck =
   | { status: "passed"; sth: Required<SignedTreeHead>; canonical: string }
   | { status: "failed" | "not-run"; reason: string };
 
+type TreeHeadFields = Omit<SignedTreeHead, "signature">;
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** A real instant, written exactly as Date.prototype.toISOString writes it. */
+function isIsoTimestamp(t: unknown): t is string {
+  return typeof t === "string" && TIMESTAMP.test(t) && !Number.isNaN(Date.parse(t)) && new Date(t).toISOString() === t;
+}
+
+/**
+ * The signed fields of `value`, or why they are not a tree head's: the
+ * field checks of sthShapeError (verifiable-receipts bin/witness.mjs), in
+ * the explorer's words. Shared by checkTreeHead and canonicalTreeHead.
+ */
+function treeHeadFields(value: Record<string, unknown>): { ok: true; fields: TreeHeadFields } | { ok: false; reason: string } {
+  const { v, logId, treeSize, rootHash, timestamp } = value;
+  if (v !== 1) return { ok: false, reason: "The tree head is not version 1." };
+  if (typeof logId !== "string" || logId === "") return { ok: false, reason: "The tree head has no logId." };
+  if (UNSAFE_TEXT.test(logId)) {
+    return {
+      ok: false,
+      reason: "The tree head's logId contains control characters, line separators or text-direction marks, which can make it read as another name.",
+    };
+  }
+  if (!isCount(treeSize)) return { ok: false, reason: "The tree head's treeSize is not a whole number from 0 to 2^53 − 1." };
+  if (!isHashHex(rootHash)) return { ok: false, reason: "The tree head's rootHash is not 64 lowercase hex digits." };
+  if (treeSize === 0 && rootHash !== EMPTY_ROOT) {
+    return { ok: false, reason: "The tree head says the log is empty, but its rootHash is not the empty tree's (the SHA-256 of no bytes)." };
+  }
+  if (!isIsoTimestamp(timestamp)) {
+    return { ok: false, reason: "The tree head's timestamp is not a real time written in the form 2026-10-23T12:00:00.000Z." };
+  }
+  return { ok: true, fields: { v, logId, treeSize, rootHash, timestamp } };
 }
 
 /**
@@ -2649,7 +2820,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
  * be byte for byte the text canonicalizeSth rebuilds from them. Used for
  * the text a cosignature covers, which is never trusted as sent.
  */
-export function canonicalTreeHead(text: string): Omit<SignedTreeHead, "signature"> | undefined {
+export function canonicalTreeHead(text: string): TreeHeadFields | undefined {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -2657,29 +2828,22 @@ export function canonicalTreeHead(text: string): Omit<SignedTreeHead, "signature
     return undefined;
   }
   if (!isObject(value)) return undefined;
-  const { v, logId, treeSize, rootHash, timestamp } = value;
-  if (v !== 1 || typeof logId !== "string" || logId === "" || !isCount(treeSize) || !isHashHex(rootHash)) return undefined;
-  if (typeof timestamp !== "string" || !TIMESTAMP.test(timestamp)) return undefined;
-  const fields = { v, logId, treeSize, rootHash, timestamp } as const;
-  return canonicalizeSth(fields) === text ? fields : undefined;
+  const read = treeHeadFields(value);
+  if (!read.ok) return undefined;
+  return canonicalizeSth(read.fields) === text ? read.fields : undefined;
 }
 
 /** Checks `value`, a log's answer to GET /v1/sth, against the log's key. */
-export async function checkTreeHead(value: unknown, logKey: CryptoKey): Promise<TreeHeadCheck> {
+export async function checkTreeHead(value: unknown, logKey: PublicKey): Promise<TreeHeadCheck> {
   if (!isObject(value)) return { status: "failed", reason: "The log's answer is not a tree head: it is not a JSON object." };
   for (const field of Object.keys(value)) {
     if (!FIELDS.has(field)) {
       return { status: "failed", reason: `The tree head has a field its signature does not cover: "${field}".` };
     }
   }
-  const { v, logId, treeSize, rootHash, timestamp, signature, canonical } = value;
-  if (v !== 1) return { status: "failed", reason: "The tree head is not version 1." };
-  if (typeof logId !== "string" || logId === "") return { status: "failed", reason: "The tree head has no logId." };
-  if (!isCount(treeSize)) return { status: "failed", reason: "The tree head's treeSize is not a whole number from 0 to 2^53 − 1." };
-  if (!isHashHex(rootHash)) return { status: "failed", reason: "The tree head's rootHash is not 64 lowercase hex digits." };
-  if (typeof timestamp !== "string" || !TIMESTAMP.test(timestamp)) {
-    return { status: "failed", reason: "The tree head's timestamp is not in the form 2026-10-23T12:00:00.000Z." };
-  }
+  const read = treeHeadFields(value);
+  if (!read.ok) return { status: "failed", reason: read.reason };
+  const { signature, canonical } = value;
   const parsed = parseV2Signature(signature);
   if (!parsed.ok) {
     if (parsed.problem === "v3") {
@@ -2688,19 +2852,25 @@ export async function checkTreeHead(value: unknown, logKey: CryptoKey): Promise<
         reason: "This log signs its tree heads with v3= (Ed25519 and ML-DSA-65), which this page cannot check yet. Use the verifiable-receipts library to check it.",
       };
     }
+    if (parsed.problem === "bad-length") {
+      return {
+        status: "failed",
+        reason: "The tree head's signature is not 64 bytes long, the size of every Ed25519 signature, so the log sent a damaged signature.",
+      };
+    }
     return { status: "failed", reason: "The tree head's signature is missing or is not a well-formed v2= signature." };
   }
-  const rebuilt = canonicalizeSth({ v, logId, treeSize, rootHash, timestamp });
+  const rebuilt = canonicalizeSth(read.fields);
   if (canonical !== undefined && canonical !== rebuilt) {
     return { status: "failed", reason: "The tree head's canonical text does not match its own fields." };
   }
-  if (typeof signature !== "string" || !(await verifyV2Text(signature, rebuilt, logKey))) {
+  if (!(await verifyV2Text(signature, rebuilt, logKey))) {
     return {
       status: "failed",
       reason: "The tree head's signature does not verify under the log key you gave. Check that you have this log's key, not the issuer's.",
     };
   }
-  return { status: "passed", sth: { v, logId, treeSize, rootHash, timestamp, signature }, canonical: rebuilt };
+  return { status: "passed", sth: { ...read.fields, signature: signature as string }, canonical: rebuilt };
 }
 ```
 
@@ -2710,9 +2880,14 @@ export async function checkTreeHead(value: unknown, logKey: CryptoKey): Promise<
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 123`, `# fail 0`.
+Expected: `# pass 168`, `# fail 0`.
 
 - [ ] **Step 6:** commit:
+
+```bash
+git add scripts/make-stub-log.mjs test/fixtures/log src/signature.ts src/tree-head.ts test/helpers.ts test/signature.test.ts test/tree-head.test.ts
+git status --short   # expect nothing left over
+```
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
@@ -2723,6 +2898,8 @@ git commit --author="$A" -m "Tree heads: shape, canonical text and the log's v2=
 
 **Files:**
 - Create: `test/log-client.test.ts`, `test/input.test.ts`, `src/log-client.ts`, `src/input.ts`
+
+As built, after the review of this task: the client reads at most 1,000,000 bytes of an answer, refusing one whose `content-length` says more before reading it and cancelling the reader at the limit, under one 15 s timer for headers and body; an answer too large, or not JSON, is a third outcome, `unreadable`, with its own sentence (Task 7 shows it as not run, with a retry); queries are built with `URLSearchParams` from checked values, and `LogClient` re-checks its base. The receipt reader drops one leading byte order mark, says when the text looks like receipts one per line, and words its list messages for pasted text, not files.
 
 - [ ] **Step 1:** write the tests:
 
@@ -2735,9 +2912,10 @@ git commit --author="$A" -m "Tree heads: shape, canonical text and the log's v2=
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { LogClient, logError, type Fetcher } from "../src/log-client.ts";
+import { LogClient, MAX_BODY_BYTES, logError, type Fetcher } from "../src/log-client.ts";
 
 const BASE = new URL("https://example.org/log/");
+const LEAF = "ab".repeat(32);
 
 function answering(body: string, status = 200, seen: { url: string; init: RequestInit }[] = []): Fetcher {
   return (url, init) => {
@@ -2746,18 +2924,35 @@ function answering(body: string, status = 200, seen: { url: string; init: Reques
   };
 }
 
+/** A body that sends 64 KiB chunks for as long as it is read, and records being cancelled. */
+function endless(): { stream: ReadableStream<Uint8Array>; cancelled: () => boolean; sent: () => number } {
+  let cancelled = false;
+  let sent = 0;
+  const chunk = new Uint8Array(65_536).fill(0x20);
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      sent += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  return { stream, cancelled: () => cancelled, sent: () => sent };
+}
+
 describe("LogClient", () => {
   it("asks with GET only, no credentials, no referrer, no cache and no redirects, under the base path", async () => {
     const seen: { url: string; init: RequestInit }[] = [];
     const client = new LogClient(BASE, answering("{}", 200, seen));
     await client.sth();
-    await client.inclusion("ab".repeat(32), 7);
+    await client.inclusion(LEAF, 7);
     await client.cosignatures(7);
     assert.deepEqual(
       seen.map((s) => s.url),
       [
         "https://example.org/log/v1/sth",
-        `https://example.org/log/v1/proof/inclusion?leafHash=${"ab".repeat(32)}&treeSize=7`,
+        `https://example.org/log/v1/proof/inclusion?leafHash=${LEAF}&treeSize=7`,
         "https://example.org/log/v1/cosignatures?treeSize=7",
       ],
     );
@@ -2772,6 +2967,25 @@ describe("LogClient", () => {
     }
   });
 
+  it("refuses a leaf hash or tree size that is not one, rather than putting it in the address", async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const client = new LogClient(BASE, answering("{}", 200, seen));
+    for (const leaf of [LEAF.toUpperCase(), LEAF.slice(1), `${LEAF.slice(2)}&x`, `${LEAF}0`]) {
+      await assert.rejects(client.inclusion(leaf, 7), TypeError);
+    }
+    for (const size of [-1, 1.5, 2 ** 53, Number.NaN]) {
+      await assert.rejects(client.inclusion(LEAF, size), TypeError);
+      await assert.rejects(client.cosignatures(size), TypeError);
+    }
+    assert.equal(seen.length, 0);
+  });
+
+  it("refuses a base that is not https, or has a query, a fragment or credentials", () => {
+    for (const base of ["http://example.org/log/", "https://example.org/log/?x=1", "https://example.org/log/#x", "https://u:p@example.org/log/", "https://u@example.org/log/"]) {
+      assert.throws(() => new LogClient(new URL(base), answering("{}")), TypeError, base);
+    }
+  });
+
   it("reports a request that does not complete as a network error", async () => {
     const client = new LogClient(BASE, () => Promise.reject(new TypeError("Failed to fetch")));
     const answer = await client.sth();
@@ -2779,15 +2993,75 @@ describe("LogClient", () => {
     assert.match(answer.detail, /Could not reach the log at example\.org/);
   });
 
-  it("gives the status and the parsed body, or no body when it is not JSON or too long", async () => {
-    assert.deepEqual(await new LogClient(BASE, answering('{"error":"busy"}', 503)).sth(), { kind: "answer", status: 503, body: { error: "busy" } });
-    assert.deepEqual(await new LogClient(BASE, answering("<html>", 200)).sth(), { kind: "answer", status: 200, body: undefined });
-    assert.deepEqual(await new LogClient(BASE, answering(`"${"x".repeat(1_000_001)}"`, 200)).sth(), { kind: "answer", status: 200, body: undefined });
+  it("gives up on a log that sends its headers and then never finishes the body", { timeout: 2000 }, async () => {
+    const hanging: Fetcher = (_url, init) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("{"));
+          init.signal?.addEventListener("abort", () => {
+            controller.error(init.signal?.reason);
+          });
+        },
+      });
+      return Promise.resolve(new Response(stream, { status: 200 }));
+    };
+    const answer = await new LogClient(BASE, hanging, 50).sth();
+    assert.equal(answer.kind, "network");
   });
 
-  it("quotes the log's error text, cut to 200 characters", () => {
+  it("gives the status and the parsed body", async () => {
+    assert.deepEqual(await new LogClient(BASE, answering('{"error":"busy"}', 503)).sth(), { kind: "answer", status: 503, body: { error: "busy" } });
+  });
+
+  it("reports an answer that is not JSON as unreadable, never as an answer without a body", async () => {
+    for (const [text, status] of [["<html>", 200], ["", 200], ["{", 503]] as const) {
+      const answer = await new LogClient(BASE, answering(text, status)).sth();
+      assert.ok(answer.kind === "unreadable", text);
+      assert.equal(answer.status, status);
+      assert.match(answer.detail, /is not JSON/);
+    }
+  });
+
+  it(`reads an answer of exactly ${String(MAX_BODY_BYTES)} bytes, and refuses one a byte longer`, async () => {
+    const exact = `"${"x".repeat(MAX_BODY_BYTES - 2)}"`;
+    const a = await new LogClient(BASE, answering(exact)).sth();
+    assert.ok(a.kind === "answer" && typeof a.body === "string" && a.body.length === MAX_BODY_BYTES - 2);
+    const b = await new LogClient(BASE, answering(`"${"x".repeat(MAX_BODY_BYTES - 1)}"`)).sth();
+    assert.ok(b.kind === "unreadable");
+    assert.match(b.detail, /larger than 1 MB/);
+  });
+
+  it("counts bytes, not characters", async () => {
+    // 500,000 two-byte characters: 1,000,002 bytes, 500,002 characters.
+    const answer = await new LogClient(BASE, answering(`"${"é".repeat(500_000)}"`)).sth();
+    assert.equal(answer.kind, "unreadable");
+  });
+
+  it("stops reading an endless body once it passes the limit, and cancels it", { timeout: 2000 }, async () => {
+    const body = endless();
+    const answer = await new LogClient(BASE, () => Promise.resolve(new Response(body.stream, { status: 200 }))).sth();
+    assert.ok(answer.kind === "unreadable");
+    assert.match(answer.detail, /larger than 1 MB/);
+    assert.ok(body.cancelled());
+    assert.ok(body.sent() < MAX_BODY_BYTES + 4 * 65_536);
+  });
+
+  it("refuses a body whose content-length is over the limit before reading it", { timeout: 2000 }, async () => {
+    const body = endless();
+    const headers = { "content-length": String(MAX_BODY_BYTES + 1) };
+    const answer = await new LogClient(BASE, () => Promise.resolve(new Response(body.stream, { status: 200, headers }))).sth();
+    assert.ok(answer.kind === "unreadable");
+    assert.match(answer.detail, /larger than 1 MB/);
+    assert.ok(body.sent() <= 2 * 65_536, `read ${String(body.sent())} bytes`);
+  });
+
+  it("quotes the log's error text, cut to 200 characters without splitting a character", () => {
     assert.equal(logError({ error: "leaf hash not in the log" }), "leaf hash not in the log");
     assert.equal(logError({ error: "x".repeat(300) }).length, 200);
+    // An emoji is two UTF-16 units; one starting at unit 199 would be cut in half.
+    const cut = logError({ error: "x".repeat(199) + "\u{1F600}".repeat(10) });
+    assert.equal(cut, "x".repeat(199));
+    assert.equal(logError({ error: "x".repeat(198) + "\u{1F600}".repeat(10) }), "x".repeat(198) + "\u{1F600}");
     assert.equal(logError(undefined), "no reason given");
   });
 });
@@ -2802,12 +3076,23 @@ describe("LogClient", () => {
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { MAX_NESTING, MAX_RECEIPTS, nestingDepth, parseReceipts } from "../src/input.ts";
+import { MAX_INPUT_CHARS, MAX_NESTING, MAX_RECEIPTS, nestingDepth, parseReceipts } from "../src/input.ts";
 import { parseLogAddress } from "../src/log-client.ts";
 
 describe("parseReceipts", () => {
   it("reads one receipt as a list of one", () => {
     assert.deepEqual(parseReceipts('{"canonical":"{}"}'), { ok: true, receipts: [{ canonical: "{}" }] });
+  });
+  it("reads text that starts with a byte order mark, as an editor may save it", () => {
+    const bom = String.fromCharCode(0xfeff);
+    assert.deepEqual(parseReceipts(bom + '{"canonical":"{}"}'), { ok: true, receipts: [{ canonical: "{}" }] });
+    assert.deepEqual(parseReceipts(bom + '[{"canonical":"{}"}]'), { ok: true, receipts: [{ canonical: "{}" }] });
+    const twice = parseReceipts(bom + bom + '{"canonical":"{}"}');
+    assert.ok(!twice.ok && twice.reason.includes("not valid JSON"));
+  });
+  it("does not take a broken single receipt for receipts one per line", () => {
+    const r = parseReceipts('{"canonical":');
+    assert.ok(!r.ok && !r.reason.includes("one per line"));
   });
   it("reads an array as its receipts", () => {
     const r = parseReceipts("[{}, {}]");
@@ -2817,8 +3102,11 @@ describe("parseReceipts", () => {
     ["empty text", "  ", /Paste a receipt/],
     ["a value that is not an object", "42", /This is not a receipt/],
     ["text that is not JSON", "{canonical:", /not valid JSON/],
-    ["an empty list", "[]", /empty list/],
-    ["too many receipts", JSON.stringify(Array.from({ length: MAX_RECEIPTS + 1 }, () => ({}))), /up to 1000/],
+    ["an empty list", "[]", /^The receipt text holds an empty list/],
+    ["too many receipts", JSON.stringify(Array.from({ length: MAX_RECEIPTS + 1 }, () => ({}))), /^The receipt text holds 1001 receipts.*up to 1000/],
+    ["text over the limit", " ".repeat(MAX_INPUT_CHARS) + "{}", /longer than 5 million characters/],
+    ["receipts one per line", '{"canonical":"{}"}\n{"canonical":"{}"}\n', /one per line.*a single receipt or a JSON list/],
+    ["receipts one per line, ending in a broken one", '{"canonical":"{}"}\r\n{"canonical":', /one per line.*a single receipt or a JSON list/],
   ] as const) {
     it(`explains ${name}`, () => {
       const r = parseReceipts(text);
@@ -2845,6 +3133,10 @@ describe("nesting", () => {
     const r = parseReceipts(`{"canonical":"{}","overall":${deep(MAX_NESTING)},"overall":"pass"}`);
     assert.ok(!r.ok && r.reason.includes("receipt nesting deeper than 64"));
   });
+  it("counts the text of a list, so a deep duplicate key in a receipt in it is still refused", () => {
+    const r = parseReceipts(`[{"canonical":"{}","overall":${deep(MAX_NESTING)},"overall":"pass"}]`);
+    assert.ok(!r.ok && r.reason.includes("receipt nesting deeper than 64"));
+  });
   it("allows a list one level more than a receipt, and no more", () => {
     assert.ok(parseReceipts(`[{"canonical":"{}","f":${deep(MAX_NESTING - 1)}}]`).ok);
     const r = parseReceipts(`[{"canonical":"{}","f":${deep(MAX_NESTING)}}]`);
@@ -2866,6 +3158,8 @@ describe("parseLogAddress", () => {
     ["http://log.example.org", /must start with https/],
     ["https://user:pw@log.example.org", /user name or password/],
     ["https://log.example.org/?x=1", /must not contain \? or #/],
+    ["https://log.example.org/?", /must not contain \? or #/],
+    ["https://log.example.org/log#", /must not contain \? or #/],
   ] as const) {
     it(`rejects ${text}`, () => {
       const r = parseLogAddress(text);
@@ -2875,7 +3169,7 @@ describe("parseLogAddress", () => {
 });
 ```
 
-- [ ] **Step 2:** run `npm test`. Expected: fails, `ERR_MODULE_NOT_FOUND` for `src/log-client.ts`.
+- [ ] **Step 2:** run `npm test`. Expected: fails with `ERR_MODULE_NOT_FOUND` for `src/input.ts` and `src/log-client.ts`.
 - [ ] **Step 3:** write the code:
 
 `src/log-client.ts`:
@@ -2886,26 +3180,35 @@ describe("parseLogAddress", () => {
 
 // The only code that reaches the network: GET requests to the receipts-log
 // address the visitor typed, with no credentials, no referrer and no cache.
-// A request that does not complete is a network error, never a verdict.
-// receipts-log sends its CORS header on every answer from a read route,
-// its own 503 (busy), 414 and 500 included (receipts-log PR #13), so those
-// arrive here as answers with a status, not as network errors.
+// A request that does not complete is a network error, never a verdict; an
+// answer too large to be a log's, or not JSON, is unreadable, also never a
+// verdict. receipts-log sends its CORS header on every answer from a read
+// route, its own 503 (busy), 414 and 500 included (receipts-log PR #13),
+// so those arrive here as answers with a status, not as network errors.
 
 export type Fetcher = (url: string, init: RequestInit) => Promise<Response>;
 
 export type LogAnswer =
+  /** The log answered with JSON; `body` is that JSON, whatever the status. */
   | { kind: "answer"; status: number; body: unknown }
+  /** The log answered, but with more than MAX_BODY_BYTES or with text that is not JSON. */
+  | { kind: "unreadable"; status: number; detail: string }
+  /** No answer: the request failed, was refused, or timed out. */
   | { kind: "network"; detail: string };
 
-const MAX_BODY_CHARS = 1_000_000;
+/** The most bytes of an answer read: a tree head, a proof or a page of cosignatures is far smaller. */
+export const MAX_BODY_BYTES = 1_000_000;
+
+const LEAF_HASH = /^[0-9a-f]{64}$/;
 
 export type LogAddress = { ok: true; base: URL } | { ok: false; reason: string };
 
 /** Reads the address the visitor typed: https only, no credentials, query or fragment. */
 export function parseLogAddress(text: string): LogAddress {
+  const typed = text.trim();
   let url: URL;
   try {
-    url = new URL(text.trim());
+    url = new URL(typed);
   } catch {
     return { ok: false, reason: "The log address is not a web address. Type it in full, starting with https://." };
   }
@@ -2913,11 +3216,16 @@ export function parseLogAddress(text: string): LogAddress {
   if (url.username !== "" || url.password !== "") {
     return { ok: false, reason: "The log address must not contain a user name or password." };
   }
-  if (url.search !== "" || url.hash !== "") {
+  // A bare "?" or "#" leaves url.search and url.hash empty, so the typed text is checked too.
+  if (url.search !== "" || url.hash !== "" || typed.includes("?") || typed.includes("#")) {
     return { ok: false, reason: "The log address must not contain ? or #. Give the address the log's /v1/ routes are under." };
   }
   if (!url.pathname.endsWith("/")) url.pathname += "/";
   return { ok: true, base: url };
+}
+
+function isCount(n: number): boolean {
+  return Number.isSafeInteger(n) && n >= 0;
 }
 
 export class LogClient {
@@ -2926,59 +3234,119 @@ export class LogClient {
   readonly #timeoutMs: number;
 
   constructor(base: URL, fetcher: Fetcher = (url, init) => fetch(url, init), timeoutMs = 15_000) {
+    if (base.protocol !== "https:" || base.username !== "" || base.password !== "" || base.search !== "" || base.hash !== "") {
+      throw new TypeError("LogClient: the base must be an https address with no credentials, query or fragment; read it with parseLogAddress.");
+    }
     this.base = base;
     this.#fetch = fetcher;
     this.#timeoutMs = timeoutMs;
   }
 
   sth(): Promise<LogAnswer> {
-    return this.#get("v1/sth");
+    return this.#get("v1/sth", {});
   }
 
-  inclusion(leafHashHex: string, treeSize: number): Promise<LogAnswer> {
-    return this.#get(`v1/proof/inclusion?leafHash=${leafHashHex}&treeSize=${String(treeSize)}`);
+  async inclusion(leafHashHex: string, treeSize: number): Promise<LogAnswer> {
+    if (!LEAF_HASH.test(leafHashHex)) throw new TypeError("LogClient: leafHash must be 64 lowercase hex digits.");
+    if (!isCount(treeSize)) throw new TypeError("LogClient: treeSize must be a whole number from 0 to 2^53 - 1.");
+    return this.#get("v1/proof/inclusion", { leafHash: leafHashHex, treeSize: String(treeSize) });
   }
 
-  cosignatures(treeSize: number): Promise<LogAnswer> {
-    return this.#get(`v1/cosignatures?treeSize=${String(treeSize)}`);
+  async cosignatures(treeSize: number): Promise<LogAnswer> {
+    if (!isCount(treeSize)) throw new TypeError("LogClient: treeSize must be a whole number from 0 to 2^53 - 1.");
+    return this.#get("v1/cosignatures", { treeSize: String(treeSize) });
   }
 
-  async #get(path: string): Promise<LogAnswer> {
-    const url = new URL(path, this.base).href;
+  async #get(path: string, query: Record<string, string>): Promise<LogAnswer> {
+    const url = new URL(path, this.base);
+    url.search = new URLSearchParams(query).toString();
+    const host = this.base.host;
+    // One timer for the whole exchange, headers and body; cleared only once the body is read.
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new DOMException("The log took too long to answer.", "TimeoutError"));
+    }, this.#timeoutMs);
     let response: Response;
-    let text: string;
+    let read: { bytes: Uint8Array } | { tooLarge: true };
     try {
-      response = await this.#fetch(url, {
+      response = await this.#fetch(url.href, {
         method: "GET",
         mode: "cors",
         credentials: "omit",
         cache: "no-store",
         redirect: "error",
         referrerPolicy: "no-referrer",
-        signal: AbortSignal.timeout(this.#timeoutMs),
+        signal: controller.signal,
       });
-      text = await response.text();
+      read = await readLimited(response);
     } catch {
       return {
         kind: "network",
-        detail: `Could not reach the log at ${this.base.host}. It may be down or busy, or the address may be wrong. Check the address and try again.`,
+        detail: `Could not reach the log at ${host}. It may be down or busy, or the address may be wrong. Check the address and try again.`,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+    if ("tooLarge" in read) {
+      return {
+        kind: "unreadable",
+        status: response.status,
+        detail: `The log at ${host} sent an answer larger than 1 MB, which no log answer needs. Try again; if it happens again, the log may be misbehaving.`,
       };
     }
-    if (text.length > MAX_BODY_CHARS) return { kind: "answer", status: response.status, body: undefined };
-    let body: unknown;
     try {
-      body = JSON.parse(text);
+      return { kind: "answer", status: response.status, body: JSON.parse(new TextDecoder("utf-8", { fatal: false }).decode(read.bytes)) };
     } catch {
-      body = undefined;
+      return {
+        kind: "unreadable",
+        status: response.status,
+        detail: `The log at ${host} answered (status ${String(response.status)}), but its answer is not JSON. Check that the address is the log's, not its web page, and try again.`,
+      };
     }
-    return { kind: "answer", status: response.status, body };
   }
 }
 
-/** The log's own error text, when its answer has one. */
+/**
+ * The body's bytes, read no further than MAX_BODY_BYTES: an answer whose
+ * content-length says it is larger is refused unread, and one that runs
+ * past the limit is cancelled there. Throws when the body fails or the
+ * request is aborted.
+ */
+async function readLimited(response: Response): Promise<{ bytes: Uint8Array } | { tooLarge: true }> {
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_BODY_BYTES) {
+    await response.body?.cancel().catch(() => undefined);
+    return { tooLarge: true };
+  }
+  if (response.body === null) return { bytes: new Uint8Array(0) };
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return { tooLarge: true };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return { bytes };
+}
+
+/** The log's own error text, when its answer has one, cut to 200 UTF-16 units without splitting a surrogate pair. */
 export function logError(body: unknown): string {
   if (body !== null && typeof body === "object" && "error" in body && typeof body.error === "string") {
-    return body.error.slice(0, 200);
+    const cut = body.error.slice(0, 200);
+    const last = cut.charCodeAt(cut.length - 1);
+    return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
   }
   return "no reason given";
 }
@@ -2994,8 +3362,9 @@ export function logError(body: unknown): string {
 // JSON object) or an array of them. A receipt is read as verifiable-
 // receipts' parseReceipt reads it: its nesting is counted on the text
 // before the text is parsed (VAOS 2.0 §7.2), so a duplicate key that
-// JSON.parse discards still counts. Never throws; a problem comes back as
-// a sentence that says what to do.
+// JSON.parse discards still counts. One leading byte order mark, which
+// some editors save, is dropped first; it is never part of a receipt.
+// Never throws; a problem comes back as a sentence that says what to do.
 import { MAX_NESTING, parseReceipt } from "./vendor/verifiable-receipts/receipt.ts";
 
 export { MAX_NESTING };
@@ -3005,6 +3374,8 @@ export const MAX_RECEIPTS = 1000;
 export type ParsedReceipts = { ok: true; receipts: unknown[] } | { ok: false; reason: string };
 
 const NOT_JSON = "The receipt is not valid JSON. Paste the whole file, from the first { to the last }.";
+const ONE_PER_LINE =
+  "This looks like several receipts, one per line. Paste a single receipt or a JSON list of them, inside [ and ], separated by commas.";
 const TOO_DEEP = `The receipt nests arrays and objects more than ${String(MAX_NESTING)} levels deep (receipt nesting deeper than 64), which no verifier accepts. It is not a valid receipt.`;
 
 /**
@@ -3032,7 +3403,13 @@ export function nestingDepth(text: string): number {
   return deepest;
 }
 
-export function parseReceipts(text: string): ParsedReceipts {
+/** The reason for text that is not JSON: with a hint when it looks like receipts one per line (NDJSON). */
+function notJson(text: string): string {
+  return /\}[ \t\r]*\n[ \t\r\n]*\{/.test(text) ? ONE_PER_LINE : NOT_JSON;
+}
+
+export function parseReceipts(pasted: string): ParsedReceipts {
+  const text = pasted.charCodeAt(0) === 0xfeff ? pasted.slice(1) : pasted;
   if (text.trim() === "") return { ok: false, reason: "Paste a receipt, or choose a receipt file." };
   if (text.length > MAX_INPUT_CHARS) {
     return { ok: false, reason: "The receipt text is longer than 5 million characters. Check one file of receipts at a time." };
@@ -3047,7 +3424,7 @@ export function parseReceipts(text: string): ParsedReceipts {
       if (reason === "receipt is not a JSON object") {
         return { ok: false, reason: "This is not a receipt: a receipt is a JSON object with canonical and signature fields. Check that you pasted the receipt, not a key or a tree head." };
       }
-      return { ok: false, reason: NOT_JSON };
+      return { ok: false, reason: notJson(text) };
     }
   }
   // A list: the list is one level more, so each receipt in it may reach MAX_NESTING + 1 on the text.
@@ -3056,12 +3433,12 @@ export function parseReceipts(text: string): ParsedReceipts {
   try {
     value = JSON.parse(text);
   } catch {
-    return { ok: false, reason: NOT_JSON };
+    return { ok: false, reason: notJson(text) };
   }
   if (!Array.isArray(value)) return { ok: false, reason: NOT_JSON };
-  if (value.length === 0) return { ok: false, reason: "The file holds an empty list. Choose a file with at least one receipt." };
+  if (value.length === 0) return { ok: false, reason: "The receipt text holds an empty list. Give at least one receipt." };
   if (value.length > MAX_RECEIPTS) {
-    return { ok: false, reason: `The file holds ${String(value.length)} receipts; this page checks up to ${String(MAX_RECEIPTS)} at a time. Split the file.` };
+    return { ok: false, reason: `The receipt text holds ${String(value.length)} receipts; this page checks up to ${String(MAX_RECEIPTS)} at a time. Check them in smaller lists.` };
   }
   return { ok: true, receipts: value as unknown[] };
 }
@@ -3073,12 +3450,23 @@ export function parseReceipts(text: string): ParsedReceipts {
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 144`, `# fail 0`.
+Expected: `# pass 205`, `# fail 0`. Then run the drift check, which this task must leave as it was (`UP` from Task 2, Step 3; make it again the same way if the shell has lost it):
+
+```bash
+bash scripts/check-vendor.sh "$UP"
+```
+
+Expected: `every vendored file matches verifiable-receipts at 24f5c4780dba7c4f76b159b7f7844e17d0226cd6`.
 
 `MAX_NESTING` is the vendored verifier's, 64 at `VR_REF`. One receipt is read with the port's `parseReceipt`, which counts depth on the text before parsing; a list may be one level deeper. The signed text is left to the checks, which count it after the signature, as the verifier does.
 
-- [ ] **Step 5:** prove the text is counted: in the port's `parseReceipt`, move the `textNestsTooDeep(text)` test after `JSON.parse` as `if (nestsTooDeep(value)) throw …`, run `node --test test/input.test.ts`, and confirm `# fail 1` (the deep duplicate key). Restore it, then delete the list's `if (nestingDepth(text) > MAX_NESTING + 1) …` line and confirm `# fail 1`. Restore it.
+- [ ] **Step 5:** prove the text is counted: in the port's `parseReceipt`, move the `textNestsTooDeep(text)` test after `JSON.parse` as `if (nestsTooDeep(value)) throw …`, run `node --test test/input.test.ts`, and confirm `# fail 1` (the deep duplicate key). Restore it, then delete the list's `if (nestingDepth(text) > MAX_NESTING + 1) …` line and confirm `# fail 2` (a deep list, and a deep duplicate key inside a list). Restore it.
 - [ ] **Step 6:** commit:
+
+```bash
+git add src/log-client.ts src/input.ts test/log-client.test.ts test/input.test.ts
+git status --short   # expect nothing left over
+```
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
@@ -3089,6 +3477,8 @@ git commit --author="$A" -m "Log client: GET only, no credentials, network error
 
 **Files:**
 - Create: `test/stub-log.ts`, `test/checks.test.ts`, `src/checks.ts`
+
+The checks use Tasks 5 and 6 as built: `checkTreeHead(answer.body, log.logKey)` and `verifyV2Text(signature, text, witnessKey)` take a `PublicKey`; Format names a signature that is not 64 bytes (`bad-length`); and a log answer of kind `unreadable` (too large, or not JSON) is not run, with a retry, using its own sentence, in each of the three log checks, as a network error is.
 
 - [ ] **Step 1:** write the stubbed log and the tests:
 
@@ -3144,7 +3534,7 @@ import { checkOffline, checkReceipts, type CheckResult, type Inputs, type Receip
 import { LogClient } from "../src/log-client.ts";
 import { verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 import { leafHash } from "../src/vendor/verifiable-receipts/transparency.ts";
-import { CONFORMANCE, LOG, conformanceCase, fixtureReceipt, keyFrom, makeKey, readJson } from "./helpers.ts";
+import { CONFORMANCE, LOG, WELL_FORMED_V3, conformanceCase, fixtureReceipt, keyFrom, makeKey, readJson } from "./helpers.ts";
 import { LOG_BASE, stubLog, type StubAnswer } from "./stub-log.ts";
 
 const valid = fixtureReceipt("v2-valid-001.json") as { canonical: string };
@@ -3237,6 +3627,21 @@ describe("checks without a log", () => {
     assert.equal(empty.valid, false);
     assert.equal(check(empty, "content-hash").status, "failed");
     assert.match(check(empty, "content-hash").detail, /The contentHash is empty/);
+  });
+
+  it("a signature of the wrong size fails Format, and says so", async () => {
+    const short = { ...(valid as Record<string, unknown>), signature: "v2=" + "A".repeat(84) }; // 63 bytes
+    const r = await one(short, inputs(undefined));
+    assert.equal(check(r, "format").status, "failed");
+    assert.match(check(r, "format").detail, /^The signature is the wrong size: an Ed25519 signature is 64 bytes\./);
+    assert.equal(r.valid, false);
+  });
+
+  it("a v3= signature that is not in the one v3 shape fails as not v2; only a well-formed one is named v3", async () => {
+    const bad = await one({ ...(valid as Record<string, unknown>), signature: "v3=AAAA.BBBB" }, inputs(undefined));
+    assert.match(check(bad, "format").detail, /does not start with v2=/);
+    const good = await one({ ...(valid as Record<string, unknown>), signature: WELL_FORMED_V3 }, inputs(undefined));
+    assert.match(check(good, "format").detail, /^This is a v3 receipt/);
   });
 
   it("a repeated field that disagrees names the field and both values", async () => {
@@ -3376,6 +3781,20 @@ describe("checks with a stubbed log", () => {
     const c = check(r, "tree-head");
     assert.deepEqual([c.status, c.retry], ["not-run", false]);
   });
+
+  // An answer that is not JSON (here, an empty body) is unreadable: not run, with a retry, never a verdict.
+  for (const [id, route] of [
+    ["tree-head", "/v1/sth"],
+    ["in-log", INCLUSION],
+    ["witnesses", "/v1/cosignatures?treeSize=3"],
+  ] as const) {
+    it(`an unreadable answer for ${id} is not run, can be retried, and is not a network error`, async () => {
+      const r = await one(valid, inputs({ ...GOOD, [route]: { status: 200 } }));
+      const c = check(r, id);
+      assert.deepEqual([c.status, c.network, c.retry], ["not-run", false, true]);
+      assert.match(c.detail, /^Not run: The log at log\.test answered \(status 200\), but its answer is not JSON\./);
+    });
+  }
 
   it("no log key: checks 5 to 7 are not run, and the log is not asked", async () => {
     const requests: string[] = [];
@@ -3546,6 +3965,8 @@ function formatCheck(receipt: unknown): CheckResult {
       return result(id, "failed", "The signature is not valid base64 after v2=. A copy that broke the line or dropped characters causes this; copy the receipt again.");
     case "not-canonical":
       return result(id, "failed", "The signature is spelled in a way no signer writes (non-zero padding bits). The bytes may be right, but the receipt was edited; get the original.");
+    case "bad-length":
+      return result(id, "failed", "The signature is the wrong size: an Ed25519 signature is 64 bytes. A copy that dropped or added characters causes this; copy the receipt again.");
   }
 }
 
@@ -3663,10 +4084,11 @@ async function treeHeadCheck(log: LogInputs | undefined): Promise<{ check: Check
   }
   const answer = await log.client.sth();
   if (answer.kind === "network") return { check: result(id, "not-run", answer.detail, true), head: undefined };
+  if (answer.kind === "unreadable") return { check: result(id, "not-run", `Not run: ${answer.detail}`, false, true), head: undefined };
   if (answer.status !== 200) {
     return { check: logAnswered(id, answer.status, answer.body), head: undefined };
   }
-  const head = await checkTreeHead(answer.body, log.logKey.key);
+  const head = await checkTreeHead(answer.body, log.logKey);
   if (head.status === "passed") {
     const { sth } = head;
     return { check: result(id, "passed", `The log ${sth.logId} signed a tree of ${String(sth.treeSize)} entries at ${sth.timestamp}, under the key ${log.logKey.fingerprint}.`), head };
@@ -3687,6 +4109,7 @@ async function inLogCheck(receipt: unknown, log: LogInputs | undefined, head: Tr
   const leaf = await leafHash(receipt.canonical);
   const answer = await log.client.inclusion(leaf, sth.treeSize);
   if (answer.kind === "network") return result(id, "not-run", answer.detail, true);
+  if (answer.kind === "unreadable") return result(id, "not-run", `Not run: ${answer.detail}`, false, true);
   if (answer.status === 404) {
     return result(id, "failed", "This log holds no entry for this receipt. Check the log address; if the receipt was submitted in the last few seconds, try again.");
   }
@@ -3712,6 +4135,7 @@ async function witnessesCheck(log: LogInputs | undefined, head: TreeHeadCheck | 
   if (head?.status !== "passed") return result(id, "not-run", "Not run: the tree head was not checked, so there is no tree head to look for cosignatures on.");
   const answer = await log.client.cosignatures(head.sth.treeSize);
   if (answer.kind === "network") return result(id, "not-run", answer.detail, true);
+  if (answer.kind === "unreadable") return result(id, "not-run", `Not run: ${answer.detail}`, false, true);
   if (answer.status !== 200) {
     return logAnswered(id, answer.status, answer.body);
   }
@@ -3728,7 +4152,7 @@ async function witnessesCheck(log: LogInputs | undefined, head: TreeHeadCheck | 
       if (!isObject(c) || typeof c.sthCanonical !== "string") continue;
       const covered = canonicalTreeHead(c.sthCanonical);
       if (covered?.logId !== sth.logId || covered.treeSize !== sth.treeSize || covered.rootHash !== sth.rootHash) continue;
-      if (await verifyV2Text(c.signature, c.sthCanonical, w.key)) {
+      if (await verifyV2Text(c.signature, c.sthCanonical, w)) {
         signedBy.push(w.fingerprint);
         break;
       }
@@ -3800,10 +4224,10 @@ export async function checkReceipts(receipts: readonly unknown[], inputs: Inputs
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
-Expected: `# pass 184`, `# fail 0`.
+Expected: `# pass 250`, `# fail 0`.
 
 - [ ] **Step 5:** prove check 6 never trusts the log's own root. In `inLogCheck`, change `sth.rootHash)` in the `verifyInclusionProof` call to `proof.rootHashHex)`, run `node --test test/checks.test.ts`, and confirm `a proof whose own rootHashHex agrees with it, but the signed root does not, fails` fails. Restore it and rerun to `# fail 0`.
-- [ ] **Step 6:** prove that a receipt that throws is a failed check, never a hang: in `checkReceipts`, add `throw e;` as the first line of the per-receipt `catch (e) {` block, run `node --test test/checks.test.ts`, and confirm `# fail 1` or more (the receipt whose field throws, and the next one never checked). Then delete `if (e instanceof Ed25519Unavailable) return result(id, "not-run", …);` from `trouble` and confirm `# fail 1` (no WebCrypto Ed25519 must be "not run", never "failed"). Restore both. Then, one at a time and restored after, confirm `# fail 1` for each of: `if (nestsTooDeep(receipt)) {` in `formatCheck` to `if (false) {`; `if (textNestsTooDeep(receipt.canonical)) {` in `repeatedFieldsCheck` to `if (false) {`; and `if (weak !== null) {` in `signatureCheck` to `if (false) {` (the key fixtures of the per-fixture loop).
+- [ ] **Step 6:** prove that a receipt that throws is a failed check, never a hang: in `checkReceipts`, add `throw e;` as the first line of the per-receipt `catch (e) {` block, run `node --test test/checks.test.ts`, and confirm `# fail 1` or more (the receipt whose field throws, and the next one never checked). Then delete `if (e instanceof Ed25519Unavailable) return result(id, "not-run", …);` from `trouble` and confirm `# fail 1` (no WebCrypto Ed25519 must be "not run", never "failed"). Restore both. Then, one at a time and restored after, confirm `# fail 1` for each of: `if (nestsTooDeep(receipt)) {` in `formatCheck` to `if (false) {`; `if (textNestsTooDeep(receipt.canonical)) {` in `repeatedFieldsCheck` to `if (false) {`; and `if (weak !== null) {` in `signatureCheck` to `if (false) {` (the key fixtures of the per-fixture loop). And for the as-built APIs, again one at a time: delete the `case "bad-length":` lines from `formatCheck` (`# fail 1`); delete the `if (answer.kind === "unreadable") …` line from each of `treeHeadCheck`, `inLogCheck` and `witnessesCheck` in turn (`# fail 1` each); and change that line's `false, true)` to `false, false)` in `treeHeadCheck` (`# fail 1`: an unreadable answer must offer a retry).
 - [ ] **Step 7:** commit:
 
 ```bash
@@ -3868,7 +4292,7 @@ describe("parsing never throws", () => {
   it("checkTreeHead and checkOffline", async () => {
     await fc.assert(
       fc.asyncProperty(fc.jsonValue(), async (v) => {
-        assert.ok(["passed", "failed", "not-run"].includes((await checkTreeHead(v, issuer.publicKey.key)).status));
+        assert.ok(["passed", "failed", "not-run"].includes((await checkTreeHead(v, issuer.publicKey)).status));
         assert.equal(typeof (await checkOffline(v, [issuer.publicKey])).valid, "boolean");
       }),
     );
@@ -3899,7 +4323,7 @@ FC_NUM_RUNS=2000 node --test test/parsing.properties.test.ts 2>&1 | grep -E '^# 
 
 Expected: `# pass 5`, `# fail 0`.
 
-- [ ] **Step 3:** run the whole check: `# pass 189`, `# fail 0`.
+- [ ] **Step 3:** run the whole check: `# pass 255`, `# fail 0`.
 - [ ] **Step 4:** commit:
 
 ```bash
@@ -4316,14 +4740,14 @@ wc -c build/check.js && gzip -9 -c build/check.js | wc -c
 npm run bundle && shasum -a 256 build/check.js && npm run bundle && shasum -a 256 build/check.js
 ```
 
-Expected: `# pass 189`, `# fail 0`; `build/check.js` about 32.6 KB and about 10.8 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
+Expected: `# pass 255`, `# fail 0`; `build/check.js` about 35.6 KB and about 11.9 KB compressed; the two hashes equal (the bundle is deterministic). `bundle.mjs` exits 1 if anything outside `src/` and `content/` is bundled.
 
 - [ ] **Step 5:** prove the lint rules hold: add `document.body.innerHTML = "";` to the end of `start` in `src/ui.ts` and run `npx eslint src/ui.ts`; confirm `Build elements with textContent; never parse input as HTML`. Remove the line.
 - [ ] **Step 6:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "The page script: one bundle, no dependencies, nothing stored or sent" -m "src/ui.ts reads the form, runs the checks and renders each with textContent, linking it to its term; problems are listed and focused, results announced and focused, and a network error offers a retry. A browser without WebCrypto Ed25519 (raw or SPKI) is told so and runs nothing, and an error the checks did not expect is reported, never left on Checking. esbuild bundles it to build/check.js, about 11 KB compressed." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "The page script: one bundle, no dependencies, nothing stored or sent" -m "src/ui.ts reads the form, runs the checks and renders each with textContent, linking it to its term; problems are listed and focused, results announced and focused, and a network error offers a retry. A browser without WebCrypto Ed25519 (raw or SPKI) is told so and runs nothing, and an error the checks did not expect is reported, never left on Checking. esbuild bundles it to build/check.js, about 12 KB compressed." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ### Task 10: the site's words and the terms
@@ -5635,7 +6059,7 @@ uvx ruff@0.17.0 check . && uvx ruff@0.17.0 format --check .
 python3 build.py && python3 scripts/check_budget.py
 ```
 
-Expected: `Ran 18 tests`, `OK`; ruff clean; `Built 27 pages, 404.html, sitemap.xml and robots.txt` (the count is 3 plus the number of terms in `ontology.md` at `VR_REF`); `static/check.js: 10809 bytes compressed (budget 40960)` (give or take a few bytes), `static/styles.css: 2032 bytes compressed (budget 8192)`, `every file is within its budget`.
+Expected: `Ran 18 tests`, `OK`; ruff clean; `Built 27 pages, 404.html, sitemap.xml and robots.txt` (the count is 3 plus the number of terms in `ontology.md` at `VR_REF`); `static/check.js: 11905 bytes compressed (budget 40960)` (give or take a few bytes), `static/styles.css: 2032 bytes compressed (budget 8192)`, `every file is within its budget`.
 
 - [ ] **Step 5:** look at it (with the sandbox off, since the server binds a port). `python3 serve.py`, then open <http://127.0.0.1:8000/receipts-explorer/>: paste `test/fixtures/conformance/v2-valid-001.json`'s `receipt` and `test/fixtures/conformance/public-key.pem`, press **Check**, and read the seven results (four passed, three not run). Then `python3 serve.py --dist 8080` and open <http://127.0.0.1:8080/receipts-explorer/terms/>. Stop both with Ctrl+C.
 - [ ] **Step 6:** commit:
@@ -6205,7 +6629,7 @@ npm run build
 npx playwright test
 ```
 
-Expected: `79 passed`: Chromium 33 (13 flows, 1 Ed25519, 9 page tests, 6 screenshots, 4 LCP), Firefox 23 and WebKit 23 (no screenshots or LCP). The LCP lines print about 1240 to 1260 ms each. The prototype ran Chromium only (`33 passed`).
+Expected: `79 passed`: Chromium 33 (13 flows, 1 Ed25519, 9 page tests, 6 screenshots, 4 LCP), Firefox 23 and WebKit 23 (no screenshots or LCP). The LCP lines print about 1240 to 1280 ms each. The prototype ran Chromium only (`33 passed`).
 
 - [ ] **Step 3:** prove the axe test catches a contrast failure: in `static/styles.css`, set `--muted: #9aa1a6;` in the light block, rebuild, run `npx playwright test --project=chromium e2e/pages.spec.ts`, and confirm `color-contrast` in the failure. Restore the value.
 - [ ] **Step 4:** look at the screenshots: `npx playwright show-report`, open each `check page at … px` test, and read its attachment: no text cut off, nothing overlapping, focus outlines visible in both schemes.
@@ -6621,7 +7045,7 @@ npm run build && $PY -m unittest discover -s tests -t . && python3 scripts/check
 npx playwright test 2>&1 | tail -1
 ```
 
-Expected: the `matches` line; `# pass 189`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `79 passed`.
+Expected: `every vendored file matches verifiable-receipts at 24f5c4780dba7c4f76b159b7f7844e17d0226cd6`; `# pass 255`, `# fail 0`, `found 0 vulnerabilities`; `Ran 18 tests` `OK`, `every file is within its budget`; `79 passed`.
 
 - [ ] **Step 5:** commit:
 
