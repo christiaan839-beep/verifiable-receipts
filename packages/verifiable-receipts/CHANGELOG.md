@@ -17,15 +17,23 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an empty tree whose root is not SHA-256 of no bytes; a `logId` with
   control characters, one that differs from its state file, or one
   that differs from the new `--log-id`; a different root at a size it
-  already signed; and, with the new `--log-public-key`, a log
-  signature that does not verify, or a `v3=` head. It saves the new
-  head atomically before the signature leaves the process, so a log
-  that stores a cosignature but answers an error cannot get a second
-  one on another root at that size; a failed submission is resubmitted
-  for the same head. A state file that exists but cannot be read or is
-  malformed is refused instead of treated as a first run. Requests time
-  out (`--timeout`, default 30 s), bodies over 1 MiB are refused, and
-  log-supplied strings are printed JSON-quoted.
+  already signed; a timestamp earlier than the one it saved; and, with
+  the new `--log-public-key`, a log signature that does not verify, or
+  a `v3=` head.
+- The witness saves the new head atomically before the signature
+  leaves the process, so a log that stores a cosignature but answers
+  an error cannot get a second one on another root at that size. A
+  failed submission is resubmitted exactly as saved, with the same
+  bytes and signature, even if the log has re-dated the head. Each
+  poll holds a lock file beside the state file, so two witness
+  processes on one state file cannot each sign a different head.
+- A state file that exists but cannot be read or is malformed is
+  refused instead of treated as a first run.
+- Requests time out (`--timeout`, 1 to 3600 s, default 30), never
+  follow a redirect, and refuse bodies over 1 MiB. Every `[witness]`
+  line escapes control characters and U+2028/U+2029, and strings from
+  the log are printed quoted. `--interval` below 60 or not a number is
+  a usage error.
 
 ## [0.4.0] — 2026-10-23
 

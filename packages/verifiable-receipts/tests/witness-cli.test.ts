@@ -24,11 +24,13 @@ import {
   existsSync,
   mkdirSync,
   chmodSync,
+  statSync,
+  readdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TransparencyLog, InMemoryLogStore } from "../src/log-store.js";
-import { canonicalizeSth } from "../src/transparency.js";
+import { canonicalizeSth, leafHash, treeRoot } from "../src/transparency.js";
 
 const CLI = join(__dirname, "..", "bin", "witness.mjs");
 
@@ -322,9 +324,11 @@ interface Req {
   body?: Record<string, unknown>;
 }
 
-function runCliAsync(args: string[]): Promise<CliResult> {
+function runCliAsync(args: string[], nodeArgs: string[] = []): Promise<CliResult> {
   return new Promise((resolve) => {
-    const child = spawn("node", [CLI, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("node", [...nodeArgs, CLI, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
@@ -396,6 +400,13 @@ describe("witness CLI — checks before cosigning (--once)", () => {
   let postStatus: number[];
   // Replaces the STH response entirely (oversized or stalled bodies).
   let sthHandler: ((res: ServerResponse) => void) | undefined;
+  // Replace the proof and POST responses entirely.
+  let proofHandler: ((res: ServerResponse) => void) | undefined;
+  let postHandler: ((res: ServerResponse) => void) | undefined;
+  // A second host, to check that redirects are never followed.
+  let other: Server;
+  let otherBase: string;
+  let otherHits = 0;
   let stateN = 0;
 
   const signWith = (key: KeyObject, text: string) =>
@@ -462,6 +473,10 @@ describe("witness CLI — checks before cosigning (--once)", () => {
           return;
         }
         if (req.method === "GET" && url.pathname === "/api/transparency/proof") {
+          if (proofHandler) {
+            proofHandler(res);
+            return;
+          }
           const proof = tlog.proveConsistency(
             Number(url.searchParams.get("old")),
             Number(url.searchParams.get("new")),
@@ -474,6 +489,10 @@ describe("witness CLI — checks before cosigning (--once)", () => {
           let text = "";
           for await (const chunk of req) text += String(chunk);
           entry.body = JSON.parse(text) as Record<string, unknown>;
+          if (postHandler) {
+            postHandler(res);
+            return;
+          }
           const status = postStatus.shift() ?? 200;
           if (status !== 200) {
             res.writeHead(status, { "content-type": "text/plain" });
@@ -492,9 +511,21 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     const addr = srv.address();
     if (!addr || typeof addr === "string") throw new Error("server has no address");
     base = `http://127.0.0.1:${addr.port}`;
+
+    other = createServer((_req, res) => {
+      otherHits++;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", () => resolve()));
+    const oaddr = other.address();
+    if (!oaddr || typeof oaddr === "string") throw new Error("server has no address");
+    otherBase = `http://127.0.0.1:${oaddr.port}`;
   });
 
   afterAll(async () => {
+    other.closeAllConnections();
+    await new Promise<void>((resolve) => other.close(() => resolve()));
     srv.closeAllConnections();
     await new Promise<void>((resolve) => srv.close(() => resolve()));
     rmSync(dir, { recursive: true, force: true });
@@ -505,6 +536,9 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     rewrite = (b) => b;
     postStatus = [];
     sthHandler = undefined;
+    proofHandler = undefined;
+    postHandler = undefined;
+    otherHits = 0;
   });
 
   it("happy path: cosigns the canonical rebuilt from the fields it checked", async () => {
@@ -741,7 +775,9 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(second.status).toBe(0);
     expect(verdictOf(second).verdict).toBe("resubmitted");
     expect(posts()).toHaveLength(2);
-    // The same canonical, and Ed25519 gives the same signature.
+    // The log serves the same timestamp here (a fixed clock), so the
+    // rebuilt canonical is the same. A log that changes the timestamp
+    // is covered by the next test.
     expect(posts()[1].body).toEqual(posts()[0].body);
     const saved = JSON.parse(readFileSync(state, "utf8")) as Record<string, unknown>;
     expect(saved.pending).toBeUndefined();
@@ -752,26 +788,63 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(posts()).toHaveLength(2);
   });
 
-  it("a state file it cannot write: no signature leaves, no POST", async () => {
+  it("a state directory it cannot write: no lock, no signature, no POST", async () => {
     const locked = join(dir, `locked-${++stateN}`);
     mkdirSync(locked);
     chmodSync(locked, 0o500);
     try {
       const r = await runCliAsync(args(join(locked, "state.json")));
       expect(r.status).toBe(2);
-      expect(verdictOf(r).verdict).toBe("state-save-failed");
+      // The lock file sits beside the state file, so taking it fails first.
+      expect(verdictOf(r).verdict).toBe("state-locked");
+      expect(String(verdictOf(r).message)).toMatch(/cannot create/);
+      expect(requests.filter((q) => q.method === "GET")).toHaveLength(0);
       expect(posts()).toHaveLength(0);
     } finally {
       chmodSync(locked, 0o700);
     }
   });
 
-  it("saves the state atomically: no temporary file is left behind", async () => {
-    const state = freshState();
+  it("a state save that fails: no signature leaves, no POST", async () => {
+    // Preloaded into the CLI: every renameSync fails, as a full disk or
+    // an I/O error would.
+    const preload = join(dir, "rename-fails.mjs");
+    writeFileSync(
+      preload,
+      [
+        'import fs from "node:fs";',
+        'import { syncBuiltinESMExports } from "node:module";',
+        "fs.renameSync = () => {",
+        '  throw Object.assign(new Error("EIO: simulated rename failure"), { code: "EIO" });',
+        "};",
+        "syncBuiltinESMExports();",
+      ].join("\n"),
+    );
+    const sub = join(dir, `save-fails-${++stateN}`);
+    mkdirSync(sub);
+    const state = join(sub, "state.json");
+    const r = await runCliAsync(args(state), ["--import", preload]);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-save-failed");
+    expect(posts()).toHaveLength(0);
+    // No state, no temporary file, no lock left behind.
+    expect(readdirSync(sub)).toEqual([]);
+  });
+
+  it("saves the state by renaming a new file over it, leaving no temporary file", async () => {
+    // A prior head at size 2, so the run replaces an existing file.
+    const sub = join(dir, `atomic-${++stateN}`);
+    mkdirSync(sub);
+    const state = join(sub, "state.json");
+    const root2 = treeRoot([leafHash("leaf-0"), leafHash("leaf-1")]);
+    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: root2 }));
+    const before = statSync(state).ino;
     const r = await runCliAsync(args(state));
     expect(r.status).toBe(0);
-    expect(existsSync(state)).toBe(true);
-    expect(existsSync(state + ".tmp")).toBe(false);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    // A rename puts a new inode at the path; writing in place would not.
+    expect(statSync(state).ino).not.toBe(before);
+    expect(readdirSync(sub).sort()).toEqual(["state.json"]);
   });
 
   it("prints the logId JSON-quoted, so it cannot forge a [witness] line", async () => {
@@ -832,7 +905,10 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     };
     const r = await runCliAsync(args(freshState()));
     expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/too large/);
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("fetch-failed");
+    expect(String(v.message)).toMatch(/too large/);
     expect(posts()).toHaveLength(0);
   });
 
@@ -844,7 +920,10 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     const started = Date.now();
     const r = await runCliAsync(args(freshState(), ["--timeout", "1"]));
     expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/timed out/);
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("fetch-failed");
+    expect(String(v.message)).toMatch(/timed out/);
     expect(Date.now() - started).toBeLessThan(3_500);
     expect(posts()).toHaveLength(0);
   });
@@ -871,6 +950,199 @@ describe("witness CLI — checks before cosigning (--once)", () => {
       d.child.kill("SIGKILL");
       await d.exited;
     }
+  });
+
+  // ── Second review: one process per state file, the saved head ──
+
+  const waitUntil = async (cond: () => boolean) => {
+    const until = Date.now() + 3_000;
+    while (!cond()) {
+      if (Date.now() > until) throw new Error("condition not met");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+
+  it("two runs on one state file: one signs, the other is refused as state-locked", async () => {
+    const state = freshState();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = 0;
+    sthHandler = (res) => {
+      held++;
+      void gate.then(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(honest()));
+      });
+    };
+    const a = runCliAsync(args(state));
+    await waitUntil(() => held === 1);
+    const b = await runCliAsync(args(state));
+    release();
+    const ra = await a;
+    expect(b.status).toBe(2);
+    expect(verdictOf(b).verdict).toBe("state-locked");
+    expect(ra.status).toBe(0);
+    expect(verdictOf(ra).verdict).toBe("witnessed");
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("recovers a stale lock whose process is gone", async () => {
+    const state = freshState();
+    const dead = spawnSync("node", ["-e", ""]).pid;
+    writeFileSync(state + ".lock", JSON.stringify({ pid: dead, startedAt: "2026-10-24T00:00:00.000Z" }));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(r.stderr).toMatch(/stale lock/);
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("refuses while a live process holds the lock, and leaves its lock alone", async () => {
+    const state = freshState();
+    const lock = JSON.stringify({ pid: process.pid, startedAt: "2026-10-24T00:00:00.000Z" });
+    writeFileSync(state + ".lock", lock);
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state + ".lock", "utf8")).toBe(lock);
+  });
+
+  it("refuses rather than steal a lock it cannot read", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", "not json");
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state + ".lock", "utf8")).toBe("not json");
+  });
+
+  it("POST answers 500, then the head with a new timestamp: resubmits the saved head byte for byte", async () => {
+    const state = freshState();
+    postStatus = [500];
+    const first = await runCliAsync(args(state));
+    expect(first.status).toBe(2);
+    rewrite = (b) => headWith(b, { timestamp: "2026-10-24T09:00:00.000Z" });
+    const second = await runCliAsync(args(state).filter((a) => a !== "--json"));
+    expect(second.status).toBe(0);
+    expect(second.stdout).toMatch(/re-signed/);
+    expect(posts()).toHaveLength(2);
+    expect(posts()[1].body).toEqual(posts()[0].body);
+    const saved = JSON.parse(readFileSync(state, "utf8")) as Record<string, unknown>;
+    expect(saved.lastTimestamp).toBe("2026-10-24T08:00:00.000Z");
+    expect(saved.pending).toBeUndefined();
+  });
+
+  it("refuses a head dated before the one it last saved", async () => {
+    const state = freshState();
+    const first = await runCliAsync(args(state));
+    expect(first.status).toBe(0);
+    rewrite = (b) => headWith(b, { timestamp: "2001-01-01T00:00:00.000Z" });
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(1);
+    expect(verdictOf(r).verdict).toBe("timestamp-decreased");
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("refuses a pending head re-dated earlier", async () => {
+    const state = freshState();
+    postStatus = [500];
+    await runCliAsync(args(state));
+    rewrite = (b) => headWith(b, { timestamp: "2001-01-01T00:00:00.000Z" });
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(1);
+    expect(verdictOf(r).verdict).toBe("timestamp-decreased");
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("escapes NEL, U+2028 and U+2029 in a log's error body", async () => {
+    postHandler = (res) => {
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.end("a\u0085[witness] forged\u2028[witness] forged\u2029[witness] forged");
+    };
+    const text = await runCliAsync(args(freshState()).filter((a) => a !== "--json"));
+    expect(text.status).toBe(2);
+    const all = text.stdout + text.stderr;
+    expect(all).not.toMatch(/[\u0085\u2028\u2029]/);
+    expect(all).toContain("\\u0085");
+    expect(all).toContain("\\u2028");
+    const json = await runCliAsync(args(freshState()));
+    expect(json.stdout).not.toMatch(/[\u0085\u2028\u2029]/);
+    expect(json.stdout.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("does not follow a redirect on the STH fetch", async () => {
+    sthHandler = (res) => {
+      res.writeHead(302, { location: `${otherBase}/api/transparency/sth` });
+      res.end();
+    };
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("fetch-failed");
+    expect(otherHits).toBe(0);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("does not follow a redirect on the cosignature POST", async () => {
+    postHandler = (res) => {
+      res.writeHead(307, { location: `${otherBase}/api/transparency/witness` });
+      res.end();
+    };
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("submit-failed");
+    expect(otherHits).toBe(0);
+  });
+
+  it("--json: a failed proof fetch is one fetch-failed line", async () => {
+    const state = freshState();
+    const root2 = treeRoot([leafHash("leaf-0"), leafHash("leaf-1")]);
+    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: root2 }));
+    proofHandler = (res) => {
+      res.writeHead(503);
+      res.end();
+    };
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    expect(verdictOf(r).verdict).toBe("fetch-failed");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("--json: a failed STH fetch is one fetch-failed line", async () => {
+    sthHandler = (res) => {
+      res.writeHead(500);
+      res.end();
+    };
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(2);
+    expect(r.stdout.trim().split("\n")).toHaveLength(1);
+    expect(verdictOf(r).verdict).toBe("fetch-failed");
+  });
+
+  it.each(["0", "3601", "abc", "-5"])("--timeout %s is a usage error", async (t) => {
+    const r = await runCliAsync(args(freshState(), ["--timeout", t]));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--timeout/);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("--timeout 1.0001 is accepted", async () => {
+    const r = await runCliAsync(args(freshState(), ["--timeout", "1.0001"]));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+  });
+
+  it.each(["abc", "30", "59.9"])("daemon --interval %s is a usage error", async (i) => {
+    const r = await runCliAsync(
+      args(freshState(), ["--interval", i]).filter((a) => a !== "--once"),
+    );
+    expect(r.status).toBe(2);
+    expect(r.stderr).toMatch(/--interval/);
+    expect(requests).toHaveLength(0);
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {
