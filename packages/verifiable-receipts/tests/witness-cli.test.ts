@@ -29,6 +29,7 @@ import {
   symlinkSync,
   lstatSync,
   utimesSync,
+  linkSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { basename, join } from "node:path";
@@ -845,14 +846,22 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     mkdirSync(sub);
     const state = join(sub, "state.json");
     const root2 = treeRoot([leafHash("leaf-0"), leafHash("leaf-1")]);
-    writeFileSync(state, JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: root2 }));
-    const before = statSync(state).ino;
+    const original = JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: root2 });
+    writeFileSync(state, original);
+    // A second name for the original file keeps its inode allocated for
+    // the whole run, so the file system cannot hand that inode number to
+    // a new file (ext4 reuses a freed inode at once).
+    const orig = state + ".orig";
+    linkSync(state, orig);
     const r = await runCliAsync(args(state));
     expect(r.status).toBe(0);
     expect(verdictOf(r).verdict).toBe("witnessed");
-    // A rename puts a new inode at the path; writing in place would not.
-    expect(statSync(state).ino).not.toBe(before);
-    expect(readdirSync(sub).sort()).toEqual(["state.json"]);
+    // A rename puts another file at the path; the original is untouched.
+    // Writing in place would change the original's bytes, seen through
+    // the second name, and leave one inode behind both names.
+    expect(statSync(state).ino).not.toBe(statSync(orig).ino);
+    expect(readFileSync(orig, "utf8")).toBe(original);
+    expect(readdirSync(sub).sort()).toEqual(["state.json", "state.json.orig"]);
   });
 
   it("prints the logId JSON-quoted, so it cannot forge a [witness] line", async () => {
