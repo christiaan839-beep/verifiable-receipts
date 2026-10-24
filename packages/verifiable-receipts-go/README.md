@@ -72,8 +72,9 @@ func main() {
 4. `Canonical` nests at most 64 deep, counted on its text before it is
    decoded, and parses as a JSON object.
 5. Every field in `Envelope` is in that object with an equal JSON value
-   (numbers by value, integers exactly, objects regardless of key
-   order). A field that disagrees, such as `"overall": "fail"` beside a
+   (numbers by value, objects regardless of key order; a number of
+   magnitude 2^53 or more equals nothing, as in the TypeScript and
+   Python verifiers, since JavaScript cannot tell 2^53 from 2^53 + 1). A field that disagrees, such as `"overall": "fail"` beside a
    canonical that says `"pass"`, or that the canonical does not contain,
    fails the check.
 

@@ -188,10 +188,10 @@ any field, and then:
    or `null` `contentHash` is not checked; any other value MUST be a
    string and is checked: a non-string value → reject, and so does the
    empty string.
-4. Calls the host's Ed25519 verification primitive
-   (e.g. `crypto.verify(null, message, publicKey, signature)` in
-   Node.js, or `ed25519.verify` in any other library) with the
-   canonical bytes, the decoded signature, and the verification key.
+4. Verifies the decoded signature over the canonical bytes under the
+   verification key with Ed25519
+   ([RFC 8032 §5.1.7](https://www.rfc-editor.org/rfc/rfc8032#section-5.1.7)),
+   making the choices of §7.3, which every verifier MUST make.
 5. Rejects `canonical` if its text nests deeper than 64 (§7.2); then
    parses it as JSON and rejects unless it is a JSON object.
 6. For every other top-level field of the receipt (all but
@@ -274,7 +274,54 @@ field 5,000 deep, CPython's default recursion limit is 1,000, and Go's
 > fixtures `v2-invalid-deep-nesting.json` and
 > `v2-invalid-nesting-at-limit.json` test the limit on the receipt.
 
-### 7.3 HTTP API (informational)
+### 7.3 Ed25519 verification
+
+RFC 8032 lets verifiers differ in how they check a signature, and two
+verifiers that differ accept different signatures. Step 4 makes these
+choices. With the 64-byte signature split into `R` (its first 32 bytes)
+and `S` (its last 32, a little-endian integer), the public key `A` (32
+bytes), the base point `B`, the group order `L`, and the message `M`
+(the canonical bytes):
+
+- `S` MUST be less than `L`; otherwise the signature is invalid. So
+  `S + L`, which satisfies the same equation, is rejected, and a
+  signature has one valid `S`.
+- The check is cofactorless: the signature is valid iff
+  `[S]B = R + [k]A`, where `k` is SHA-512(`R` ‖ `A` ‖ `M`) read as a
+  little-endian integer, mod `L`, over the bytes of `R` and `A` exactly
+  as given. A verifier MUST NOT use the cofactored check
+  `[8][S]B = [8]R + [8][k]A`, which RFC 8032 §5.1.7 also allows: it
+  accepts signatures whose `R` or `A` has a small-order component, which
+  the cofactorless check rejects for most messages.
+- `R` is compared as encoded: the signature is valid iff the encoding
+  of `[S]B − [k]A` equals the 32 bytes of `R`. An `R` that is not the
+  canonical encoding of a point (a y-coordinate of p or more, or x = 0
+  with the sign bit set) never matches, even when it would decode to
+  the right point.
+- `A` is used as given. A key that is a point of small order, or that
+  is not the canonical encoding of its point (RFC 8032 §5.1.3 would
+  refuse to decode it), is not rejected. This is what the libraries
+  below do; it departs from the strict decoding of RFC 8032 §5.1.3,
+  and it is safe only because the verifier does not choose the key
+  (next paragraph).
+
+Node.js `crypto.verify` (OpenSSL), Python `cryptography` (OpenSSL) and
+Go `crypto/ed25519`, which the three verifiers of this repository call,
+verify this way, and a review found that Chromium's WebCrypto does too.
+On 24 October 2026 Node.js 22.23.2 (OpenSSL 3.5.7), `cryptography`
+50.0.2 (OpenSSL 4.0.3) and Go 1.27.3 gave the same verdict on each of
+twelve signatures that tell these choices apart: `S + L`, keys of order
+1 and 8, keys and `R` values that are non-canonical encodings, and keys
+and `R` values with an order-8 component.
+
+Under a small-order key some signatures verify every message: under
+the key `01 00 … 00` (the identity point), `R = 01 00 … 00` with
+`S = 0` does. Such a key proves nothing. A verifier MUST take the
+verification key from the issuer by a route it trusts (§6.3), never
+from the receipt, and an issuer MUST NOT publish a key that is a point
+of small order or a non-canonical encoding.
+
+### 7.4 HTTP API (informational)
 
 Issuers MAY expose a verification endpoint for clients without
 Ed25519 libraries:
@@ -328,6 +375,8 @@ For VAOS 2.0 specifically:
 |                                     | `@sovereign-matrix/verifiable-receipts` is the conformance test.                                                        |
 | Deeply nested JSON                  | A receipt or canonical nested deeper than 64 is rejected before it is walked or parsed (§7.2), so no input exhausts    |
 |                                     | a verifier's stack or makes verifiers in different languages disagree.                                                  |
+| Verifiers that accept different     | Every verifier makes the choices of §7.3: `S < L`, the cofactorless check, `R` compared as encoded.                     |
+| signatures                          |                                                                                                                         |
 
 ---
 

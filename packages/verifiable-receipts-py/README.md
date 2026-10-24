@@ -78,7 +78,9 @@ print(result.reason)  # None, or why it failed
 4. `canonical` nests at most 64 deep, counted on its text before it is
    parsed, and parses as a JSON object.
 5. Every other field of the receipt is in that object with an equal JSON
-   value (numbers by value, objects regardless of key order). A field
+   value (numbers by value, objects regardless of key order; a number of
+   magnitude 2^53 or more equals nothing, as in the TypeScript and Go
+   verifiers, since JavaScript cannot tell 2^53 from 2^53 + 1). A field
    that disagrees, such as `"overall": "fail"` beside a canonical that
    says `"pass"`, or that the canonical does not contain, fails the
    check.

@@ -157,6 +157,9 @@ throw) when one fails.
   looking inside it, so no input makes a verifier recurse. A verifier
   that parses a proof or tree head from JSON text MAY reject text that
   nests deeper than 64 (VAOS 2.0 §7.2) before parsing it.
+- Signatures on tree heads and cosignatures are verified as VAOS 2.0
+  §7.3 says: `S` less than the group order, the cofactorless check,
+  and `R` compared as encoded.
 
 Test vectors: `packages/verifiable-receipts/conformance/fixtures/`.
 `inclusion-uppercase-hex.json`, `inclusion-0x-prefix.json`,

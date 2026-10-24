@@ -160,7 +160,9 @@ then:
 3. Base64-decodes each half. Reject if either fails to decode.
 4. Recomputes the canonical projection of the receipt per §5.
 5. Calls the host's Ed25519 verifier with the canonical bytes, the
-   decoded Ed25519 signature, and the Ed25519 verification key.
+   decoded Ed25519 signature, and the Ed25519 verification key. It
+   MUST verify as VAOS 2.0 §7.3 says: `S` less than the group order,
+   the cofactorless check, and `R` compared as encoded.
 6. Calls the host's ML-DSA-65 verifier with the canonical bytes,
    the decoded ML-DSA-65 signature, and the ML-DSA-65 verification
    key.

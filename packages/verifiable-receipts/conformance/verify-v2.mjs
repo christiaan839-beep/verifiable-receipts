@@ -24,9 +24,11 @@
  *      of that object (deep JSON-value equality); a field that
  *      disagrees, or that the canonical lacks, is rejected.
  *
- * JavaScript reads every JSON number as an IEEE 754 double, so integers
- * beyond 2^53 that differ only past that precision compare equal here,
- * where the Python and Go verifiers compare them exactly.
+ * JavaScript reads every JSON number as an IEEE 754 double, so it cannot
+ * tell 2^53 from 2^53 + 1. In step 6 a number of magnitude 2^53 or more,
+ * in the field or in the canonical's value, equals nothing, here and in
+ * the Python and Go verifiers (VAOS 2.0 §7, step 6): all three reject
+ * such a field rather than compare it differently.
  *
  * With both sides at most 64 deep, the recursive jsonEqual below never
  * recurses deeper than 64 when verifyV2Receipt calls it, so no receipt
