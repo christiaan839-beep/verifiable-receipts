@@ -10,7 +10,7 @@
 
 **Design:** `docs/design/2026-10-23-ontology-and-proof-explorer.md` (verifiable-receipts), Part 2.
 
-**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `fd2390b`, the `VR_REF`: 116 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 32 Playwright tests on Chromium (Largest Contentful Paint 1.27 to 1.29 s under the fast 3G profile), ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export of `fd2390b`. `static/check.js` is 26,282 bytes, 8,973 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
+**Prototype:** every file below was written and run in a scratch copy on 23 and 24 October 2026, task by task in this order, against verifiable-receipts `main` at `fd2390b`, the `VR_REF`: 116 node tests passed (and the property tests at `FC_NUM_RUNS=2000`), 18 Python tests on 3.12 and on 3.9, 32 Playwright tests on Chromium (Largest Contentful Paint 1.27 to 1.29 s under the fast 3G profile), ruff and ESLint clean, zizmor pedantic with no findings, and `scripts/check-vendor.sh` passed against an export and a clone of `fd2390b` while failing, each with its `::error` line, in 21 broken copies (bad, missing, empty or extra `SHA256SUMS` lines, a wrong hash, an extra, missing or changed file in each vendored directory, an empty or missing `src/vendor/`, a wrong upstream path, the wrong directory, and an upstream clone at the wrong `HEAD`). `static/check.js` is 26,282 bytes, 8,973 compressed. Not run: Playwright on Firefox and WebKit, the GitHub workflows, the deploy, and the `gh` steps of Task 17.
 
 **Repository:** `~/Projects/receipts-explorer` (new), published in Task 17 as github.com/christiaan839-beep/receipts-explorer.
 
@@ -57,10 +57,11 @@
 | `eslint.config.js` | Lint rules that keep `src/` a page that parses no HTML, stores nothing, loads no code, uses no Node API and talks only to the log | 1 |
 | `pyproject.toml` | ruff settings | 1 |
 | `.gitignore`, `.npmrc`, `.claude/launch.json`, `LICENSE` | Housekeeping: ignored files, exact saves and enforced engines | 1 |
+| `.gitattributes` | No line-ending conversion for vendored and fixture files | 1 |
 | `test/lint.test.ts` | Proves every lint rule on `src/` bites | 3 |
-| `third_party/verifiable-receipts/` | `VR_REF`, `LICENSE`, `README.md`, `SHA256SUMS`, `verify-v2.mjs`, `ontology.md` | 2 |
+| `third_party/verifiable-receipts/` | `VR_REF`, `LICENSE`, `README.md`, `SHA256SUMS`, `verify-v2.mjs`, `verify-v2.d.mts`, `ontology.md` | 2 |
 | `test/fixtures/conformance/`, `test/fixtures/schemas/` | Test vectors copied from `VR_REF` | 2 |
-| `scripts/check-vendor.sh` | The drift check | 2 |
+| `scripts/check-vendor.sh` | The drift check, which fails closed; Task 3 adds the ports to it | 2, 3 |
 | `src/bytes.ts` | UTF-8, hex, base64, SHA-256 and Ed25519 verify on WebCrypto | 3 |
 | `src/vendor/verifiable-receipts/receipt.ts` | The browser port of `verify-v2.mjs` | 3 |
 | `src/vendor/verifiable-receipts/transparency.ts` | The browser port of the inclusion-proof verifier | 3 |
@@ -116,7 +117,7 @@ git commit --author="$A" -m "<subject>" -m "<body>" -m "Co-Authored-By: Claude O
 ### Task 1: the repository and its tools
 
 **Files:**
-- Create: `LICENSE` (copied), `.gitignore`, `.npmrc`, `package.json`, `package-lock.json` (by npm), `tsconfig.json`, `src/tsconfig.json`, `eslint.config.js`, `pyproject.toml`, `.claude/launch.json`
+- Create: `LICENSE` (copied), `.gitignore`, `.gitattributes`, `.npmrc`, `package.json`, `package-lock.json` (by npm), `tsconfig.json`, `src/tsconfig.json`, `eslint.config.js`, `pyproject.toml`, `.claude/launch.json`
 
 - [ ] **Step 1:** create the repository with a root commit that holds only the licence, then branch:
 
@@ -152,6 +153,15 @@ npm-debug.log*
 *.key
 .claude/settings.local.json
 src/lint-probe-*.ts
+```
+
+`.gitattributes`:
+
+```text
+# Vendored and fixture files are compared byte for byte with verifiable-receipts:
+# git must never convert their line endings.
+test/fixtures/** -text
+third_party/** -text
 ```
 
 `.npmrc`:
@@ -408,7 +418,7 @@ ignore = ["S101", "S603"]
 }
 ```
 
-Two type-check projects: `tsconfig.json` covers the tests, the end-to-end tests and the tools, with Node's types, and type-checks the `src/` files they import under those types too; `src/tsconfig.json` covers `src/` alone with `"types": []`, so `node:crypto`, `Buffer` or `process` in the page fails to compile. ESLint's project service picks the nearest `tsconfig.json`, so `src/` is linted without Node's types as well. In `eslint.config.js`, banned properties are matched by name on any object, so `globalThis.fetch`, `window.fetch` and `self.fetch` are caught as well as `fetch`; ESLint replaces a rule's options per block, so the block for everything but `src/log-client.ts` repeats the full lists and adds `fetch`. `test/lint.test.ts` (Task 3) proves each rule bites. `*.pem` is deliberately not ignored: the test fixtures are public keys.
+Two type-check projects: `tsconfig.json` covers the tests, the end-to-end tests and the tools, with Node's types, and type-checks the `src/` files they import under those types too; `src/tsconfig.json` covers `src/` alone with `"types": []`, so `node:crypto`, `Buffer` or `process` in the page fails to compile. ESLint's project service picks the nearest `tsconfig.json`, so `src/` is linted without Node's types as well. In `eslint.config.js`, banned properties are matched by name on any object, so `globalThis.fetch`, `window.fetch` and `self.fetch` are caught as well as `fetch`; ESLint replaces a rule's options per block, so the block for everything but `src/log-client.ts` repeats the full lists and adds `fetch`. `test/lint.test.ts` (Task 3) proves each rule bites. `*.pem` is deliberately not ignored: the test fixtures are public keys. `.gitattributes` is here, not in Task 2, so that it is in force before the first vendored or fixture file is added; those files are compared byte for byte, and must never have their line endings converted.
 The versions are the newest releases published by 10 October 2026, 14 days before this plan; `overrides` holds `playwright-core` at 1.64.0, because `@axe-core/playwright` would otherwise pull 1.64.1, released on 14 October.
 
 - [ ] **Step 3:** install, and check what was installed:
@@ -434,49 +444,90 @@ git commit --author="$A" -m "Tools: TypeScript, esbuild, ESLint, fast-check, Pla
 
 **Files:**
 - Create: `scripts/check-vendor.sh`, `third_party/verifiable-receipts/README.md`, `third_party/verifiable-receipts/SHA256SUMS`, `test/fixtures/conformance/README.md`, `test/fixtures/schemas/README.md`
-- Copy from `VR_REF`: `third_party/verifiable-receipts/{VR_REF,LICENSE,verify-v2.mjs,ontology.md}`, `test/fixtures/conformance/*.json`, `test/fixtures/conformance/public-key.pem`, `test/fixtures/schemas/{tree-head.json,cosignature.json}`
+- Copy from `VR_REF`: `third_party/verifiable-receipts/{VR_REF,LICENSE,verify-v2.mjs,verify-v2.d.mts,ontology.md}`, `test/fixtures/conformance/*.json`, `test/fixtures/conformance/public-key.pem`, `test/fixtures/schemas/{tree-head.json,cosignature.json}`
 
-- [ ] **Step 1:** create the drift check:
+- [ ] **Step 1:** create the drift check, and make it executable:
 
 `scripts/check-vendor.sh`:
 
 ```bash
 #!/usr/bin/env bash
 # Checks every file copied from verifiable-receipts against a checkout of it
-# at the commit in third_party/verifiable-receipts/VR_REF. CI runs it in the
-# vendor job; run it locally against an export of that commit.
+# at the commit in third_party/verifiable-receipts/VR_REF, and fails closed:
+# each vendored directory must hold exactly the files listed here, and
+# SHA256SUMS must list exactly the two sources the browser ports are made
+# from. CI runs it in the vendor job; run it locally, from the repository
+# root, against an export of that commit.
 #
 # Usage: bash scripts/check-vendor.sh <verifiable-receipts checkout at VR_REF>
 set -euo pipefail
-shopt -s nullglob
+export LC_ALL=C
+
+fail() { echo "::error file=$1::$2" >&2; exit 1; }
+# The files directly in a directory, one per line, sorted; dotfiles included.
+listing() { (cd "$1" && find . -mindepth 1 -maxdepth 1 -print | sed 's|^\./||' | sort); }
+# Fails unless directory $1 holds exactly the names on stdin.
+exactly() {
+  local want got
+  [[ -d "$1" ]] || fail "$1" "is missing"
+  want=$(sort)
+  got=$(listing "$1")
+  [[ -n "$want" ]] || fail "$1" "the expected listing is empty"
+  [[ "$got" == "$want" ]] || fail "$1" "holds $(echo "$got" | tr '\n' ' ')but must hold exactly $(echo "$want" | tr '\n' ' ')"
+}
 
 upstream="${1:?usage: check-vendor.sh <verifiable-receipts checkout at VR_REF>}"
 tp=third_party/verifiable-receipts
 up="$upstream/packages/verifiable-receipts"
-fail() { echo "::error file=$1::$2" >&2; exit 1; }
+
+# Preflight: run from this repository's root, against a verifiable-receipts tree.
+[[ -f package.json && -f "$tp/VR_REF" ]] && grep -q '"name": "receipts-explorer"' package.json ||
+  fail scripts/check-vendor.sh "run it from the receipts-explorer repository root"
+[[ -d "$up/conformance/fixtures" ]] || fail scripts/check-vendor.sh "$upstream is not a verifiable-receipts tree"
 
 ref=$(cat "$tp/VR_REF")
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || fail "$tp/VR_REF" "must be one full commit SHA"
-# The sources the ports in src/vendor/ were made from: when either changes
-# upstream, the port must be brought up to date before VR_REF moves.
-(cd "$upstream" && sha256sum -c --quiet "$OLDPWD/$tp/SHA256SUMS") || fail "$tp/SHA256SUMS" "a ported source changed; update the port"
+if [[ -e "$upstream/.git" ]]; then
+  head=$(git -C "$upstream" rev-parse HEAD)
+  [[ "$head" == "$ref" ]] || fail "$tp/VR_REF" "the upstream checkout is at $head, not $ref"
+fi
+
+# SHA256SUMS: exactly the two ported sources, each with a matching hash.
+# sha256sum skips lines it cannot read and passes an empty file, so the
+# listed paths are checked first.
+[[ -f "$tp/SHA256SUMS" ]] || fail "$tp/SHA256SUMS" "is missing"
+sums_paths=$(sed -E 's/^[0-9a-f]{64}  //' "$tp/SHA256SUMS" | sort)
+[[ "$sums_paths" == "$(printf '%s\n' packages/verifiable-receipts/conformance/verify-v2.mjs packages/verifiable-receipts/src/transparency.ts | sort)" ]] ||
+  fail "$tp/SHA256SUMS" "must list exactly conformance/verify-v2.mjs and src/transparency.ts, one '<sha256>  <path>' line each"
+(cd "$upstream" && sha256sum --strict -c --quiet "$OLDPWD/$tp/SHA256SUMS") ||
+  fail "$tp/SHA256SUMS" "a ported source changed; update the port"
+
+# Exactly these files, each identical to VR_REF.
+printf '%s\n' LICENSE README.md SHA256SUMS VR_REF ontology.md verify-v2.d.mts verify-v2.mjs | exactly "$tp"
 cmp "$up/conformance/verify-v2.mjs" "$tp/verify-v2.mjs" || fail "$tp/verify-v2.mjs" "differs from VR_REF"
+cmp "$up/conformance/verify-v2.d.mts" "$tp/verify-v2.d.mts" || fail "$tp/verify-v2.d.mts" "differs from VR_REF"
 cmp "$up/LICENSE" "$tp/LICENSE" || fail "$tp/LICENSE" "differs from VR_REF"
 cmp "$upstream/docs/ontology.md" "$tp/ontology.md" || fail "$tp/ontology.md" "differs from VR_REF"
-diff <(cd "$up/conformance/fixtures" && ls) <(cd test/fixtures/conformance && ls -- *.json) || fail test/fixtures/conformance "the fixture list differs from VR_REF"
+
+{ listing "$up/conformance/fixtures"; printf '%s\n' README.md public-key.pem; } | exactly test/fixtures/conformance
 for f in "$up"/conformance/fixtures/*.json; do
   cmp "$f" "test/fixtures/conformance/$(basename "$f")" || fail "test/fixtures/conformance/$(basename "$f")" "differs from VR_REF"
 done
 cmp "$up/conformance/public-key.pem" test/fixtures/conformance/public-key.pem || fail test/fixtures/conformance/public-key.pem "differs from VR_REF"
+
+printf '%s\n' README.md cosignature.json tree-head.json | exactly test/fixtures/schemas
 for f in tree-head.json cosignature.json; do
   cmp "$upstream/schemas/examples/$f" "test/fixtures/schemas/$f" || fail "test/fixtures/schemas/$f" "differs from VR_REF"
 done
-for f in src/vendor/verifiable-receipts/*.ts; do
-  grep -q "third_party/verifiable-receipts/VR_REF" "$f" || fail "$f" "does not name third_party/verifiable-receipts/VR_REF"
-done
+
 echo "every vendored file matches verifiable-receipts at $ref"
 ```
 
+```bash
+chmod 755 scripts/check-vendor.sh
+```
+
+It fails closed. `SHA256SUMS` must list exactly the two ported sources, because `sha256sum -c` skips lines it cannot read and passes an empty file; each directory must hold exactly the files named here, dotfiles included, compared as sorted `LC_ALL=C` listings; it must run from this repository's root, against a verifiable-receipts tree, and when that tree is a git checkout its `HEAD` must be `VR_REF`. It does not check `src/vendor/` yet: Task 3, which creates the ports, adds that check, so no version of the script ever accepts a missing or empty `src/vendor/`.
 - [ ] **Step 2:** `VR_REF` is `fd2390b`, the merge of `fix/empty-contenthash` (PR #20). Confirm it is on `main` and holds what this plan copies:
 
 ```bash
@@ -525,11 +576,14 @@ Licence: Apache License 2.0, in `LICENSE` beside this file (copied from
 `packages/verifiable-receipts/LICENSE`).
 
 Copied unchanged, and checked byte for byte against `VR_REF` in CI
-(`.github/workflows/ci.yml`, job `vendor`):
+(`.github/workflows/ci.yml`, job `vendor`, which runs `scripts/check-vendor.sh`;
+each directory must hold exactly these files and no others):
 
 - `ontology.md`, from `docs/ontology.md`: the term pages are generated from it.
+- `verify-v2.d.mts`, from `packages/verifiable-receipts/conformance/verify-v2.d.mts`:
+  the types of the original verifier, so the tests import it without a type error.
 - `verify-v2.mjs`, from `packages/verifiable-receipts/conformance/verify-v2.mjs`:
-  the original receipt verifier, which `test/properties.test.ts` runs beside
+  the original receipt verifier, which `test/port.properties.test.ts` runs beside
   the browser port to check that both give the same verdict and reason.
 - `test/fixtures/conformance/`, from `packages/verifiable-receipts/conformance/fixtures/`
   and `public-key.pem`.
@@ -591,6 +645,7 @@ Expected: both `OK`. If either fails, `VR_REF` is not `fd2390b`: stop and check 
 show() { git -C $VR show "$VR_REF:$1"; }
 show packages/verifiable-receipts/LICENSE > third_party/verifiable-receipts/LICENSE
 show packages/verifiable-receipts/conformance/verify-v2.mjs > third_party/verifiable-receipts/verify-v2.mjs
+show packages/verifiable-receipts/conformance/verify-v2.d.mts > third_party/verifiable-receipts/verify-v2.d.mts
 show docs/ontology.md > third_party/verifiable-receipts/ontology.md
 for f in $(git -C $VR ls-tree --name-only "$VR_REF" packages/verifiable-receipts/conformance/fixtures/); do
   show "$f" > "test/fixtures/conformance/$(basename "$f")"
@@ -605,17 +660,44 @@ bash scripts/check-vendor.sh "$UP"
 Expected: `27` (25 fixtures, `public-key.pem`, `README.md`), then `every vendored file matches verifiable-receipts at <VR_REF>`.
 
 - [ ] **Step 6:** prove the check catches a change: append a space to `third_party/verifiable-receipts/ontology.md`, rerun `bash scripts/check-vendor.sh "$UP"`, and confirm `::error file=third_party/verifiable-receipts/ontology.md::differs from VR_REF`; then `show docs/ontology.md > third_party/verifiable-receipts/ontology.md` and rerun to the `matches` line.
-- [ ] **Step 7:** commit:
+- [ ] **Step 7:** prove the guards bite. Run each case in a scratch copy of the repository, so the real files are never touched; each must exit 1 with the `::error` shown, and the unchanged copy must still pass:
+
+```bash
+case_() {
+  local w; w=$(mktemp -d) && rsync -a --exclude node_modules ./ "$w/"
+  (cd "$w" && eval "$1" && bash "$w/scripts/check-vendor.sh" "${2:-$UP}"); echo "exit $?"
+}
+S=third_party/verifiable-receipts/SHA256SUMS
+case_ ":"                                                   # passes
+case_ "sed -i '' '1s/^/x/' $S; echo junk >> $S"            # SHA256SUMS::must list exactly …
+case_ "sed -i '' '/transparency/d' $S"                      # SHA256SUMS::must list exactly …
+case_ ": > $S"                                              # SHA256SUMS::must list exactly …
+case_ "touch third_party/verifiable-receipts/notes.txt"     # third_party/verifiable-receipts::holds … but must hold exactly …
+case_ "touch test/fixtures/conformance/stray.txt"           # test/fixtures/conformance::holds …
+case_ "touch test/fixtures/schemas/extra.json"              # test/fixtures/schemas::holds …
+case_ ":" /nonexistent                                      # … is not a verifiable-receipts tree
+case_ "cd scripts"                                          # run it from the receipts-explorer repository root
+CLONE=$(mktemp -d) && git clone -q $VR "$CLONE" && git -C "$CLONE" checkout -q "$VR_REF~1"
+case_ ":" "$CLONE"                                          # VR_REF::the upstream checkout is at …, not …
+```
+
+(`$VR_REF~1` is the commit before the merge, so the clone is at the wrong `HEAD`. The prototype ran each of these, and the `src/vendor/` cases of Task 3: 21 cases, each exited 1 with its `::error` line, and the unchanged copy passed.)
+
+- [ ] **Step 8:** commit, and confirm the script is committed executable:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
-git commit --author="$A" -m "Vendor verifiable-receipts at VR_REF, with a drift check" -m "The conformance fixtures and key, the schema examples, docs/ontology.md and the original verify-v2.mjs, byte for byte; SHA-256 of the two sources the browser ports are made from. scripts/check-vendor.sh compares them all with a checkout at VR_REF." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit --author="$A" -m "Vendor verifiable-receipts at VR_REF, with a drift check" -m "The conformance fixtures and key, the schema examples, docs/ontology.md and the original verify-v2.mjs and its types, byte for byte; SHA-256 of the two sources the browser ports are made from. scripts/check-vendor.sh compares them all with a checkout at VR_REF and fails closed: exact file sets, exact SHA256SUMS paths, the upstream HEAD, and where it runs." -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+```bash
+git ls-files -s scripts/check-vendor.sh   # expect: 100755 …
 ```
 
 ### Task 3: the browser port of the verifier, and keys
 
 **Files:**
 - Create: `test/helpers.ts`, `test/conformance.test.ts`, `test/keys.test.ts`, `test/lint.test.ts`
+- Modify: `scripts/check-vendor.sh` (the check of the ports, before its last line)
 - Create: `src/bytes.ts`, `src/vendor/verifiable-receipts/receipt.ts`, `src/vendor/verifiable-receipts/transparency.ts`, `src/keys.ts`
 
 - [ ] **Step 1:** write the tests first:
@@ -1287,7 +1369,30 @@ export async function parsePublicKeys(text: string, source: string): Promise<Pub
 }
 ```
 
-- [ ] **Step 6:** run the whole check:
+- [ ] **Step 6:** add the ports to the drift check. In `scripts/check-vendor.sh`, insert this just before the last line (`echo "every vendored file matches …"`):
+
+```bash
+# The ports: exactly these files, each naming VR_REF.
+printf '%s\n' receipt.ts transparency.ts | exactly src/vendor/verifiable-receipts
+for f in receipt.ts transparency.ts; do
+  grep -q "third_party/verifiable-receipts/VR_REF" "src/vendor/verifiable-receipts/$f" ||
+    fail "src/vendor/verifiable-receipts/$f" "does not name third_party/verifiable-receipts/VR_REF"
+done
+```
+
+From now on `src/vendor/verifiable-receipts/` must exist and hold exactly these two files. Run it, then prove the new check bites, in scratch copies as in Task 2, Step 7 (define `case_` and `UP` as there):
+
+```bash
+bash scripts/check-vendor.sh "$UP"
+case_ "touch src/vendor/verifiable-receipts/extra.ts"      # src/vendor/verifiable-receipts::holds extra.ts …
+case_ "rm src/vendor/verifiable-receipts/*.ts"             # src/vendor/verifiable-receipts::holds  but must hold exactly …
+case_ "rm -r src/vendor"                                   # src/vendor/verifiable-receipts::is missing
+case_ "sed -i '' 's|VR_REF|REF|g' src/vendor/verifiable-receipts/receipt.ts"   # …/receipt.ts::does not name …
+```
+
+Expected: the `matches` line, then `exit 1` with each `::error`.
+
+- [ ] **Step 7:** run the whole check:
 
 ```bash
 npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
@@ -1295,11 +1400,11 @@ npm run typecheck && npx eslint . && npm test 2>&1 | grep -E '^# (pass|fail)'
 
 Expected: tsc and ESLint print nothing; `# pass 35`, `# fail 0` (26 conformance: the count and 25 fixtures; 8 keys; 1 lint).
 
-- [ ] **Step 7:** prove the guards bite.
+- [ ] **Step 8:** prove the type and lint guards bite.
   - Lint: delete `"setHTMLUnsafe",` from `eslint.config.js`, run `node --test test/lint.test.ts`, and confirm `# fail 1` with `el.setHTMLUnsafe(s); not flagged by no-restricted-properties`. Restore the line.
   - Types: write `src/tsc-probe.ts` holding `import { createHash } from "node:crypto"; export const h = createHash("sha256"); export const b = Buffer.from("x"); export const e = process.env;`, run `npx tsc -p src/tsconfig.json`, and confirm `TS2307: Cannot find module 'node:crypto'` and `TS2591: Cannot find name 'Buffer'` and `'process'`. Move the probe to `~/.Trash/`.
 
-- [ ] **Step 8:** commit:
+- [ ] **Step 9:** commit:
 
 ```bash
 gitleaks git --pre-commit --staged --no-banner   # expect: no leaks found
@@ -1385,7 +1490,6 @@ import fc from "fast-check";
 
 import { verifyV2Receipt } from "../src/vendor/verifiable-receipts/receipt.ts";
 import { innerHash, leafHash, verifyInclusionProof } from "../src/vendor/verifiable-receipts/transparency.ts";
-// @ts-expect-error: the original is plain JavaScript with no type declarations here.
 import { verifyV2Receipt as original } from "../third_party/verifiable-receipts/verify-v2.mjs";
 import { makeKey, signReceipt } from "./helpers.ts";
 import { body, mutate, mutation } from "./mutations.ts";
@@ -1395,14 +1499,13 @@ fc.configureGlobal({ numRuns: Number.isSafeInteger(NUM_RUNS) && NUM_RUNS > 0 ? N
 
 const issuer = await makeKey();
 const originalKey = createPublicKey(issuer.pem);
-const verifyOriginal = original as (r: unknown, k: unknown) => { ok: boolean; reason?: string };
 
 describe("the browser port agrees with the original verifier", () => {
   it("same verdict and reason on signed receipts with changes", async () => {
     await fc.assert(
       fc.asyncProperty(body, mutation, mutation, async (b, m1, m2) => {
         const receipt = mutate(mutate(await signReceipt(b, issuer.privateKey), m1), m2);
-        assert.deepEqual(await verifyV2Receipt(receipt, issuer.publicKey.key), verifyOriginal(receipt, originalKey));
+        assert.deepEqual(await verifyV2Receipt(receipt, issuer.publicKey.key), original(receipt, originalKey));
       }),
     );
   });
@@ -1442,7 +1545,7 @@ describe("inclusion proofs", () => {
 });
 ```
 
-`port.properties.test.ts` imports the unchanged original, `third_party/verifiable-receipts/verify-v2.mjs`, which uses `node:crypto`: the two verifiers judge the same receipts and must give the same verdict and reason.
+`port.properties.test.ts` imports the unchanged original, `third_party/verifiable-receipts/verify-v2.mjs`, which uses `node:crypto`, with its upstream types from `verify-v2.d.mts`, so the import needs no `@ts-expect-error`: the two verifiers judge the same receipts and must give the same verdict and reason.
 
 - [ ] **Step 2:** run, with ten times the default cases:
 
@@ -5478,7 +5581,7 @@ updates:
       default-days: 14
 ```
 
-`zizmor.yml` and `scorecard.yml` are receipts-log's, unchanged.
+`zizmor.yml` and `scorecard.yml` are receipts-log's, unchanged. The `vendor` job checks that `VR_REF` is on `main`, checks it out, and runs `scripts/check-vendor.sh` against that checkout, which also requires the checkout's `HEAD` to be `VR_REF`.
 
 - [ ] **Step 2:** pin ruff by hash, with packages at least 14 days old (replace the date with today minus 14 days):
 
