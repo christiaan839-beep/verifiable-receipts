@@ -224,12 +224,13 @@ function printHelp() {
       "  1  The log misbehaved: fork / rewrite, canonical not matching its",
       "     fields, another logId, bad log signature, a timestamp earlier",
       "     than the saved one (do NOT auto-recover; investigate)",
-      "  2  Usage error, a fetch that failed, timed out, was redirected or",
-      "     was too large, malformed STH, a bad state file or one that",
-      "     cannot be saved, a state file locked by another witness",
-      "     process (state-locked) or in a directory it cannot write",
-      "     (state-unwritable), a failed submission (resubmitted next poll, as",
-      "     saved), or a v3= STH with --log-public-key",
+      "  2  Usage error; lock-lost (this process's lease ran out and another",
+      "     took the lock: it neither saves nor signs); a fetch that failed,",
+      "     timed out, was redirected or was too large; malformed STH; a bad",
+      "     state file or one that cannot be saved; a state file locked by",
+      "     another witness (state-locked) or in a directory it cannot write",
+      "     (state-unwritable); a failed submission (resubmitted next poll,",
+      "     as saved); or a v3= STH with --log-public-key",
       "",
       "Each poll holds <state>.lock as a lease: the holder touches its",
       "mtime every 5 s. A lock is stale only when its mtime is older than",
@@ -239,7 +240,10 @@ function printHelp() {
       "broken under <state>.lock.break; a held one is refused",
       "(state-locked) with the time its lease runs out, so a restarted",
       "witness recovers by itself. SIGTERM and SIGINT release the lock",
-      "and exit 143 and 130.",
+      "and exit 143 and 130. Leases are judged by file mtimes against the",
+      "local clock: on shared storage they assume clock skew between the",
+      "hosts far below LEASE_MS. No save moves the state file to a smaller",
+      "tree size, or to another root at the same size.",
       "With --json each poll prints one JSON verdict line on stdout; the",
       "daemon banner goes to stderr.",
       "",
@@ -330,6 +334,52 @@ function loadState(path) {
  * signature. On macOS fsync is not F_FULLFSYNC: it reaches the drive,
  * not necessarily its platters.
  */
+/** A save that would move the state file backwards, or onto another root. */
+class StateMovedError extends Error {
+  constructor(verdict, exit, message) {
+    super(message);
+    this.verdict = verdict;
+    this.exit = exit;
+  }
+}
+
+/**
+ * Refuse to replace the state file with a head behind it: a smaller
+ * lastSize means another process (holding the lock after this one's
+ * lease ran out) has moved it on; an equal size with another root is a
+ * fork. Checked right before the rename, so it also covers the gap
+ * between a call site's lock check and the write.
+ */
+function refuseBackwards(path, state) {
+  let current;
+  try {
+    current = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    if (err?.code === "ENOENT") return;
+    throw new StateMovedError(
+      "lock-lost",
+      2,
+      `the state file ${path} changed under this process and cannot be read (${err.message}); not saving`,
+    );
+  }
+  const size = current?.lastSize;
+  if (!Number.isSafeInteger(size)) return;
+  if (size > state.lastSize) {
+    throw new StateMovedError(
+      "lock-lost",
+      2,
+      `the state file ${path} now holds tree size ${size}, beyond the ${state.lastSize} being saved: another process moved it on; not saving`,
+    );
+  }
+  if (size === state.lastSize && current.lastRoot !== state.lastRoot) {
+    throw new StateMovedError(
+      "fork-detected",
+      1,
+      `FORK DETECTED — the state file ${path} holds another root at tree size ${size}; not saving`,
+    );
+  }
+}
+
 function saveState(path, state) {
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
@@ -347,6 +397,7 @@ function saveState(path, state) {
   }
   closeSync(fd);
   try {
+    refuseBackwards(path, state);
     renameSync(tmp, path);
   } catch (err) {
     try {
@@ -490,7 +541,10 @@ function takeBreak(breakPath, leaseMs) {
     }
     const age = Date.now() - st.mtimeMs;
     if (age <= leaseMs) {
-      return { problem: `another process is breaking it (${breakPath} was made ${secs(age)} ago)` };
+      return {
+        problem: `another process is breaking it (${breakPath} was made ${secs(age)} ago)`,
+        retryAt: new Date(st.mtimeMs + leaseMs + 1000).toISOString(),
+      };
     }
     const aside = `${breakPath}.${process.pid}.${randomUUID()}.stale`;
     try {
@@ -649,7 +703,7 @@ function acquireLock(lockPath, breakLock, leaseMs) {
     }
     // The lease ran out. Break it only while holding <lock>.break.
     const brk = takeBreak(breakPath, leaseMs);
-    if (brk.problem) return locked(`${lockPath} is stale, but ${brk.problem}`);
+    if (brk.problem) return locked(`${lockPath} is stale, but ${brk.problem}`, brk.retryAt);
     try {
       let now = null;
       try {
@@ -978,6 +1032,12 @@ async function runOnce(opts) {
 }
 
 async function runLocked(opts, { log, emit, refuse }) {
+  const lockLost = () =>
+    refuse(
+      "lock-lost",
+      2,
+      `the lock on ${opts.statePath}.lock was taken over (its lease ran out, or --break-lock); check for another witness on this state file`,
+    );
   let state;
   try {
     state = loadState(opts.statePath);
@@ -1046,6 +1106,11 @@ async function runLocked(opts, { log, emit, refuse }) {
     log("[witness] log signature NOT checked (no --log-public-key)");
   }
 
+  // Before comparing with the state: if the lease ran out and another
+  // process took the lock (and perhaps moved the state on), say so,
+  // rather than report what it saved as a fork.
+  if (!lockStillOurs()) return lockLost();
+
   let verdict = "witnessed";
   let resubmit = null;
   if (state) {
@@ -1095,7 +1160,13 @@ async function runLocked(opts, { log, emit, refuse }) {
       verdict = "resubmitted";
     } else if (sameHead) {
       if (typeof state.logId !== "string") {
-        saveState(opts.statePath, { logId: sth.logId, ...state });
+        if (!lockStillOurs()) return lockLost();
+        try {
+          saveState(opts.statePath, { logId: sth.logId, ...state });
+        } catch (err) {
+          if (err instanceof StateMovedError) return refuse(err.verdict, err.exit, err.message);
+          throw err;
+        }
       }
       log("[witness] no change since last poll — nothing to witness");
       emit({
@@ -1160,19 +1231,14 @@ async function runLocked(opts, { log, emit, refuse }) {
     lastRoot: sth.rootHash,
     lastTimestamp: sth.timestamp,
   };
-  // The lease may have run out (a stalled process) and another taken
-  // the lock: then this process must not save or sign.
-  const lockLost = () =>
-    refuse(
-      "lock-lost",
-      2,
-      `the lock on ${opts.statePath}.lock was taken over (its lease ran out, or --break-lock); check for another witness on this state file`,
-    );
+  // Every save and the signature need the lock: the lease may have run
+  // out (a stalled process, clock skew) and another taken it.
   if (!lockStillOurs()) return lockLost();
   if (!resubmit) {
     try {
       saveState(opts.statePath, { ...head, pending: true });
     } catch (err) {
+      if (err instanceof StateMovedError) return refuse(err.verdict, err.exit, err.message);
       return refuse(
         "state-save-failed",
         2,
@@ -1214,19 +1280,28 @@ async function runLocked(opts, { log, emit, refuse }) {
     `[witness] cosignature submitted — total witnesses on this STH: ${quote(submission?.witnessCount ?? null)}`,
   );
 
-  try {
-    saveState(opts.statePath, { ...head, lastSubmittedAt: new Date().toISOString() });
-  } catch (err) {
-    // The head is already saved (pending): the next poll resubmits the
-    // same head, which is harmless.
-    warn(`[witness] warning: cosignature submitted but the state file could not be updated (${err.message})`);
+  // The head is already saved as pending, so skipping this save only
+  // means a later resubmission of the same head, which is harmless.
+  // Saving without the lock could roll back what another holder saved.
+  let note;
+  if (!lockStillOurs()) {
+    note =
+      "the lock was taken over after the cosignature was accepted; the state file is not updated (the head stays saved as pending)";
+  } else {
+    try {
+      saveState(opts.statePath, { ...head, lastSubmittedAt: new Date().toISOString() });
+    } catch (err) {
+      note = `the cosignature was accepted but the state file could not be updated (${err.message})`;
+    }
   }
+  if (note) warn(`[witness] warning: ${note}`);
 
   emit({
     verdict,
     treeSize: head.lastSize,
     rootHash: head.lastRoot,
     totalWitnesses: submission?.witnessCount ?? null,
+    ...(note ? { note } : {}),
   });
   return { verdict, exit: 0 };
 }

@@ -409,7 +409,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
   // Replaces the STH response entirely (oversized or stalled bodies).
   let sthHandler: ((res: ServerResponse) => void) | undefined;
   // Replace the proof and POST responses entirely.
-  let proofHandler: ((res: ServerResponse) => void) | undefined;
+  let proofHandler: ((res: ServerResponse, url: URL) => void) | undefined;
   let postHandler: ((res: ServerResponse) => void) | undefined;
   // A second host, to check that redirects are never followed.
   let other: Server;
@@ -482,7 +482,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
         }
         if (req.method === "GET" && url.pathname === "/api/transparency/proof") {
           if (proofHandler) {
-            proofHandler(res);
+            proofHandler(res, url);
             return;
           }
           const proof = tlog.proveConsistency(
@@ -1716,6 +1716,253 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     const r = runCli(["--help"]);
     expect(r.stdout).toMatch(/LEASE_MS/);
     expect(r.stdout).toMatch(/both sign|two witnesses can sign/i);
+  });
+
+  // ── Round 6: no save without the lock; the state never shrinks ──
+
+  // Logs that grow the honest 3-leaf log, each with a later clock.
+  const logAt = (extra: string[], iso: string) => {
+    const l = new TransparencyLog("test-log", new InMemoryLogStore(), () => new Date(iso));
+    for (const x of ["leaf-0", "leaf-1", "leaf-2", ...extra]) l.append(x);
+    return l;
+  };
+  const headOf = (l: TransparencyLog) => {
+    const sth = l.currentSth();
+    const canonical = canonicalizeSth(sth);
+    return { ...sth, signature: signWith(logPriv, canonical), canonical };
+  };
+  const send = (res: ServerResponse, body: unknown) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+  // Serve the STH and proofs of whichever log `current()` returns.
+  const serveLog = (current: () => TransparencyLog) => {
+    sthHandler = (res) => send(res, headOf(current()));
+    proofHandler = (res, url) =>
+      send(res, {
+        proof: current().proveConsistency(
+          Number(url.searchParams.get("old")),
+          Number(url.searchParams.get("new")),
+        ),
+      });
+  };
+  const atSize = (n: number) =>
+    posts().filter((p) => (JSON.parse(String(p.body?.sthCanonical)) as { treeSize: number }).treeSize === n);
+  const skewAhead = () =>
+    preload("skew", [
+      "const off = 3600e3; const _now = Date.now.bind(Date); const D = Date;",
+      "globalThis.Date = class extends D { constructor(...a) { if (a.length === 0) super(_now() + off); else super(...a); } static now() { return _now() + off; } };",
+    ]);
+  const blockAfterPost = (ms: number) =>
+    preload("block-after-post", [
+      "const real = globalThis.fetch;",
+      "globalThis.fetch = async (url, init) => {",
+      "  const r = await real(url, init);",
+      '  if (init?.method === "POST") {',
+      "    const t = await r.text();",
+      `    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});`,
+      "    return new Response(t, { status: r.status, headers: r.headers });",
+      "  }",
+      "  return r;",
+      "};",
+    ]);
+  const L4 = () => logAt(["leaf-3"], "2026-10-24T09:00:00.000Z");
+  const L5 = () => logAt(["leaf-3", "leaf-4"], "2026-10-24T10:00:00.000Z");
+  const EVIL5 = () => logAt(["leaf-3", "evil"], "2026-10-24T11:00:00.000Z");
+  const seed3 = (state: string) =>
+    writeFileSync(
+      state,
+      JSON.stringify({
+        logId: "test-log",
+        lastSize: 3,
+        lastRoot: tlog.currentSth().rootHash,
+        lastTimestamp: "2026-10-24T08:00:00.000Z",
+      }),
+    );
+
+  it("I-6a: a holder blocked after its POST, whose lock is taken over, does not roll the state back", async () => {
+    const state = freshState();
+    seed3(state);
+    const l4 = L4();
+    const l5 = L5();
+    const evil = EVIL5();
+    let current = l4;
+    serveLog(() => current);
+    const a = runCliAsync(args(state), blockAfterPost(2000));
+    await waitUntil(() => posts().length === 1);
+    current = l5;
+    // B's clock runs an hour ahead, so A's lease looks expired to it.
+    const b = await runCliAsync(args(state), skewAhead());
+    expect(b.status).toBe(0);
+    await a;
+    current = evil;
+    const c = await runCliAsync(args(state));
+    expect(verdictOf(c).verdict).toBe("fork-detected");
+    expect(atSize(5)).toHaveLength(1);
+  });
+
+  it("I-6b: a slow POST while another, with a skewed clock, takes the lock: no rollback", async () => {
+    const state = freshState();
+    seed3(state);
+    const l4 = L4();
+    const l5 = L5();
+    const evil = EVIL5();
+    let current = l4;
+    serveLog(() => current);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let k = 0;
+    postHandler = (res) => {
+      const ok = () => send(res, { ok: true, witnessCount: 1 });
+      if (k++ === 0) void gate.then(ok);
+      else ok();
+    };
+    const a = runCliAsync(args(state));
+    await waitUntil(() => posts().length === 1);
+    current = l5;
+    const b = await runCliAsync(args(state), skewAhead());
+    expect(b.status).toBe(0);
+    release();
+    await a;
+    current = evil;
+    const c = await runCliAsync(args(state));
+    expect(verdictOf(c).verdict).toBe("fork-detected");
+    expect(atSize(5)).toHaveLength(1);
+  });
+
+  it("I-6c: a legacy state without logId: the no-change save needs the lock too", async () => {
+    const state = freshState();
+    const l4 = L4();
+    const l5 = L5();
+    const evil = EVIL5();
+    writeFileSync(state, JSON.stringify({ lastSize: 4, lastRoot: l4.currentSth().rootHash }));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let current = l5;
+    let k = 0;
+    serveLog(() => current);
+    const plain = sthHandler!;
+    sthHandler = (res) => {
+      if (k++ === 0) void gate.then(() => send(res, headOf(l4)));
+      else plain(res);
+    };
+    const a = runCliAsync(args(state));
+    await waitUntil(() => k === 1);
+    const b = await runCliAsync(args(state), skewAhead());
+    expect(b.status).toBe(0);
+    release();
+    const ra = await a;
+    expect(verdictOf(ra).verdict).toBe("lock-lost");
+    current = evil;
+    const c = await runCliAsync(args(state));
+    expect(verdictOf(c).verdict).toBe("fork-detected");
+    expect(atSize(5)).toHaveLength(1);
+  });
+
+  // Right after the CLI opens its temporary state file, another process
+  // writes the state file: the gap between the lock check and the rename.
+  const stateWrittenDuringSave = (content: string) =>
+    preload("state-written-during-save", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const open = fs.openSync;",
+      "const write = fs.writeFileSync;",
+      "let done = false;",
+      "fs.openSync = (p, ...rest) => {",
+      "  const fd = open(p, ...rest);",
+      "  const s = String(p);",
+      '  if (!done && s.endsWith(".tmp") && !s.includes(".lock")) {',
+      "    done = true;",
+      `    write(s.replace(/\\.\\d+\\.[0-9a-f-]+\\.tmp$/, ""), ${JSON.stringify(content)});`,
+      "  }",
+      "  return fd;",
+      "};",
+      "syncBuiltinESMExports();",
+    ]);
+
+  it("saveState refuses to write a smaller lastSize over the file", async () => {
+    const state = freshState();
+    const bigger = JSON.stringify({ logId: "test-log", lastSize: 5, lastRoot: "b".repeat(64), lastTimestamp: "2026-10-24T10:00:00.000Z" });
+    const r = await runCliAsync(args(state), stateWrittenDuringSave(bigger));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("lock-lost");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state, "utf8")).toBe(bigger);
+  });
+
+  it("saveState refuses an equal size with a different root", async () => {
+    const state = freshState();
+    const other = JSON.stringify({ logId: "test-log", lastSize: 3, lastRoot: "b".repeat(64), lastTimestamp: "2026-10-24T08:00:00.000Z" });
+    const r = await runCliAsync(args(state), stateWrittenDuringSave(other));
+    expect(r.status).toBe(1);
+    expect(verdictOf(r).verdict).toBe("fork-detected");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state, "utf8")).toBe(other);
+  });
+
+  it("honours a holder's recorded longer leaseMs", async () => {
+    const state = freshState();
+    // Renewed an hour ago, but its holder's lease is two hours.
+    writeFileSync(
+      state + ".lock",
+      JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "n", leaseMs: 7200e3 }),
+    );
+    expireLease(state + ".lock");
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(String(verdictOf(r).message)).toMatch(/retry after/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("a fresh <lock>.break refusal says when to retry", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", lockOf(12345));
+    expireLease(state + ".lock");
+    writeFileSync(state + ".lock.break", lockOf(12345));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(String(verdictOf(r).message)).toMatch(/another process is breaking it.*retry after/);
+  });
+
+  it("lock taken over after the POST: witnessed with a note, the state left pending, their lock kept", async () => {
+    const state = freshState();
+    const theirs = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
+    postHandler = (res) => {
+      writeFileSync(state + ".lock", theirs);
+      send(res, { ok: true, witnessCount: 1 });
+    };
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("witnessed");
+    expect(String(v.note)).toMatch(/lock was taken over/);
+    expect((JSON.parse(readFileSync(state, "utf8")) as { pending?: boolean }).pending).toBe(true);
+    expect(readFileSync(state + ".lock", "utf8")).toBe(theirs);
+  });
+
+  it("lock taken over while the STH is fetched: lock-lost, not a verdict from the state it loaded", async () => {
+    const state = freshState();
+    const sth = tlog.currentSth();
+    writeFileSync(
+      state,
+      JSON.stringify({ logId: "test-log", lastSize: sth.treeSize, lastRoot: sth.rootHash, lastTimestamp: sth.timestamp }),
+    );
+    const theirs = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
+    sthHandler = (res) => {
+      writeFileSync(state + ".lock", theirs);
+      send(res, honest());
+    };
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("lock-lost");
+    expect(readFileSync(state + ".lock", "utf8")).toBe(theirs);
+  });
+
+  it("--help lists lock-lost and the clock-skew assumption", () => {
+    const r = runCli(["--help"]);
+    expect(r.stdout).toMatch(/lock-lost/);
+    expect(r.stdout).toMatch(/clock skew/i);
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {

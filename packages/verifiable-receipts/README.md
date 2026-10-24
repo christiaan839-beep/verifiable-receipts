@@ -127,7 +127,12 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   lease runs out, so a restarted witness recovers by itself. SIGTERM
   and SIGINT release the lock. `--break-lock` removes it whatever holds
   it: if another witness is still running on that state file, two
-  witnesses can sign, so use it only when you are sure none is. On a
+  witnesses can sign, so use it only when you are sure none is. Leases
+  are judged by file mtimes against the local clock, so on shared
+  storage they assume clock skew between hosts far below `LEASE_MS`.
+  A process whose lease ran out and whose lock another took neither
+  saves nor signs (`lock-lost`, exit 2), and no save moves the state
+  file to a smaller tree size or to another root at the same size. On a
   file system without hard links the lock is created with an exclusive
   open instead, and can be seen empty for a moment (it is then refused
   as unreadable until its lease runs out). With `--log-public-key <pem>` it also verifies
@@ -136,13 +141,14 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   unreadable or malformed is refused, not treated as a first run.
   Requests time out after `--timeout` seconds (1 to 3600, default 30),
   never follow a redirect, and bodies over 1 MiB are refused. Exit 0
-  witnessed or no change; 1 the log misbehaved; 2 usage error, a fetch
-  that failed, timed out, was redirected or too large, malformed head,
-  bad, unsavable, locked (`state-locked`) or unwritable
-  (`state-unwritable`) state file, failed submission, or a `v3=` head
-  with `--log-public-key`. With `--json` each poll prints one JSON
-  verdict line on stdout, and the daemon's banner goes to stderr. The daemon writes a stderr line for every
-  non-zero verdict, halts on 1 and retries the rest.
+  witnessed or no change; 1 the log misbehaved; 2 usage error,
+  `lock-lost`, a fetch that failed, timed out, was redirected or too
+  large, malformed head, bad, unsavable, locked (`state-locked`) or
+  unwritable (`state-unwritable`) state file, failed submission, or a
+  `v3=` head with `--log-public-key`. With `--json` each poll prints
+  one JSON verdict line on stdout, and the daemon's banner goes to
+  stderr. The daemon writes a stderr line for every non-zero verdict,
+  halts on 1 and retries the rest.
 
 ## Development
 

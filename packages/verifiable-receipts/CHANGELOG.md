@@ -31,7 +31,9 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   share a pid and hostname in separate pid namespaces. A lock is stale
   only when its lease (3 × `--timeout` + 30 s) has run out; it is then
   broken under a second lock file, and only if unchanged. A process
-  that finds its lock taken over (its own lease ran out) does not sign.
+  that finds its lock taken over (its own lease ran out) neither
+  saves nor signs, and no save moves the state file to a smaller tree
+  size or to another root at the same size.
   SIGTERM and SIGINT release the lock. `--break-lock` is the explicit
   way out; if another witness is still running, two can sign. The
   lease is judged by file mtimes, so on a network file system it is
