@@ -11,10 +11,11 @@
  */
 import { createPublicKey, verify } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { verifyV2Receipt } from "../verify-v2.mjs";
+import { parseReceipt, verifyV2Receipt } from "../verify-v2.mjs";
 import { verifyInclusionProof } from "../../dist/transparency.js";
 import { verifyGuardianAttestation } from "../../dist/guardian.js";
 
+const TOO_DEEP = "receipt nesting deeper than 64";
 const [keyPath, casesPath, outPath] = process.argv.slice(2);
 const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
 const verdicts = [];
@@ -23,14 +24,12 @@ for (const line of readFileSync(casesPath, "utf8").split("\n")) {
   const { id, kind, raw } = JSON.parse(line);
   let value;
   try {
-    value = JSON.parse(raw);
-  } catch {
-    verdicts.push({ id, ok: false, reason: "parse failed" });
-    continue;
-  }
-  if (kind !== "inclusion" && (value === null || typeof value !== "object" || Array.isArray(value))) {
-    // Go and Python read a receipt into an object type; anything else fails to parse.
-    verdicts.push({ id, ok: false, reason: "parse failed" });
+    // A receipt or attestation is read as Python's parse_receipt and Go's
+    // ParseReceipt read it: its depth counted on the text first.
+    value = kind === "inclusion" ? JSON.parse(raw) : parseReceipt(raw);
+  } catch (err) {
+    const reason = err instanceof Error && err.message === TOO_DEEP ? TOO_DEEP : "parse failed";
+    verdicts.push({ id, ok: false, reason });
     continue;
   }
   try {

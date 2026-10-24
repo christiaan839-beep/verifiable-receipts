@@ -254,6 +254,19 @@ describe("verifiable-receipts CLI — usage errors", () => {
     expect(r.stderr).toMatch(/public key is a small-order point/);
   });
 
+  it("exits 1 with nesting-too-deep when the manifest text nests deeper than 64, duplicate keys included", () => {
+    const signed = readFileSync(manifestPath, "utf8").trim();
+    // A duplicate key the parser discards still counts (VAOS 2.0 section 7.2).
+    const deep = join(tmp, "deep-manifest.json");
+    writeFileSync(deep, `{"extra":${"[".repeat(64)}${"]".repeat(64)},"extra":1,${signed.slice(1)}`);
+    const r = runCli(["verify", "--manifest", deep, "--pubkey", pemPath, "--json"]);
+    expect(r.status).toBe(1);
+    expect(JSON.parse(r.stdout)).toEqual({ ok: false, reason: "nesting-too-deep" });
+    const atLimit = join(tmp, "at-limit-manifest.json");
+    writeFileSync(atLimit, `{"extra":${"[".repeat(63)}${"]".repeat(63)},${signed.slice(1)}`);
+    expect(runCli(["verify", "--manifest", atLimit, "--pubkey", pemPath]).status).toBe(0);
+  });
+
   it("exits 2 when --manifest contains malformed JSON", () => {
     const bad = join(tmp, "malformed.json");
     writeFileSync(bad, "{ this is not json");

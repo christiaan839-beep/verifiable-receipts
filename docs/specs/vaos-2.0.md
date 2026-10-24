@@ -257,6 +257,12 @@ field.
   multi-byte UTF-8 sequence or a UTF-16 surrogate, so a verifier may
   read "character" as a byte of the UTF-8 text, a code point or a
   UTF-16 code unit and count the same depth.
+- A verifier that reads a receipt from JSON text MUST count the
+  receipt's depth on that text, the same way, before it parses it, and
+  reject the receipt when more than 64 levels are open at once. A JSON
+  parser keeps one copy of a duplicate key and discards the rest; a
+  discarded copy still counts, so every verifier gives the same verdict
+  on the same text however its parser treats duplicates.
 
 With both sides at most 64 deep, the comparison of step 6 never goes
 deeper than 64 levels, and a verifier never parses or walks anything

@@ -18,7 +18,7 @@ import { createPublicKey } from "node:crypto";
 
 import { verifyInclusionProof } from "../src/transparency.js";
 // The harness's own v2 verifier, shared with roundtrip/verify.mjs.
-import { verifyV2Receipt } from "./verify-v2.mjs";
+import { parseReceipt, verifyV2Receipt } from "./verify-v2.mjs";
 
 const FIXTURES_DIR = join(__dirname, "fixtures");
 const PUBLIC_KEY_PEM = readFileSync(join(__dirname, "public-key.pem"));
@@ -68,6 +68,24 @@ describe("Cross-language conformance — TypeScript verifier", () => {
   });
 
   for (const fixture of fixtures) {
+    // A receipt given as text (receiptText) is read with parseReceipt,
+    // which counts depth on the text; a refusal is a rejection.
+    if ("receiptText" in fixture) {
+      const f = fixture as unknown as { receiptText: string; description: string; expected: { ok: boolean; reasonContains?: string } };
+      it(`${fixture.__filename} — ${f.description}`, () => {
+        let result: { ok: boolean; reason?: string };
+        try {
+          result = verifyV2Receipt(parseReceipt(f.receiptText), PUBLIC_KEY);
+        } catch (err) {
+          result = { ok: false, reason: (err as Error).message };
+        }
+        expect(result.ok).toBe(f.expected.ok);
+        if (f.expected.reasonContains && !result.ok) {
+          expect(result.reason ?? "").toMatch(new RegExp(f.expected.reasonContains, "i"));
+        }
+      });
+      continue;
+    }
     const isV2 = "receipt" in fixture;
     const isInclusion = "leafHashHex" in fixture;
     it(`${fixture.__filename} — ${fixture.description}`, () => {

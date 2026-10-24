@@ -117,6 +117,29 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 				t.Fatalf("unmarshal probe: %v", err)
 			}
 
+			if text, isText := probe["receiptText"]; isText {
+				// A receipt given as text, read with ParseReceipt, which
+				// counts depth on the text; a refusal is a rejection.
+				var shape struct {
+					ReceiptText string     `json:"receiptText"`
+					Expected    v2Expected `json:"expected"`
+				}
+				if err := json.Unmarshal(raw, &shape); err != nil || len(text) == 0 {
+					t.Fatalf("unmarshal receiptText: %v", err)
+				}
+				var result VerifyResult
+				if r, err := ParseReceipt([]byte(shape.ReceiptText)); err != nil {
+					result = VerifyResult{OK: false, Reason: strings.TrimPrefix(err.Error(), "vaos: ")}
+				} else {
+					result = VerifyV2Receipt(r, pub)
+				}
+				if result.OK != shape.Expected.OK || (!result.OK && shape.Expected.ReasonContains != "" &&
+					!regexp.MustCompile("(?i)"+shape.Expected.ReasonContains).MatchString(result.Reason)) {
+					t.Fatalf("%s: got %+v, want %+v", name, result, shape.Expected)
+				}
+				return
+			}
+
 			if _, isV2 := probe["receipt"]; isV2 {
 				var fixture v2Fixture
 				var result VerifyResult

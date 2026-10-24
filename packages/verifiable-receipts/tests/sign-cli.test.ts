@@ -290,9 +290,11 @@ describe("sign CLI — signs a real VAOS v2 receipt", () => {
     expect(verifyV2Receipt(signed, createPublicKey(privateKey))).toEqual({ ok: true });
     const over = runCli(["--key", keyPath, "--json"], JSON.stringify({ d: nested(64) }));
     expect(over.status).toBe(2);
-    expect(over.stderr).toContain(
-      "could not canonicalize the receipt: canonical JSON: nesting deeper than 64",
-    );
+    expect(over.stderr).toContain("input nests deeper than 64");
+    // A duplicate key JSON.parse would discard still counts: the text is counted first.
+    const dup = runCli(["--key", keyPath, "--json"], `{"d":${JSON.stringify(nested(64))},"d":1}`);
+    expect(dup.status).toBe(2);
+    expect(dup.stderr).toContain("input nests deeper than 64");
   });
 
   it("signing its own output again gives the same canonical and signature", () => {

@@ -7,10 +7,10 @@ Prints "ok" and exits 0, or prints "rejected: <reason>" and exits 1.
 
 from __future__ import annotations
 
-import json
 import sys
 
 from sovereign_matrix.verifiable_receipts import (
+    parse_receipt,
     verify_guardian_attestation,
     verify_v2_receipt,
 )
@@ -24,7 +24,12 @@ def main() -> int:
     with open(key_path, "rb") as fh:
         pem = fh.read()
     with open(path, encoding="utf-8") as fh:
-        receipt = json.load(fh)
+        text = fh.read()
+    try:
+        receipt = parse_receipt(text)  # depth counted on the text first
+    except ValueError as err:
+        print(f"rejected: {err}")
+        return 1
     verify = verify_v2_receipt if kind == "receipt" else verify_guardian_attestation
     verdict = verify(receipt, pem)
     if verdict.ok:

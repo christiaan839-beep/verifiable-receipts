@@ -64,6 +64,13 @@ which the harnesses use instead of `public-key.pem` (the Go harness
 parses it without `LoadEd25519PublicKeyFromPEM`, which would refuse it,
 so that `VerifyV2Receipt` gives the reason).
 
+A text fixture holds `receiptText`, a receipt given as JSON text instead
+of `receipt`, for what parsing the fixture file would lose, such as a
+duplicate key. The harnesses read it as a caller reads a receipt from
+text: TypeScript `parseReceipt` (in `verify-v2.mjs`), Python
+`parse_receipt` and Go `ParseReceipt`, which count its depth on the text
+first; a refusal is a rejection with that reason.
+
 ## Running the three harnesses
 
 From the root of a clone of this repository:
@@ -81,8 +88,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 24 October 2026: TypeScript 30 passed,
-Python 30 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 24 October 2026: TypeScript 31 passed,
+Python 31 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -106,7 +113,9 @@ Fixtures cover:
   since the canonical cannot be re-signed (below); the per-language
   tests (`tests/verify-v2.test.ts`, `tests/test_verify.py`,
   `nesting_test.go`) sign deep canonicals with a throwaway key, and
-  accept a receipt and canonical exactly 64 deep
+  accept a receipt and canonical exactly 64 deep · a receipt given as
+  text whose `overall` appears twice, first nested 64 deep, then
+  `"pass"`: parsers keep `"pass"`, but the text is 65 deep, reject
 - v2 public keys (`docs/specs/vaos-2.0.md` §7.3), each reject: the
   identity point, under which the receipt's signature (R = identity,
   S = 0) verifies every message, refused as a small-order point · a key
@@ -119,7 +128,7 @@ Fixtures cover:
   audit-path entry (folds to the 2-leaf root) · leafIndex 1.5 ·
   leafIndex `true` · the 2-leaf proof at treeSize 2^32 + 2
 
-29 fixtures, each checked by all 3 verifiers.
+30 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
@@ -147,7 +156,7 @@ discarded at generation time). If the corpus ever needs re-signing:
 node packages/verifiable-receipts/conformance/generate-fixtures.mjs
 ```
 
-This rewrites `public-key.pem` and the sixteen `v2-*.json` fixtures in
+This rewrites `public-key.pem` and the seventeen `v2-*.json` fixtures in
 one pass with a new key; inclusion-proof fixtures are key-independent
 and untouched. Re-run all three harnesses afterwards.
 
@@ -192,10 +201,13 @@ instead nests its canonical, or a field beside it, near the depth limit
 of 64 or far past it (up to 20,000 deep), valid JSON or not, and about
 one in twenty is a Guardian attestation shaped like `runGuardian`'s,
 whose `runId` or unsigned evidence nests near the limit or past it.
-Each verifier parses each case as a caller would: TypeScript with
-`JSON.parse`, Python with `parse_receipt` and Go with `ParseReceipt`,
-which both refuse a receipt nested deeper than 64 with the verifiers'
-reason before their JSON parsers see it. Any other parse failure has
+Some receipts repeat a field, once shallow and once deep, in either
+order: the parser keeps the last copy, but the depth is counted on the
+text.
+Each verifier parses each receipt as a caller would: TypeScript with
+`parseReceipt`, Python with `parse_receipt` and Go with `ParseReceipt`,
+which all refuse text nested deeper than 64 with the verifiers' reason
+before their JSON parsers see it. Any other parse failure has
 the reason `parse failed`.
 
 ```bash

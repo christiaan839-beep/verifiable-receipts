@@ -65,10 +65,32 @@ func TestReceipt_UnmarshalJSONFillsEnvelope(t *testing.T) {
 }
 
 func TestReceipt_UnmarshalJSONRejectsBadShapes(t *testing.T) {
-	for _, data := range []string{`null`, `[]`, `{"canonical":5}`, `{"signature":{}}`} {
+	for _, data := range []string{`null`, `[]`} {
 		var r Receipt
 		if err := json.Unmarshal([]byte(data), &r); err == nil {
 			t.Fatalf("expected an error for %s", data)
+		}
+	}
+}
+
+// A canonical, signature or contentHash that is not a string parses, and
+// the verifier rejects it with the reason the TypeScript and Python
+// verifiers give, at the same step.
+func TestReceipt_NonStringFieldsGetTheSharedReasons(t *testing.T) {
+	pub, priv, _ := makeKeyPair(t)
+	sig := signV2(priv, "{}")
+	for data, reason := range map[string]string{
+		`{"canonical":5,"signature":"` + sig + `"}`:                    "missing canonical projection",
+		`{"canonical":"{}","signature":{}}`:                            "missing signature",
+		`{"canonical":"{}","signature":"` + sig + `","contentHash":0}`: "contentHash must be a string",
+		`{"canonical":"{}","signature":"v2=!","contentHash":0}`:        "signature base64 invalid",
+	} {
+		r, err := ParseReceipt([]byte(data))
+		if err != nil {
+			t.Fatalf("%s: %v", data, err)
+		}
+		if got := VerifyV2Receipt(r, pub); got.OK || got.Reason != reason {
+			t.Fatalf("%s: got %+v, want %q", data, got, reason)
 		}
 	}
 }

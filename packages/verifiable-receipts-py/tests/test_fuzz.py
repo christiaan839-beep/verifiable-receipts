@@ -28,9 +28,14 @@ from sovereign_matrix.verifiable_receipts import (
 
 _CONFORMANCE = Path(__file__).resolve().parents[2] / "verifiable-receipts" / "conformance"
 _FIXTURE_PEM = (_CONFORMANCE / "public-key.pem").read_bytes()
+# Fixtures with a receipt object (a receiptText fixture holds text instead).
 _FIXTURE_RECEIPTS = [
-    json.loads(path.read_text("utf-8"))["receipt"]
-    for path in sorted((_CONFORMANCE / "fixtures").glob("v2-*.json"))
+    fixture["receipt"]
+    for fixture in (
+        json.loads(path.read_text("utf-8"))
+        for path in sorted((_CONFORMANCE / "fixtures").glob("v2-*.json"))
+    )
+    if "receipt" in fixture
 ]
 
 # A key from a fixed seed, so a failing example replays.

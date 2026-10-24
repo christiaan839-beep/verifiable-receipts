@@ -61,6 +61,10 @@ type Receipt struct {
 	// hasContentHash is set by UnmarshalJSON when the contentHash key
 	// holds a string, so an empty one is checked rather than skipped.
 	hasContentHash bool
+
+	// contentHashNotString is set by UnmarshalJSON when the contentHash
+	// key holds a value that is neither a string nor null.
+	contentHashNotString bool
 }
 
 // errReceiptTooDeep is the error for a receipt nested deeper than
@@ -68,9 +72,12 @@ type Receipt struct {
 var errReceiptTooDeep = errors.New("vaos: receipt nesting deeper than 64")
 
 // ParseReceipt reads a receipt from JSON text as UnmarshalJSON does, but
-// counts the text's depth first, so a receipt nested deeper than 64 gets
-// the same error at any depth. json.Unmarshal refuses text nested deeper
-// than 10,000 with its own error before UnmarshalJSON runs.
+// counts the text's depth before encoding/json sees it. json.Unmarshal
+// first validates the whole input, and refuses text nested deeper than
+// 10,000 with its own error before UnmarshalJSON runs; ParseReceipt gives
+// "vaos: receipt nesting deeper than 64" at any depth. Like UnmarshalJSON
+// it counts the text, so a duplicate key the parser discards still counts
+// (VAOS 2.0 section 7.2).
 func ParseReceipt(data []byte) (Receipt, error) {
 	if textNestsDeeper(string(data), maxNesting) {
 		return Receipt{}, errReceiptTooDeep
@@ -81,9 +88,13 @@ func ParseReceipt(data []byte) (Receipt, error) {
 }
 
 // UnmarshalJSON reads a receipt object: canonical, contentHash and
-// signature into their fields (each must be a string or null), and
-// every other key into Envelope. Keys match exactly, case included. A
-// receipt nested deeper than 64 is an error, checked first.
+// signature into their fields, and every other key into Envelope. Keys
+// match exactly, case included. A canonical or signature that is not a
+// string reads as empty, and a contentHash that is not a string or null
+// is marked, so VerifyV2Receipt rejects them with the reasons the
+// TypeScript and Python verifiers give ("missing canonical projection",
+// "missing signature", "contentHash must be a string"), at the same
+// step. A receipt nested deeper than 64 is an error, checked first.
 func (r *Receipt) UnmarshalJSON(data []byte) error {
 	if textNestsDeeper(string(data), maxNesting) {
 		return errReceiptTooDeep
@@ -113,7 +124,12 @@ func (r *Receipt) UnmarshalJSON(data []byte) error {
 			continue
 		}
 		if err := json.Unmarshal(raw, target); err != nil {
-			return errors.New("vaos: receipt field " + strconv.Quote(key) + " is not a string")
+			// Not a string (null reads as "" without an error).
+			*target = ""
+			if key == "contentHash" {
+				out.contentHashNotString = true
+			}
+			continue
 		}
 		if key == "contentHash" && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			out.hasContentHash = true
@@ -264,6 +280,10 @@ func VerifyV2Receipt(r Receipt, pub ed25519.PublicKey) VerifyResult {
 	}
 
 	canonicalBytes := []byte(r.Canonical)
+
+	if r.contentHashNotString {
+		return VerifyResult{OK: false, Reason: "contentHash must be a string"}
+	}
 
 	if r.ContentHash != "" || r.hasContentHash {
 		actual := sha256.Sum256(canonicalBytes)

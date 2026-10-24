@@ -12,7 +12,9 @@ near the edge of what a verifier accepts. Some nest a receipt or its
 canonical near the depth limit of 64 (VAOS 2.0 section 7) or far past it,
 up to 20,000 deep; their JSON text is built by hand, since json.dumps
 cannot write it. A few are Guardian attestations shaped like runGuardian's,
-whose runId or unsigned evidence nests near the limit or past it.
+whose runId or unsigned evidence nests near the limit or past it. Some
+repeat a field, once shallow and once deep, in either order: the parser
+keeps the last copy, but the depth counted on the text includes both.
 """
 
 from __future__ import annotations
@@ -210,6 +212,30 @@ def depth_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
     return "{" + ",".join(fields) + "}"
 
 
+def duplicate_deep_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A receipt whose field "d" appears twice: once 1, once nested deep.
+
+    JSON parsers keep the last copy, so the deep one is discarded when it
+    comes first. A verifier reading the text still counts it (VAOS 2.0
+    section 7.2): 63 levels make the receipt 64 deep, 64 levels 65.
+    """
+    canonical = '{"d":1}'
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    deep = '"d":' + nest(rng, rng.choice([62, 63, 64, 65, 1000, 20000]))
+    copies = [deep, '"d":1'] if rng.random() < 0.5 else ['"d":1', deep]
+    return (
+        '{"canonical":'
+        + json.dumps(canonical)
+        + ',"contentHash":"sha256:'
+        + hashlib.sha256(canonical.encode()).hexdigest()
+        + '","signature":"'
+        + sig
+        + '",'
+        + ",".join(copies)
+        + "}"
+    )
+
+
 def guardian_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
     """A Guardian attestation shaped like runGuardian's, nested near the limit.
 
@@ -326,7 +352,7 @@ def main() -> int:
             elif kind == "inclusion":
                 raw = inclusion_case(rng)
             elif rng.random() < 0.08:
-                raw = depth_case(rng, key)
+                raw = depth_case(rng, key) if rng.random() < 0.85 else duplicate_deep_case(rng, key)
             else:
                 raw = receipt_case(rng, key)
             fh.write(json.dumps({"id": i, "kind": kind, "raw": raw}) + "\n")

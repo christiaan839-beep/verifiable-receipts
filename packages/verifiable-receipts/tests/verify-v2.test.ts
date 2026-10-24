@@ -10,6 +10,7 @@ import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:cry
 import {
   jsonEqual,
   nestsTooDeep,
+  parseReceipt,
   textNestsTooDeep,
   verifyV2Receipt,
 } from "../conformance/verify-v2.mjs";
@@ -96,6 +97,17 @@ describe("verifyV2Receipt — nesting depth", () => {
     expect(nestsTooDeep(nested(65))).toBe(true);
     expect(textNestsTooDeep(nestedText(64))).toBe(false);
     expect(textNestsTooDeep(nestedText(65))).toBe(true);
+  });
+
+  it("parseReceipt counts depth on the text, so a discarded duplicate key counts", () => {
+    const head = `{"canonical":"{\\"d\\":1}","signature":"v2=AA=="`;
+    for (const text of [`${head},"d":${nestedText(64)},"d":1}`, `${head},"d":1,"d":${nestedText(64)}}`]) {
+      expect(() => parseReceipt(text)).toThrow(/^receipt nesting deeper than 64$/);
+    }
+    expect(() => parseReceipt(`${head},"d":${nestedText(20_000)}}`)).toThrow(/^receipt nesting deeper than 64$/);
+    expect(parseReceipt(`${head},"d":${nestedText(63)},"d":1}`)).toMatchObject({ d: 1 });
+    expect(() => parseReceipt("{")).toThrow(/^receipt is not valid JSON$/);
+    expect(() => parseReceipt("[1]")).toThrow(/^receipt is not a JSON object$/);
   });
 
   for (const depth of [5_000, 20_000]) {

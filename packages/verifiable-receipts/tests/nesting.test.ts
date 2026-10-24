@@ -120,11 +120,11 @@ describe("verifyGuardianAttestation — nesting depth", () => {
     expect(verifyGuardianAttestation(over, verifyV2)).toEqual({ ok: false, reason: "nesting-too-deep" });
   });
 
-  it("returns a verdict on an unsigned canonical 20,000 deep, or one that is not a string", () => {
+  it("returns a verdict on an unsigned canonical 20,000 deep, or one that is not a string (canonical-mismatch)", () => {
     const deep = { ...attestation(null), canonical: `{"runId":${"[".repeat(20_000)}${"]".repeat(20_000)}}` };
     expect(verifyGuardianAttestation(deep, () => true)).toEqual({ ok: false, reason: "nesting-too-deep" });
     const notText = { ...attestation(null), canonical: 7 } as unknown as GuardianAttestation;
-    expect(verifyGuardianAttestation(notText, () => true)).toEqual({ ok: false, reason: "nesting-too-deep" });
+    expect(verifyGuardianAttestation(notText, () => true)).toEqual({ ok: false, reason: "canonical-mismatch" });
   });
 });
 

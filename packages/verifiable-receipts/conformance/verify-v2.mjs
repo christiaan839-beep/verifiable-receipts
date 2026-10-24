@@ -162,6 +162,28 @@ export function jsonEqual(a, b, depth = 1) {
 }
 
 /**
+ * Reads a receipt from JSON text, counting its depth on the text first
+ * (VAOS 2.0 §7.2), so a duplicate key that JSON.parse discards still
+ * counts. Throws an Error whose message is the reason, as Python's
+ * parse_receipt and Go's ParseReceipt do: "receipt nesting deeper than
+ * 64", "receipt is not valid JSON" or "receipt is not a JSON object".
+ *
+ * @param {string} text
+ * @returns {Record<string, unknown>}
+ */
+export function parseReceipt(text) {
+  if (textNestsTooDeep(text)) throw new Error("receipt nesting deeper than 64");
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("receipt is not valid JSON");
+  }
+  if (!isObject(value)) throw new Error("receipt is not a JSON object");
+  return value;
+}
+
+/**
  * @param {Record<string, unknown>} receipt
  * @param {import("node:crypto").KeyObject} publicKey  Ed25519 public key
  * @returns {{ ok: boolean, reason?: string }}

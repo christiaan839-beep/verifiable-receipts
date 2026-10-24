@@ -257,6 +257,26 @@ const fixtures = {
       reasonContains: 'envelope field "nested" is not in the signed canonical',
     },
   },
+  // VAOS 2.0 section 7.2: a receipt read from text is depth-counted as
+  // text, so a duplicate key the JSON parser discards still counts. The
+  // receipt is given as text (receiptText), since parsing the fixture
+  // file would drop the duplicate. Parsed, it is v2-valid-001 with
+  // "overall": "pass", which verifies.
+  "v2-invalid-duplicate-deep-key.json": {
+    description:
+      "v2 invalid — the receipt text repeats overall, first nested 64 deep (the receipt 65 deep), then \"pass\"; parsers keep the last, but the text is counted first",
+    receiptText:
+      "{" +
+      [
+        `"canonical":${JSON.stringify(CANONICAL)}`,
+        `"contentHash":${JSON.stringify(contentHash)}`,
+        `"signature":${JSON.stringify(signWith(privateKey))}`,
+        `"overall":${JSON.stringify(nested(64))}`,
+        `"overall":"pass"`,
+      ].join(",") +
+      "}",
+    expected: { ok: false, reasonContains: "receipt nesting deeper than 64" },
+  },
   // VAOS 2.0 section 7.3: weak public keys. Under the identity key the
   // signature R = identity, S = 0 verifies any canonical; the verifier
   // refuses the key, so it never gets that far.

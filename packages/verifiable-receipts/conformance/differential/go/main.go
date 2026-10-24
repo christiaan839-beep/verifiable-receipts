@@ -32,20 +32,10 @@ type result struct {
 }
 
 // parseReason is the reason for a receipt that ParseReceipt refuses: the
-// verifiers' own reason for a receipt nested too deep, the reason the
-// other verifiers give for a signature field that is not a string (Go
-// cannot hold one in a Receipt), or "parse failed".
+// verifiers' own reason for a receipt nested too deep, or "parse failed".
 func parseReason(err error) string {
-	msg := strings.TrimPrefix(err.Error(), "vaos: ")
-	switch msg {
-	case "receipt nesting deeper than 64":
+	if msg := strings.TrimPrefix(err.Error(), "vaos: "); msg == "receipt nesting deeper than 64" {
 		return msg
-	case `receipt field "canonical" is not a string`:
-		return "missing canonical projection"
-	case `receipt field "signature" is not a string`:
-		return "missing signature"
-	case `receipt field "contentHash" is not a string`:
-		return "contentHash must be a string"
 	}
 	return "parse failed"
 }

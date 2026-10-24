@@ -129,19 +129,17 @@ export async function runGuardian(
 /**
  * Re-derive the canonical from the attestation's fields, compare it with
  * `canonical` and `contentHash`, and check the signature with the
- * caller's `verify`. An attestation nested deeper than 64, or whose
- * canonical is not a string or its text nests deeper than 64 (VAOS 2.0
- * section 7.2), is rejected first, with reason "nesting-too-deep".
+ * caller's `verify`. An attestation whose canonical is not a string is
+ * rejected with reason "canonical-mismatch"; then one nested deeper than
+ * 64, or whose canonical's text nests deeper than 64 (VAOS 2.0 section
+ * 7.2), with reason "nesting-too-deep".
  */
 export function verifyGuardianAttestation(
   attestation: GuardianAttestation,
   verify: (canonical: string, signature: string) => boolean,
 ): { ok: boolean; reason?: string } {
-  if (
-    nestsDeeperThan(attestation) ||
-    typeof attestation.canonical !== "string" ||
-    textNestsDeeperThan(attestation.canonical)
-  ) {
+  if (typeof attestation?.canonical !== "string") return { ok: false, reason: "canonical-mismatch" };
+  if (nestsDeeperThan(attestation) || textNestsDeeperThan(attestation.canonical)) {
     return { ok: false, reason: "nesting-too-deep" };
   }
   // runId, agentSlug and tokenId are not envelope fields; they are read

@@ -48,8 +48,8 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a usage error.
 - `verifyGuardianAttestation` returns `{ ok: false, reason:
   "nesting-too-deep" }`, checked first, for an attestation nested deeper
-  than 64 (VAOS 2.0 §7.2), or a `canonical` that is not a string or
-  whose text nests deeper than 64. Before, a signed attestation whose
+  than 64 (VAOS 2.0 §7.2), or a `canonical` whose text nests deeper than
+  64; a `canonical` that is not a string gets `"canonical-mismatch"`. Before, a signed attestation whose
   `runId` nested 64 deep was accepted, which the Python and Go verifiers
   reject, and one nested 20,000 deep made it throw `RangeError` (stack
   overflow).
@@ -60,6 +60,10 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `verifiable-receipts` CLI refuses a `--pubkey` that is a point of
   small order or a non-canonical encoding (VAOS 2.0 §7.3). Under the
   identity key, for one, a signature verifies every message.
+- The `verifiable-receipts` and `verifiable-receipts-sign` CLIs count the
+  depth of the manifest or body on its text before parsing it, so a
+  duplicate key that `JSON.parse` discards still counts: a manifest
+  deeper than 64 fails with `nesting-too-deep`, a body is refused.
 - The conformance v2 verifier (`conformance/verify-v2.mjs`) rejects a
   receipt nested deeper than 64 before any other check, and a
   `canonical` whose text nests deeper than 64 before parsing it, with
@@ -69,7 +73,9 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RangeError`. Its `jsonEqual` treats arrays and objects deeper than 64
   as unequal, so no caller can make it recurse deeper, and it refuses a
   weak public key as `loadEd25519PublicKey` does. It also exports
-  `nestsTooDeep` and `textNestsTooDeep`.
+  `nestsTooDeep`, `textNestsTooDeep` and `parseReceipt`, which reads a
+  receipt from text with its depth counted on the text first, as
+  Python's `parse_receipt` and Go's `ParseReceipt` do.
 
 ### Added
 
