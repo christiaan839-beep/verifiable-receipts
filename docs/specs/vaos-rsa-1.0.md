@@ -1,6 +1,6 @@
 # VAOS-RSA 1.0 — Receipt Streaming Attestation
 
-**Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.3.x and forward.
+**Status:** Frozen with `@sovereignos/verifiable-receipts` v0.3.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
 **Contact:** an issue on the repository; security reports through a private GitHub security advisory (`SECURITY.md`).
 
@@ -46,7 +46,7 @@ An auditor can then:
 
 This composes with the existing transparency log: the same
 RFC 9162 leaf/inner hash primitives already in
-`@sovereign-matrix/verifiable-receipts/transparency` apply.
+`@sovereignos/verifiable-receipts/transparency` apply.
 
 ---
 

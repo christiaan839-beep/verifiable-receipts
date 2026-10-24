@@ -3,7 +3,7 @@
 | Field       | Value                                                                       |
 | ----------- | --------------------------------------------------------------------------- |
 | Version     | 0.1                                                                         |
-| Status      | Draft — primitives in `@sovereign-matrix/verifiable-receipts` (`transparency`, `log-store`) |
+| Status      | Draft — primitives in `@sovereignos/verifiable-receipts` (`transparency`, `log-store`) |
 | Editor      | Sovereign Matrix — `sovereign.systems007@gmail.com`                         |
 | License     | CC0 1.0 (public domain)                                                     |
 | Inspired by | RFC 6962 / RFC 9162 (Certificate Transparency)                              |
@@ -240,7 +240,7 @@ parties) or one of them publishes a fork notice.
 
 ## 7. Reference implementation
 
-The primitives ship in `@sovereign-matrix/verifiable-receipts`:
+The primitives ship in `@sovereignos/verifiable-receipts`:
 
 ```ts
 import {
@@ -253,7 +253,7 @@ import {
   verifyConsistencyProof,
   buildSth,
   canonicalizeSth,
-} from "@sovereign-matrix/verifiable-receipts/transparency";
+} from "@sovereignos/verifiable-receipts/transparency";
 ```
 
 A log server, a witness API and a monitor are out of scope: the

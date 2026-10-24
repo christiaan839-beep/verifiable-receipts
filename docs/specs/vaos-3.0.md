@@ -7,7 +7,7 @@
 | Status         | Draft (open for comment)                                       |
 | Editor         | Sovereign Matrix — `sovereign.systems007@gmail.com`            |
 | License        | CC0 1.0 (public domain)                                        |
-| Reference impl | `@sovereign-matrix/verifiable-receipts` (Apache-2.0)           |
+| Reference impl | `@sovereignos/verifiable-receipts` (Apache-2.0)           |
 | Discussion     | https://github.com/christiaan839-beep/verifiable-receipts/issues |
 
 > The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174).

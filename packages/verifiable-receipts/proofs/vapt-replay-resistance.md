@@ -101,7 +101,7 @@ key. The reference implementation provides this function
 explicitly:
 
 ```typescript
-import { vaptHash } from "@sovereign-matrix/verifiable-receipts";
+import { vaptHash } from "@sovereignos/verifiable-receipts";
 const idempotencyKey = vaptHash(token);
 if (already_settled(idempotencyKey)) reject;
 record_settled(idempotencyKey);

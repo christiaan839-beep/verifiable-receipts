@@ -1,6 +1,6 @@
 # VAPT 1.0 — Verifiable Agentic Payment Token
 
-**Status:** Frozen with `@sovereign-matrix/verifiable-receipts` v0.2.x and forward.
+**Status:** Frozen with `@sovereignos/verifiable-receipts` v0.2.x and forward.
 **License:** Apache 2.0 (this specification + the reference implementation).
 **Contact:** an issue on the repository; security reports through a private GitHub security advisory (`SECURITY.md`).
 

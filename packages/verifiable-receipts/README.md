@@ -1,4 +1,4 @@
-# @sovereign-matrix/verifiable-receipts
+# @sovereignos/verifiable-receipts
 
 TypeScript library for signing receipts for AI agent actions and
 verifying them later. Version 0.4.0, Apache-2.0. Not on npm yet:
@@ -24,13 +24,13 @@ The wire formats are in [`SPEC.md`](./SPEC.md).
 | `…/stream-attestation`                       | Merkle commitment over a stream's chunks; per-chunk inclusion proofs                             |
 | `…/vapt`                                     | Short-lived Ed25519 payment tokens with amount, currency, merchant and lifetime limits           |
 
-`…` is `@sovereign-matrix/verifiable-receipts`; everything is also
+`…` is `@sovereignos/verifiable-receipts`; everything is also
 exported from the package root.
 
 ## Sign and verify a verdict
 
 ```ts
-import { runGuardian, verifyGuardianAttestation, outputSizeRule, requireTokenRule } from "@sovereign-matrix/verifiable-receipts";
+import { runGuardian, verifyGuardianAttestation, outputSizeRule, requireTokenRule } from "@sovereignos/verifiable-receipts";
 import { generateKeyPairSync, sign, verify } from "node:crypto";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -57,7 +57,7 @@ covers each rule's `ruleId`, `verdict` and `reason`; it does not cover
 ## Dual signature
 
 ```ts
-import { generateMlDsa65Keypair, signMlDsa65, formatV3Wire, verifyDualSig } from "@sovereign-matrix/verifiable-receipts";
+import { generateMlDsa65Keypair, signMlDsa65, formatV3Wire, verifyDualSig } from "@sovereignos/verifiable-receipts";
 
 const ml = generateMlDsa65Keypair();
 const edSig = sign(null, Buffer.from(canonical), privateKey).toString("base64");
@@ -76,7 +76,7 @@ your verifier refuses `v2=` from issuers that sign `v3=`.
 ## Transparency log
 
 ```ts
-import { TransparencyLog, FileLogStore, verifyInclusionProof } from "@sovereign-matrix/verifiable-receipts";
+import { TransparencyLog, FileLogStore, verifyInclusionProof } from "@sovereignos/verifiable-receipts";
 
 const log = new TransparencyLog("example-log", new FileLogStore("./log.txt"));
 const { index, leafHashHex, sth } = log.append(receipt.canonical); // RFC 6962 leaf hash

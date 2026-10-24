@@ -1,4 +1,4 @@
-# Wire formats of `@sovereign-matrix/verifiable-receipts` 0.4
+# Wire formats of `@sovereignos/verifiable-receipts` 0.4
 
 This file ships with the package and describes the formats this
 version emits and accepts. The full specifications are in the
@@ -90,7 +90,7 @@ separator.
 
 ```ts
 import { sign, verify } from "node:crypto";
-import { signMlDsa65, verifyDualSig, formatV3Wire } from "@sovereign-matrix/verifiable-receipts/pq-sign";
+import { signMlDsa65, verifyDualSig, formatV3Wire } from "@sovereignos/verifiable-receipts/pq-sign";
 
 const ed = sign(null, Buffer.from(canonical, "utf8"), edPrivateKey).toString("base64");
 const wire = formatV3Wire(ed, signMlDsa65(canonical, mldsaSecretKey));
