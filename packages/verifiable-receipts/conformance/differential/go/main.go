@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 
 	vaos "github.com/christiaan839-beep/verifiable-receipts/packages/verifiable-receipts-go"
 )
@@ -24,9 +25,29 @@ type testCase struct {
 }
 
 type result struct {
-	ID    int    `json:"id"`
-	OK    bool   `json:"ok"`
-	Threw string `json:"threw,omitempty"`
+	ID     int     `json:"id"`
+	OK     bool    `json:"ok"`
+	Reason *string `json:"reason"`
+	Threw  string  `json:"threw,omitempty"`
+}
+
+// parseReason is the reason for a receipt that ParseReceipt refuses: the
+// verifiers' own reason for a receipt nested too deep, the reason the
+// other verifiers give for a signature field that is not a string (Go
+// cannot hold one in a Receipt), or "parse failed".
+func parseReason(err error) string {
+	msg := strings.TrimPrefix(err.Error(), "vaos: ")
+	switch msg {
+	case "receipt nesting deeper than 64":
+		return msg
+	case `receipt field "canonical" is not a string`:
+		return "missing canonical projection"
+	case `receipt field "signature" is not a string`:
+		return "missing signature"
+	case `receipt field "contentHash" is not a string`:
+		return "contentHash must be a string"
+	}
+	return "parse failed"
 }
 
 // proofJSON decodes the way a careful caller would: pointers so a missing
@@ -64,12 +85,22 @@ func judge(pub []byte, c testCase) (r result) {
 			r.OK, r.Threw = false, fmt.Sprint(p)
 		}
 	}()
-	if c.Kind == "receipt" {
-		var receipt vaos.Receipt
-		if json.Unmarshal([]byte(c.Raw), &receipt) != nil {
+	if c.Kind == "receipt" || c.Kind == "guardian" {
+		receipt, err := vaos.ParseReceipt([]byte(c.Raw))
+		if err != nil {
+			reason := parseReason(err)
+			r.Reason = &reason
 			return r
 		}
-		r.OK = vaos.VerifyV2Receipt(receipt, pub).OK
+		verify := vaos.VerifyV2Receipt
+		if c.Kind == "guardian" {
+			verify = vaos.VerifyGuardianAttestation
+		}
+		v := verify(receipt, pub)
+		r.OK = v.OK
+		if !v.OK {
+			r.Reason = &v.Reason
+		}
 		return r
 	}
 	var p proofJSON

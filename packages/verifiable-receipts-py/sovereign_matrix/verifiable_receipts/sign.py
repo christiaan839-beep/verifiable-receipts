@@ -48,7 +48,10 @@ def _utf16_key(key: str) -> bytes:
 def _encode(value: Any, path: str, level: int = 1) -> str:
     # ``level`` is the depth ``value`` has when it is a list or dict.
     if isinstance(value, (list, dict)) and level > _MAX_NESTING:
-        raise ValueError(f"{path} is nesting deeper than {_MAX_NESTING}, which verifiers reject")
+        raise ValueError(
+            f"body nesting deeper than {_MAX_NESTING} (a list or dict at depth {level}), "
+            "which verifiers reject"
+        )
     if value is None:
         return "null"
     if value is True:

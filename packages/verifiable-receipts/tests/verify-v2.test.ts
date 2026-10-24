@@ -6,8 +6,13 @@
  * rejected with a verdict, never a thrown stack overflow.
  */
 import { describe, it, expect } from "vitest";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { verifyV2Receipt } from "../conformance/verify-v2.mjs";
+import { createHash, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import {
+  jsonEqual,
+  nestsTooDeep,
+  textNestsTooDeep,
+  verifyV2Receipt,
+} from "../conformance/verify-v2.mjs";
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 
@@ -75,6 +80,24 @@ describe("verifyV2Receipt — nesting depth", () => {
     expect(verifyV2Receipt(receipt(canonical, {}), publicKey)).toEqual({ ok: true });
   });
 
+  it("bounds jsonEqual, nestsTooDeep and textNestsTooDeep at 64", () => {
+    expect(jsonEqual(nested(64), nested(64))).toBe(true);
+    expect(jsonEqual(nested(65), nested(65))).toBe(false);
+    expect(jsonEqual(nested(20_000), nested(20_000))).toBe(false);
+    // Objects too: {"k":{"k":...}} `levels` deep.
+    const objects = (levels: number) => {
+      let value: unknown = {};
+      for (let i = 1; i < levels; i++) value = { k: value };
+      return value;
+    };
+    expect(jsonEqual(objects(64), objects(64))).toBe(true);
+    expect(jsonEqual(objects(65), objects(65))).toBe(false);
+    expect(nestsTooDeep(nested(64))).toBe(false);
+    expect(nestsTooDeep(nested(65))).toBe(true);
+    expect(textNestsTooDeep(nestedText(64))).toBe(false);
+    expect(textNestsTooDeep(nestedText(65))).toBe(true);
+  });
+
   for (const depth of [5_000, 20_000]) {
     it(`returns a verdict, not a stack overflow, at depth ${depth}`, () => {
       const canonical = `{"d":${nestedText(depth)}}`;
@@ -88,4 +111,33 @@ describe("verifyV2Receipt — nesting depth", () => {
       });
     });
   }
+});
+
+
+// VAOS 2.0 section 7.3: weak public keys. Little-endian y, sign bit clear.
+const P = 2n ** 255n - 19n;
+const keyFromY = (y: bigint) => Buffer.from(y.toString(16).padStart(64, "0"), "hex").reverse();
+const keyObject = (raw: Buffer) =>
+  createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: raw.toString("base64url") }, format: "jwk" });
+// Under the identity key this signature verifies every message.
+const universal = "v2=" + Buffer.concat([keyFromY(1n), Buffer.alloc(32)]).toString("base64");
+const identitySignBit = Buffer.from(keyFromY(1n));
+identitySignBit[31] |= 0x80;
+
+describe("verifyV2Receipt — weak public keys", () => {
+  for (const [name, raw, reason] of [
+    ["identity", keyFromY(1n), "public key is a small-order point"],
+    ["identity with the sign bit", identitySignBit, "public key is a small-order point"],
+    ["y = p + 1", keyFromY(P + 1n), "public key is a small-order point"],
+    ["y = p + 3", keyFromY(P + 3n), "public key is not a canonical encoding"],
+  ] as const) {
+    it(`refuses the ${name} key`, () => {
+      const result = verifyV2Receipt({ canonical: `{"a":1}`, signature: universal }, keyObject(raw));
+      expect(result).toEqual({ ok: false, reason });
+    });
+  }
+
+  it("accepts a valid key", () => {
+    expect(verifyV2Receipt(receipt(`{"a":1}`, {}), publicKey)).toEqual({ ok: true });
+  });
 });

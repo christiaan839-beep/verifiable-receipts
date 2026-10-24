@@ -2,8 +2,11 @@
 Judges every case in cases.jsonl with the Python verifiers.
 
 Usage: python verify.py <public.pem> <cases.jsonl> <out.jsonl>
-Writes one {"id", "ok"} line per case; "threw" records an exception,
-which the verifiers must never raise.
+Writes one {"id", "ok", "reason"} line per case; "threw" records an
+exception, which the verifiers must never raise. Receipts and Guardian
+attestations are read with parse_receipt, which gives the verifiers'
+reason for a receipt nested deeper than 64; any other text that does
+not parse has the reason "parse failed", as in the other runners.
 """
 
 from __future__ import annotations
@@ -11,15 +14,33 @@ from __future__ import annotations
 import json
 import sys
 
-from sovereign_matrix.verifiable_receipts import verify_inclusion_proof, verify_v2_receipt
+from sovereign_matrix.verifiable_receipts import (
+    parse_receipt,
+    verify_guardian_attestation,
+    verify_inclusion_proof,
+    verify_v2_receipt,
+)
+
+TOO_DEEP = "receipt nesting deeper than 64"
 
 
-def judge(kind: str, value: object, pem: bytes) -> bool:
-    if kind == "receipt":
-        return verify_v2_receipt(value, pem).ok  # type: ignore[arg-type]
-    if not isinstance(value, dict):
-        return False
-    return verify_inclusion_proof(value, value.get("leafHashHex"), value.get("rootHashHex"))  # type: ignore[arg-type]
+def judge(kind: str, raw: str, pem: bytes) -> tuple[bool, str | None]:
+    if kind in ("receipt", "guardian"):
+        try:
+            value = parse_receipt(raw)
+        except ValueError as err:
+            return False, str(err) if str(err) == TOO_DEEP else "parse failed"
+        verify = verify_v2_receipt if kind == "receipt" else verify_guardian_attestation
+        result = verify(value, pem)
+        return result.ok, result.reason
+    try:
+        proof = json.loads(raw)
+    except (ValueError, RecursionError):
+        return False, "parse failed"
+    if not isinstance(proof, dict):
+        return False, None
+    ok = verify_inclusion_proof(proof, proof.get("leafHashHex"), proof.get("rootHashHex"))  # type: ignore[arg-type]
+    return ok, None
 
 
 def main() -> int:
@@ -32,17 +53,9 @@ def main() -> int:
             case = json.loads(line)
             verdict: dict[str, object] = {"id": case["id"]}
             try:
-                value = json.loads(case["raw"])
-            except (ValueError, RecursionError):
-                # A parse failure is a rejection, as in the TypeScript and
-                # Go runners; json.loads raises RecursionError on text
-                # nested some thousands deep.
-                verdict["ok"] = False
-            else:
-                try:
-                    verdict["ok"] = judge(case["kind"], value, pem)
-                except Exception as err:  # noqa: BLE001 - recorded, and fails the run
-                    verdict.update(ok=False, threw=repr(err))
+                verdict["ok"], verdict["reason"] = judge(case["kind"], case["raw"], pem)
+            except Exception as err:  # noqa: BLE001 - recorded, and fails the run
+                verdict.update(ok=False, threw=repr(err))
             lines.append(json.dumps(verdict))
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")

@@ -16,7 +16,9 @@
  *      optional); an empty string is a mismatch, not an absent field.
  *      (Go's Receipt.UnmarshalJSON rejects a non-string contentHash the
  *      same way.)
- *   4. The Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
+ *   4. The public key is not a point of small order or a non-canonical
+ *      encoding (VAOS 2.0 §7.3; checked right after step 2), and the
+ *      Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
  *      exactly as given.
  *   5. `canonical` nests at most 64 deep, counted on its text before it
  *      is parsed, and parses as a JSON object.
@@ -30,9 +32,8 @@
  * the Python and Go verifiers (VAOS 2.0 §7, step 6): all three reject
  * such a field rather than compare it differently.
  *
- * With both sides at most 64 deep, the recursive jsonEqual below never
- * recurses deeper than 64 when verifyV2Receipt calls it, so no receipt
- * can overflow the stack.
+ * jsonEqual below recurses at most 64 deep, and the depth checks walk an
+ * explicit stack, so no input can overflow the call stack.
  */
 import { createHash, verify as nodeVerify } from "node:crypto";
 
@@ -44,6 +45,43 @@ function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
+/**
+ * The encodings of the points of small order, with the sign bit cleared:
+ * the libsodium blocklist ("Taming the many EdDSAs", Chalkias et al.). The
+ * last two are the non-canonical encodings y = p and y = p + 1.
+ */
+const SMALL_ORDER_KEYS = new Set([
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+]);
+
+/**
+ * Why the Ed25519 public key is refused (VAOS 2.0 §7.3), or null: a point
+ * of small order, or a non-canonical encoding (y of p or more). A key that
+ * is not Ed25519 is left to the signature check, which fails.
+ */
+function ed25519KeyProblem(publicKey) {
+  let x;
+  try {
+    x = publicKey.export({ format: "jwk" }).x;
+  } catch {
+    return null;
+  }
+  if (typeof x !== "string") return null;
+  const cleared = Buffer.from(x, "base64url");
+  if (cleared.length !== 32) return null;
+  cleared[31] &= 0x7f;
+  if (SMALL_ORDER_KEYS.has(cleared.toString("hex"))) return "public key is a small-order point";
+  const y = BigInt("0x" + Buffer.from(cleared).reverse().toString("hex"));
+  if (y >= 2n ** 255n - 19n) return "public key is not a canonical encoding";
+  return null;
+}
+
 /** The nesting limit of VAOS 2.0 §7.2. */
 const MAX_NESTING = 64;
 
@@ -52,7 +90,7 @@ const MAX_NESTING = 64;
  * when it is an array or object, and each array or object inside it one
  * more. Walks an explicit stack, so it cannot overflow the call stack.
  */
-function nestsTooDeep(value) {
+export function nestsTooDeep(value) {
   const stack = [[value, 1]];
   while (stack.length > 0) {
     const [v, level] = stack.pop();
@@ -71,7 +109,7 @@ function nestsTooDeep(value) {
  * `{` open one and `]` and `}` close one (when one is open); a string
  * runs from `"` to the next `"` not escaped by `\`.
  */
-function textNestsTooDeep(text) {
+export function textNestsTooDeep(text) {
   let open = 0;
   let inString = false;
   for (let i = 0; i < text.length; i++) {
@@ -95,21 +133,27 @@ function textNestsTooDeep(text) {
  * magnitude 2^53 or more equals nothing: JSON.parse reads 2^53 + 1 as
  * 2^53, so such a number in a repeated field is rejected in every
  * verifier rather than compared differently.
+ *
+ * Bounded at MAX_NESTING: `depth` is the level of `a` and `b` (1 at the
+ * top), and arrays or objects deeper than MAX_NESTING equal nothing, so
+ * no input, even from a caller other than verifyV2Receipt, recurses
+ * deeper than that.
  */
-export function jsonEqual(a, b) {
+export function jsonEqual(a, b, depth = 1) {
   if (Array.isArray(a) || Array.isArray(b)) {
     return (
+      depth <= MAX_NESTING &&
       Array.isArray(a) &&
       Array.isArray(b) &&
       a.length === b.length &&
-      a.every((x, i) => jsonEqual(x, b[i]))
+      a.every((x, i) => jsonEqual(x, b[i], depth + 1))
     );
   }
   if (isObject(a) || isObject(b)) {
-    if (!isObject(a) || !isObject(b)) return false;
+    if (depth > MAX_NESTING || !isObject(a) || !isObject(b)) return false;
     const ka = Object.keys(a);
     if (ka.length !== Object.keys(b).length) return false;
-    return ka.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k]));
+    return ka.every((k) => Object.hasOwn(b, k) && jsonEqual(a[k], b[k], depth + 1));
   }
   if (typeof a === "number" && typeof b === "number") {
     return Math.abs(a) < 2 ** 53 && Math.abs(b) < 2 ** 53 && a === b;
@@ -143,6 +187,8 @@ export function verifyV2Receipt(receipt, publicKey) {
   if (sigBytes.toString("base64") !== signature.slice(3)) {
     return { ok: false, reason: "signature base64 invalid: not canonical" };
   }
+  const keyProblem = ed25519KeyProblem(publicKey);
+  if (keyProblem) return { ok: false, reason: keyProblem };
   const canonicalBytes = Buffer.from(canonical, "utf8");
 
   if (contentHash != null && typeof contentHash !== "string") {

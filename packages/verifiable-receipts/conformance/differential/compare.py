@@ -2,7 +2,9 @@
 Compares the three verifiers' verdicts on the differential cases.
 
 Usage: python compare.py <cases.jsonl> <ts.jsonl> <py.jsonl> <go.jsonl> <disagreements.jsonl>
-Exits 1 when the verifiers disagree on any case or any of them raised;
+Exits 1 when the verifiers disagree on any case, in verdict or in reason
+(for receipts all three; for Guardian attestations Python and Go, since
+the TypeScript library names its reasons its own way), or any raised;
 the cases go to <disagreements.jsonl> with each verifier's verdict.
 """
 
@@ -31,9 +33,19 @@ def main() -> int:
                 bad.append({**case, "verdicts": verdicts, "why": "missing verdict"})
                 continue
             oks = {n: v["ok"] for n, v in verdicts.items()}
+            reasons = {n: v.get("reason") for n, v in verdicts.items()}
             threw = {n: v["threw"] for n, v in verdicts.items() if "threw" in v}
-            if threw or len(set(oks.values())) > 1:
-                bad.append({**case, "verdicts": oks, "threw": threw})
+            # Receipts: all three give the same reason. Guardian attestations:
+            # Python and Go do; the TypeScript library names its own reasons.
+            compared = names if case["kind"] == "receipt" else ["python", "go"]
+            if case["kind"] == "inclusion":
+                compared = []
+            if (
+                threw
+                or len(set(oks.values())) > 1
+                or len({reasons[n] for n in compared}) > 1
+            ):
+                bad.append({**case, "verdicts": oks, "reasons": reasons, "threw": threw})
             else:
                 stats[
                     f"{case['kind']} {'accepted' if next(iter(oks.values())) else 'rejected'}"

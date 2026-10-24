@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +47,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    PublicFormat,
     load_pem_public_key,
 )
 
@@ -67,6 +70,11 @@ class VerifyResult:
     reason: str | None = None
 
 
+_STANDARD_BASE64 = re.compile(
+    r"(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?"
+)
+
+
 def _decode_v2_signature(signature: str) -> bytes:
     """Strip the 'v2=' prefix and base64-decode. Raises ValueError on malformed input."""
     if not isinstance(signature, str):
@@ -74,10 +82,11 @@ def _decode_v2_signature(signature: str) -> bytes:
     if not signature.startswith("v2="):
         raise ValueError("signature is not v2 (expected 'v2=<base64>')")
     raw = signature[3:]
-    try:
-        decoded = base64.b64decode(raw, validate=True)
-    except ValueError as exc:  # binascii.Error is a ValueError
-        raise ValueError(f"signature base64 invalid: {exc}") from exc
+    # The same two steps, with the same reasons, as the TypeScript and Go
+    # verifiers: the shape of padded standard base64, then one spelling.
+    if _STANDARD_BASE64.fullmatch(raw) is None:
+        raise ValueError("signature base64 invalid")
+    decoded = base64.b64decode(raw, validate=True)
     # Reject non-canonical spellings (non-zero padding bits), so one
     # signature has exactly one valid string form.
     if base64.b64encode(decoded).decode("ascii") != raw:
@@ -85,13 +94,48 @@ def _decode_v2_signature(signature: str) -> bytes:
     return decoded
 
 
+# The encodings of the points of small order, with the sign bit cleared:
+# the libsodium blocklist ("Taming the many EdDSAs", Chalkias et al.).
+# The last two are the non-canonical encodings y = p and y = p + 1.
+_SMALL_ORDER_KEYS = frozenset(
+    bytes.fromhex(h)
+    for h in (
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    )
+)
+_P = 2**255 - 19
+
+
+def _ed25519_key_problem(raw: bytes) -> str | None:
+    """Why a raw 32-byte Ed25519 public key is refused (VAOS 2.0 section 7.3), or None."""
+    cleared = raw[:31] + bytes([raw[31] & 0x7F])
+    if cleared in _SMALL_ORDER_KEYS:
+        return "public key is a small-order point"
+    if int.from_bytes(cleared, "little") >= _P:
+        return "public key is not a canonical encoding"
+    return None
+
+
 def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
-    """Load an Ed25519 public key from PEM bytes. Raises ValueError on mismatch."""
+    """Load an Ed25519 public key from PEM bytes. Raises ValueError on mismatch.
+
+    Refuses a key that is a point of small order or a non-canonical
+    encoding (VAOS 2.0 section 7.3).
+    """
     key = load_pem_public_key(pem)
     if not isinstance(key, Ed25519PublicKey):
         raise ValueError(
             f"expected Ed25519 public key, got {type(key).__name__}",
         )
+    problem = _ed25519_key_problem(key.public_bytes(Encoding.Raw, PublicFormat.Raw))
+    if problem is not None:
+        raise ValueError(problem)
     return key
 
 
@@ -167,7 +211,7 @@ def _parse_canonical(canonical: str) -> Any:
 _UNSAFE = 2**53
 
 
-def _json_equal(a: Any, b: Any) -> bool:
+def _json_equal(a: Any, b: Any, depth: int = 1) -> bool:
     """Deep JSON-value equality.
 
     Same JSON type and same value: numbers by numeric value (1 equals
@@ -177,6 +221,10 @@ def _json_equal(a: Any, b: Any) -> bool:
     only number type JavaScript's JSON.parse has, cannot tell 2**53 from
     2**53 + 1, so every verifier rejects such a number in a repeated
     field rather than disagree about it.
+
+    Bounded at _MAX_NESTING: ``depth`` is the level of ``a`` and ``b`` (1
+    at the top), and lists or mappings deeper than that equal nothing,
+    so no input recurses deeper than _MAX_NESTING.
     """
     if isinstance(a, bool) or isinstance(b, bool):
         return isinstance(a, bool) and isinstance(b, bool) and a == b
@@ -186,15 +234,40 @@ def _json_equal(a: Any, b: Any) -> bool:
         return abs(a) < _UNSAFE and abs(b) < _UNSAFE and a == b
     if isinstance(a, str) or isinstance(b, str):
         return isinstance(a, str) and isinstance(b, str) and a == b
+    if depth > _MAX_NESTING:
+        return False
     if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         return len(a) == len(b) and all(
-            _json_equal(x, y) for x, y in zip(a, b, strict=True)
+            _json_equal(x, y, depth + 1) for x, y in zip(a, b, strict=True)
         )
     if isinstance(a, Mapping) and isinstance(b, Mapping):
         return set(a.keys()) == set(b.keys()) and all(
-            _json_equal(a[k], b[k]) for k in a
+            _json_equal(a[k], b[k], depth + 1) for k in a
         )
     return False
+
+
+def parse_receipt(text: str | bytes) -> dict[str, Any]:
+    """Read a receipt from JSON text, counting its depth first.
+
+    Raises:
+        ValueError: "receipt nesting deeper than 64" when the text nests
+            deeper than 64 (VAOS 2.0 section 7.2), the reason the
+            verifiers give, at any depth: ``json.loads`` alone raises
+            RecursionError on text nested some thousands deep. Also when
+            the text is not JSON, or not a JSON object.
+    """
+    if isinstance(text, bytes):
+        text = text.decode("utf-8")
+    if _text_nests_too_deep(text):
+        raise ValueError("receipt nesting deeper than 64")
+    try:
+        value = json.loads(text, parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("receipt is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("receipt is not a JSON object")
+    return value
 
 
 def _check_envelope(receipt: Mapping[str, Any], canonical: str) -> str | None:

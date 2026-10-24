@@ -252,7 +252,11 @@ field.
   from a `"` to the next `"`, and a `\` inside a string escapes the
   character after it. The verifier counts this way whether or not the
   text is valid JSON, so a canonical that is too deep and also
-  malformed is rejected for its depth by every verifier.
+  malformed is rejected for its depth by every verifier. Only the ASCII
+  characters `[ ] { } " \` matter, and none of them occurs inside a
+  multi-byte UTF-8 sequence or a UTF-16 surrogate, so a verifier may
+  read "character" as a byte of the UTF-8 text, a code point or a
+  UTF-16 code unit and count the same depth.
 
 With both sides at most 64 deep, the comparison of step 6 never goes
 deeper than 64 levels, and a verifier never parses or walks anything
@@ -298,28 +302,60 @@ bytes), the base point `B`, the group order `L`, and the message `M`
   canonical encoding of a point (a y-coordinate of p or more, or x = 0
   with the sign bit set) never matches, even when it would decode to
   the right point.
-- `A` is used as given. A key that is a point of small order, or that
-  is not the canonical encoding of its point (RFC 8032 §5.1.3 would
-  refuse to decode it), is not rejected. This is what the libraries
-  below do; it departs from the strict decoding of RFC 8032 §5.1.3,
-  and it is safe only because the verifier does not choose the key
-  (next paragraph).
+- `A` that does not decode to a point of the curve (for example
+  y = 2, which has no x) makes every signature invalid.
+- Otherwise the signature check uses `A` as given: the equation above
+  holds or fails the same way for a key of small order and for a
+  non-canonical encoding of a point (a y-coordinate of p or more, or
+  x = 0 with the sign bit set), which RFC 8032 §5.1.3 would refuse to
+  decode. The key rule below refuses such keys before the check.
 
 Node.js `crypto.verify` (OpenSSL), Python `cryptography` (OpenSSL) and
 Go `crypto/ed25519`, which the three verifiers of this repository call,
-verify this way, and a review found that Chromium's WebCrypto does too.
-On 24 October 2026 Node.js 22.23.2 (OpenSSL 3.5.7), `cryptography`
-50.0.2 (OpenSSL 4.0.3) and Go 1.27.3 gave the same verdict on each of
-twelve signatures that tell these choices apart: `S + L`, keys of order
-1 and 8, keys and `R` values that are non-canonical encodings, and keys
-and `R` values with an order-8 component.
+check signatures this way. On 24 October 2026 Node.js 22.23.2 (OpenSSL
+3.5.7), `cryptography` 50.0.2 (OpenSSL 4.0.3) and Go 1.27.3 gave the
+same verdict on each of fourteen signatures that tell these choices
+apart: `S + L`, keys of order 1 and 8, a key off the curve, keys and
+`R` values that are non-canonical encodings, and keys and `R` values
+with an order-8 component. The review of the receipts explorer checked
+Chromium 153's WebCrypto on 16 such vectors, and it agreed with Node.js
+on every one. None of the three libraries refuses a key of small order
+or a non-canonical key on its own.
 
-Under a small-order key some signatures verify every message: under
-the key `01 00 … 00` (the identity point), `R = 01 00 … 00` with
-`S = 0` does. Such a key proves nothing. A verifier MUST take the
-verification key from the issuer by a route it trusts (§6.3), never
-from the receipt, and an issuer MUST NOT publish a key that is a point
-of small order or a non-canonical encoding.
+**Weak keys.** Under a key of small order some signatures verify every
+message: under the key `01 00 … 00` (the identity point),
+`R = 01 00 … 00` with `S = 0` does. Such a key proves nothing.
+
+- An issuer MUST NOT publish or sign with a key that is a point of
+  small order or a non-canonical encoding.
+- A verifier SHOULD refuse such a key when it loads it, and MUST then
+  reject every receipt it is asked to verify with that key. It refuses
+  a key whose 32 bytes, with the sign bit (the top bit of the last
+  byte) cleared, equal one of the seven encodings of points of small
+  order that libsodium blocks (from "Taming the many EdDSAs", Chalkias
+  et al., 2020):
+
+  ```
+  0000000000000000000000000000000000000000000000000000000000000000
+  0100000000000000000000000000000000000000000000000000000000000000
+  26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05
+  c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a
+  ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+  edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+  eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+  ```
+
+  and a key whose y-coordinate, those bytes read as a little-endian
+  integer, is p or more (a non-canonical encoding). The verifiers of
+  this repository refuse both, when the key is loaded (TypeScript
+  `loadEd25519PublicKey`, Python's PEM loading, Go
+  `LoadEd25519PublicKeyFromPEM`) and again in the v2 verifiers, right
+  after step 2, with the reasons `public key is a small-order point`
+  and `public key is not a canonical encoding`. The fixtures
+  `v2-invalid-small-order-key.json` and
+  `v2-invalid-noncanonical-key.json` test this.
+- A verifier MUST take the verification key from the issuer by a route
+  it trusts (§6.3), never from the receipt.
 
 ### 7.4 HTTP API (informational)
 

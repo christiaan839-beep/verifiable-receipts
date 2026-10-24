@@ -134,6 +134,6 @@
   },
   "expected": {
     "ok": false,
-    "reasonContains": "nesting deeper than 64"
+    "reasonContains": "receipt nesting deeper than 64"
   }
 }

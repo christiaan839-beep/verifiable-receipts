@@ -61,7 +61,9 @@ func main() {
 0. The receipt nests at most 64 deep (VAOS 2.0 §7.2): the receipt is one
    level, and each array or object in an `Envelope` field one more.
 1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
-   followed by canonical standard base64 (padding bits zero).
+   followed by canonical standard base64 (padding bits zero). The public
+   key is not a point of small order or a non-canonical encoding (VAOS
+   2.0 §7.3); `LoadEd25519PublicKeyFromPEM` refuses such keys too.
 2. If the receipt has a contentHash, it equals the hex SHA-256 of
    `Canonical` (the `sha256:` prefix is optional). It has one when the
    receipt's JSON has a string `contentHash`, even `""`, or when
@@ -74,14 +76,18 @@ func main() {
 5. Every field in `Envelope` is in that object with an equal JSON value
    (numbers by value, objects regardless of key order; a number of
    magnitude 2^53 or more equals nothing, as in the TypeScript and
-   Python verifiers, since JavaScript cannot tell 2^53 from 2^53 + 1). A field that disagrees, such as `"overall": "fail"` beside a
+   Python verifiers, since JavaScript cannot tell 2^53 from 2^53 + 1).
+   A field that disagrees, such as `"overall": "fail"` beside a
    canonical that says `"pass"`, or that the canonical does not contain,
    fails the check.
 
 It does not re-derive `Canonical` from the other fields, so it accepts
 receipts whose canonical uses another key order. A `Receipt` built by
 hand without `Envelope` has no envelope fields to check: unmarshal the
-receipt's JSON to check them.
+receipt's JSON to check them. `ParseReceipt` and `UnmarshalJSON` refuse a
+receipt nested deeper than 64 with the error `vaos: receipt nesting
+deeper than 64`; `ParseReceipt` counts the depth before `encoding/json`
+reads the text, so the error is the same at any depth.
 
 `VerifyGuardianAttestation` makes the same checks on an attestation from
 the TypeScript `runGuardian`, except for the fields its canonical does

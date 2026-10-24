@@ -7,6 +7,11 @@
   "required": ["description", "expected"],
   "properties": {
     "description": { "type": "string", "minLength": 1 },
+    "publicKeyPem": {
+      "description": "A key fixture's own Ed25519 public key (PEM, SPKI), used instead of public-key.pem.",
+      "type": "string",
+      "pattern": "^-----BEGIN PUBLIC KEY-----"
+    },
     "expected": {
       "type": "object",
       "required": ["ok"],

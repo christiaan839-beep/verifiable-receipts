@@ -11,7 +11,8 @@ would. Most cases start valid and get one or two mutations, so they sit
 near the edge of what a verifier accepts. Some nest a receipt or its
 canonical near the depth limit of 64 (VAOS 2.0 section 7) or far past it,
 up to 20,000 deep; their JSON text is built by hand, since json.dumps
-cannot write it.
+cannot write it. A few are Guardian attestations shaped like runGuardian's,
+whose runId or unsigned evidence nests near the limit or past it.
 """
 
 from __future__ import annotations
@@ -209,6 +210,56 @@ def depth_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
     return "{" + ",".join(fields) + "}"
 
 
+def guardian_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A Guardian attestation shaped like runGuardian's, nested near the limit.
+
+    Its canonical is runGuardian's JSON.stringify, which the TypeScript
+    library re-derives; the runId may nest deep (the canonical one level
+    deeper) and so may a rule's unsigned evidence (the attestation three
+    levels deeper: the attestation, rules and the rule).
+    """
+    run_levels = rng.choice([0, 0, rng.randrange(1, 63), 62, 63, 64, 65, 1000, 20000])
+    evidence_levels = rng.choice([0, 0, rng.randrange(1, 61), 60, 61, 62, 63, 1000, 20000])
+    run_id = nest(rng, run_levels) if run_levels else json.dumps(f"run_{rng.randrange(10**6)}")
+    overall = rng.choice(["pass", "warn", "block"])
+    rule = {"ruleId": "r1", "verdict": overall, "reason": rng.choice([None, "why"])}
+    canonical = (
+        '{"v":1,"type":"guardian-verdict","verdictId":"v1","runId":'
+        + run_id
+        + ',"agentSlug":"agent","tokenId":null,"overall":'
+        + json.dumps(overall)
+        + ',"rules":['
+        + json.dumps(rule, separators=(",", ":"))
+        + '],"issuedAt":"2026-10-24T00:00:00.000Z"}'
+    )
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    evidence = nest(rng, evidence_levels) if evidence_levels else '{"n":1}'
+    envelope_rule = (
+        '{"ruleId":"r1","verdict":'
+        + json.dumps(overall)
+        + ',"reason":'
+        + json.dumps(rule["reason"])
+        + ',"evidence":'
+        + evidence
+        + ',"durationMs":2}'
+    )
+    if rng.random() < 0.1:  # an envelope that disagrees with its canonical
+        overall = "pass" if overall != "pass" else "block"
+    return (
+        '{"verdictId":"v1","overall":'
+        + json.dumps(overall)
+        + ',"rules":['
+        + envelope_rule
+        + '],"totalMs":3,"issuedAt":"2026-10-24T00:00:00.000Z","canonical":'
+        + json.dumps(canonical)
+        + ',"contentHash":"'
+        + hashlib.sha256(canonical.encode()).hexdigest()
+        + '","signature":"'
+        + sig
+        + '"}'
+    )
+
+
 def inclusion_case(rng: random.Random) -> str:
     size = rng.choice(
         [
@@ -268,7 +319,11 @@ def main() -> int:
     with (out / "cases.jsonl").open("w", encoding="utf-8") as fh:
         for i in range(count):
             kind = "receipt" if rng.random() < 0.6 else "inclusion"
-            if kind == "inclusion":
+            if kind == "receipt" and rng.random() < 0.05:
+                kind = "guardian"
+            if kind == "guardian":
+                raw = guardian_case(rng, key)
+            elif kind == "inclusion":
                 raw = inclusion_case(rng)
             elif rng.random() < 0.08:
                 raw = depth_case(rng, key)

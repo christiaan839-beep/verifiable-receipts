@@ -61,7 +61,9 @@ def test_fixture_outcome_matches(fixture: dict) -> None:
 
     if "receipt" in fixture:
         receipt = fixture["receipt"]
-        verdict = verify_v2_receipt(receipt, PUBLIC_KEY_PEM)
+        # A key fixture carries its own key, used instead of public-key.pem.
+        pem = fixture.get("publicKeyPem")
+        verdict = verify_v2_receipt(receipt, pem.encode() if pem else PUBLIC_KEY_PEM)
         assert verdict.ok is expected_ok, (
             f"{fixture['__filename']}: expected ok={expected_ok}, "
             f"got ok={verdict.ok} reason={verdict.reason}"

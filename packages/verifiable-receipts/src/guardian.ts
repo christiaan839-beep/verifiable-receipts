@@ -12,7 +12,7 @@
 
 import { randomUUID } from "node:crypto";
 import { sha256Hex } from "./hash.js";
-import { nestsDeeperThan } from "./nesting.js";
+import { nestsDeeperThan, textNestsDeeperThan } from "./nesting.js";
 
 export type GuardianVerdict = "pass" | "warn" | "block";
 
@@ -129,14 +129,21 @@ export async function runGuardian(
 /**
  * Re-derive the canonical from the attestation's fields, compare it with
  * `canonical` and `contentHash`, and check the signature with the
- * caller's `verify`. An attestation nested deeper than 64 (VAOS 2.0
- * section 7.2) is rejected first, with reason "nesting-too-deep".
+ * caller's `verify`. An attestation nested deeper than 64, or whose
+ * canonical is not a string or its text nests deeper than 64 (VAOS 2.0
+ * section 7.2), is rejected first, with reason "nesting-too-deep".
  */
 export function verifyGuardianAttestation(
   attestation: GuardianAttestation,
   verify: (canonical: string, signature: string) => boolean,
 ): { ok: boolean; reason?: string } {
-  if (nestsDeeperThan(attestation)) return { ok: false, reason: "nesting-too-deep" };
+  if (
+    nestsDeeperThan(attestation) ||
+    typeof attestation.canonical !== "string" ||
+    textNestsDeeperThan(attestation.canonical)
+  ) {
+    return { ok: false, reason: "nesting-too-deep" };
+  }
   // runId, agentSlug and tokenId are not envelope fields; they are read
   // from the canonical, which bound them at issuance.
   let raw: unknown;

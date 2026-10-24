@@ -10,7 +10,7 @@
  *
  * Usage: node packages/verifiable-receipts/conformance/generate-fixtures.mjs
  */
-import { generateKeyPairSync, createHash, sign } from "node:crypto";
+import { generateKeyPairSync, createHash, createPublicKey, sign } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,6 +52,25 @@ function nested(levels) {
   for (let i = 1; i < levels; i++) value = [value];
   return value;
 }
+
+// A PEM for a raw 32-byte Ed25519 key, however weak: the key fixtures
+// carry their own publicKeyPem, which the harnesses use instead of
+// public-key.pem.
+function pemOfRawKey(raw) {
+  return createPublicKey({
+    key: { kty: "OKP", crv: "Ed25519", x: raw.toString("base64url") },
+    format: "jwk",
+  })
+    .export({ type: "spki", format: "pem" })
+    .toString();
+}
+// Little-endian y with the sign bit clear.
+const keyFromY = (y) =>
+  Buffer.from(y.toString(16).padStart(64, "0"), "hex").reverse();
+const IDENTITY_KEY = keyFromY(1n);
+// R = the identity, S = 0: valid under the identity key for every message.
+const UNIVERSAL_SIGNATURE =
+  "v2=" + Buffer.concat([IDENTITY_KEY, Buffer.alloc(32)]).toString("base64");
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const { privateKey: wrongKey } = generateKeyPairSync("ed25519");
@@ -220,7 +239,7 @@ const fixtures = {
       signature: signWith(privateKey),
       nested: nested(64),
     },
-    expected: { ok: false, reasonContains: "nesting deeper than 64" },
+    expected: { ok: false, reasonContains: "receipt nesting deeper than 64" },
   },
   // Exactly at the limit: the depth check lets it through, and the
   // envelope check rejects the field, which the canonical does not hold.
@@ -237,6 +256,31 @@ const fixtures = {
       ok: false,
       reasonContains: 'envelope field "nested" is not in the signed canonical',
     },
+  },
+  // VAOS 2.0 section 7.3: weak public keys. Under the identity key the
+  // signature R = identity, S = 0 verifies any canonical; the verifier
+  // refuses the key, so it never gets that far.
+  "v2-invalid-small-order-key.json": {
+    description:
+      "v2 invalid — the public key is the identity point, under which this signature verifies every message; the key is refused",
+    publicKeyPem: pemOfRawKey(IDENTITY_KEY),
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: UNIVERSAL_SIGNATURE,
+    },
+    expected: { ok: false, reasonContains: "public key is a small-order point" },
+  },
+  "v2-invalid-noncanonical-key.json": {
+    description:
+      "v2 invalid — the public key encodes y = p + 3, a non-canonical encoding of a point of large order; the key is refused",
+    publicKeyPem: pemOfRawKey(keyFromY(2n ** 255n - 19n + 3n)),
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+    },
+    expected: { ok: false, reasonContains: "public key is not a canonical encoding" },
   },
 };
 

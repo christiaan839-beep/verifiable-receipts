@@ -1,7 +1,11 @@
 package vaos
 
 import (
+	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,9 +41,13 @@ type v2Expected struct {
 // beside canonical, contentHash and signature lands in Envelope and is
 // checked against the signed canonical.
 type v2Fixture struct {
-	Description string     `json:"description"`
-	Receipt     Receipt    `json:"receipt"`
-	Expected    v2Expected `json:"expected"`
+	Description string `json:"description"`
+	// PublicKeyPem is a key fixture's own key, used instead of
+	// public-key.pem. It is parsed without LoadEd25519PublicKeyFromPEM,
+	// which refuses weak keys, so VerifyV2Receipt gives the reason.
+	PublicKeyPem string     `json:"publicKeyPem,omitempty"`
+	Receipt      Receipt    `json:"receipt"`
+	Expected     v2Expected `json:"expected"`
 }
 
 type inclusionFixture struct {
@@ -111,10 +119,33 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 
 			if _, isV2 := probe["receipt"]; isV2 {
 				var fixture v2Fixture
-				if err := json.Unmarshal(raw, &fixture); err != nil {
+				var result VerifyResult
+				if err := json.Unmarshal(raw, &fixture); errors.Is(err, errReceiptTooDeep) {
+					// Parsing refuses a receipt nested deeper than 64 with
+					// the verifiers' reason; read the expectation alone.
+					var shape struct {
+						Expected v2Expected `json:"expected"`
+					}
+					if json.Unmarshal(raw, &shape) != nil {
+						t.Fatalf("unmarshal v2: %v", err)
+					}
+					fixture.Expected = shape.Expected
+					result = VerifyResult{OK: false, Reason: strings.TrimPrefix(err.Error(), "vaos: ")}
+				} else if err != nil {
 					t.Fatalf("unmarshal v2: %v", err)
+				} else if fixture.PublicKeyPem != "" {
+					block, _ := pem.Decode([]byte(fixture.PublicKeyPem))
+					if block == nil {
+						t.Fatalf("publicKeyPem: no PEM block")
+					}
+					key, err := x509.ParsePKIXPublicKey(block.Bytes)
+					if err != nil {
+						t.Fatalf("publicKeyPem: %v", err)
+					}
+					result = VerifyV2Receipt(fixture.Receipt, key.(ed25519.PublicKey))
+				} else {
+					result = VerifyV2Receipt(fixture.Receipt, pub)
 				}
-				result := VerifyV2Receipt(fixture.Receipt, pub)
 				if result.OK != fixture.Expected.OK {
 					t.Fatalf(
 						"%s: expected ok=%v, got ok=%v reason=%q",

@@ -277,6 +277,24 @@ describe("sign CLI — signs a real VAOS v2 receipt", () => {
     });
   });
 
+  it("signs a body nested 64 deep and refuses one 65 deep (VAOS 2.0 section 7.2)", () => {
+    const nested = (levels: number): unknown => {
+      let value: unknown = [];
+      for (let i = 1; i < levels; i++) value = [value];
+      return value;
+    };
+    // The body object is one level; its field adds the rest.
+    const at = runCli(["--key", keyPath, "--json"], JSON.stringify({ d: nested(63) }));
+    expect(at.status).toBe(0);
+    const signed = JSON.parse(at.stdout) as Record<string, unknown>;
+    expect(verifyV2Receipt(signed, createPublicKey(privateKey))).toEqual({ ok: true });
+    const over = runCli(["--key", keyPath, "--json"], JSON.stringify({ d: nested(64) }));
+    expect(over.status).toBe(2);
+    expect(over.stderr).toContain(
+      "could not canonicalize the receipt: canonical JSON: nesting deeper than 64",
+    );
+  });
+
   it("signing its own output again gives the same canonical and signature", () => {
     const first = runCli(["--key", keyPath, "--json"], JSON.stringify(FIXTURE_BODY));
     expect(first.status).toBe(0);

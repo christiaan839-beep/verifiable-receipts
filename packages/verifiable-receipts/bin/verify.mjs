@@ -24,8 +24,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import { createPublicKey, verify as nodeVerify } from "node:crypto";
-import { verifyManifest } from "../dist/index.js";
+import { verify as nodeVerify } from "node:crypto";
+import { loadEd25519PublicKey, verifyManifest } from "../dist/index.js";
 import { fail, parseArgs, readStdin } from "./cli.mjs";
 
 function printHelp() {
@@ -78,7 +78,7 @@ async function main() {
   }
   let pubKey;
   try {
-    pubKey = createPublicKey({ key: pemBytes, format: "pem" });
+    pubKey = loadEd25519PublicKey(pemBytes);
   } catch (err) {
     fail(`--pubkey is not a valid PEM public key: ${err.message}`);
   }

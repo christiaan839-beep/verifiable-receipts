@@ -70,7 +70,9 @@ print(result.reason)  # None, or why it failed
 0. The receipt nests at most 64 deep (VAOS 2.0 §7.2): the receipt is one
    level, and each list or dict in it one more.
 1. `canonical` and `signature` are non-empty strings, and `signature` is
-   `v2=` followed by canonical standard base64 (padding bits zero).
+   `v2=` followed by canonical standard base64 (padding bits zero). The
+   public key is not a point of small order or a non-canonical encoding
+   (VAOS 2.0 §7.3).
 2. If `contentHash` is present, it equals the hex SHA-256 of the UTF-8
    bytes of `canonical` (the `sha256:` prefix is optional).
 3. The Ed25519 signature verifies over the UTF-8 bytes of `canonical`,
@@ -87,7 +89,10 @@ print(result.reason)  # None, or why it failed
 
 It does not re-derive `canonical` from the other fields, so it accepts
 receipts whose `canonical` uses another key order. It returns a
-`VerifyResult` for any input, however deep; `sign_v2_receipt` refuses a
+`VerifyResult` for any input, however deep. To read a receipt from JSON
+text, `parse_receipt(text)` counts its depth first and raises
+`ValueError("receipt nesting deeper than 64")`, where `json.loads` alone
+raises `RecursionError` some thousands of levels down; `sign_v2_receipt` refuses a
 body nested deeper than 64 with a `ValueError`.
 
 ## Verify a Guardian attestation

@@ -23,3 +23,30 @@ export function nestsDeeperThan(value: unknown, limit: number = MAX_NESTING): bo
   }
   return false;
 }
+
+/**
+ * Whether JSON text opens more than `limit` arrays and objects at once,
+ * read from the start, valid JSON or not (VAOS 2.0 section 7.2): outside
+ * strings `[` and `{` open one and `]` and `}` close one (when one is
+ * open); a string runs from `"` to the next `"`, and a `\` inside it
+ * escapes the character after it. The same count as the conformance
+ * verifier's `textNestsTooDeep`.
+ */
+export function textNestsDeeperThan(text: string, limit: number = MAX_NESTING): boolean {
+  let open = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === "[" || c === "{") {
+      if (++open > limit) return true;
+    } else if ((c === "]" || c === "}") && open > 0) {
+      open--;
+    }
+  }
+  return false;
+}

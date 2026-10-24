@@ -26,6 +26,8 @@ const PUBLIC_KEY = createPublicKey(PUBLIC_KEY_PEM);
 
 interface V2Fixture {
   description: string;
+  // A key fixture's own key, used instead of public-key.pem.
+  publicKeyPem?: string;
   // Any field beside these three must match the signed canonical.
   receipt: {
     canonical: string;
@@ -70,9 +72,10 @@ describe("Cross-language conformance — TypeScript verifier", () => {
     const isInclusion = "leafHashHex" in fixture;
     it(`${fixture.__filename} — ${fixture.description}`, () => {
       if (isV2) {
+        const pem = (fixture as V2Fixture).publicKeyPem;
         const result = verifyV2Receipt(
           (fixture as V2Fixture).receipt,
-          PUBLIC_KEY,
+          pem ? createPublicKey(pem) : PUBLIC_KEY,
         ) as { ok: boolean; reason?: string };
         expect(result.ok).toBe(fixture.expected.ok);
         const expectedReason = (fixture as V2Fixture).expected.reasonContains;

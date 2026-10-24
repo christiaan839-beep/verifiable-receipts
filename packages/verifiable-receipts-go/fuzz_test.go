@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -63,7 +64,9 @@ func v2Fixtures(f *testing.F) []v2Fixture {
 	var out []v2Fixture
 	for _, raw := range fixtureFiles(f, "v2-") {
 		var fixture v2Fixture
-		if err := json.Unmarshal(raw, &fixture); err != nil {
+		if err := json.Unmarshal(raw, &fixture); errors.Is(err, errReceiptTooDeep) {
+			continue // the nesting fixtures do not parse as a Receipt
+		} else if err != nil {
 			f.Fatalf("unmarshal v2 fixture: %v", err)
 		}
 		out = append(out, fixture)

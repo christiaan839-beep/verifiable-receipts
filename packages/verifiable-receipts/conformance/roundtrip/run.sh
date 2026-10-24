@@ -8,7 +8,9 @@
 # and verifies each with the Python, Go and node verifiers. It checks
 # that the two signers wrote the same canonical, contentHash and
 # signature for body.json, then edits one field of each signed file and
-# checks that all three verifiers reject the edit. The key lives in a
+# checks that all three verifiers reject the edit. It also signs two
+# attestations whose unsigned evidence makes them 64 and 65 deep, which
+# all three must accept and reject (VAOS 2.0 section 7.2). The key lives in a
 # temporary directory that is removed on exit.
 #
 # Needs node 22+ with packages/verifiable-receipts built (`npm install`
@@ -41,6 +43,9 @@ node "$HERE/keygen.mjs" "$WORK"
 node "$PKG/bin/sign.mjs" --input "$HERE/body.json" --key "$PRIV" \
   --out "$WORK/cli-signer.json" 2>/dev/null
 node "$HERE/guardian.mjs" "$PRIV" "$WORK/guardian.json"
+# Unsigned evidence nested so the attestation is 64 deep, then 65 deep.
+node "$HERE/guardian.mjs" "$PRIV" "$WORK/guardian-nested-64.json" 61
+node "$HERE/guardian.mjs" "$PRIV" "$WORK/guardian-nested-65.json" 62
 
 # Same body, same key: the two signers must agree byte for byte.
 node --input-type=module - "$WORK/python-signer.json" "$WORK/cli-signer.json" <<'EOF'
@@ -98,9 +103,11 @@ check ok guardian "$WORK/guardian.json"
 check rejected receipt "$WORK/python-signer-overall-edited.json"
 check rejected receipt "$WORK/cli-signer-unsigned-field.json"
 check rejected guardian "$WORK/guardian-overall-edited.json"
+check ok guardian "$WORK/guardian-nested-64.json"
+check rejected guardian "$WORK/guardian-nested-65.json"
 
 if [ "$failures" -ne 0 ]; then
   echo "round trip: $failures check(s) failed" >&2
   exit 1
 fi
-echo "round trip: 18 checks passed (3 signers x 3 verifiers, signed and edited)"
+echo "round trip: 24 checks passed (3 signers x 3 verifiers, signed and edited; a Guardian attestation 64 and 65 deep)"

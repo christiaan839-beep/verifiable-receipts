@@ -6,13 +6,22 @@
  *
  * Needs the built package: run `npm install` in packages/verifiable-receipts.
  *
- * Usage: node guardian.mjs <ed25519-private.pem> <out.json>
+ * With a third argument n, the warning rule's evidence is a value n
+ * arrays deep, so the attestation nests n + 3 deep (the attestation, its
+ * rules and the rule): 61 is at the limit of 64, 62 one past it.
+ *
+ * Usage: node guardian.mjs <ed25519-private.pem> <out.json> [evidence-depth]
  */
 import { createPrivateKey, sign } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { runGuardian } from "../../dist/index.js";
 
-const [keyPath, outPath] = process.argv.slice(2);
+const [keyPath, outPath, evidenceDepth] = process.argv.slice(2);
+let evidence = { field: "output.text" };
+if (evidenceDepth) {
+  evidence = [];
+  for (let i = 1; i < Number(evidenceDepth); i++) evidence = [evidence];
+}
 if (!keyPath || !outPath) {
   process.stderr.write("usage: node guardian.mjs <ed25519-private.pem> <out.json>\n");
   process.exit(2);
@@ -31,7 +40,7 @@ const rules = [
     evaluate: async () => ({
       verdict: "warn",
       reason: "AI disclosure missing",
-      evidence: { field: "output.text" },
+      evidence,
     }),
   },
 ];

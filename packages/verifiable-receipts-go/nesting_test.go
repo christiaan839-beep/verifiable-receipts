@@ -81,3 +81,78 @@ func TestNesting_ReturnsAVerdictAtDepth5000And20000(t *testing.T) {
 		}
 	}
 }
+
+func TestNesting_GuardianCountsUnsignedEvidence(t *testing.T) {
+	// The attestation, rules and the rule are three levels; the unsigned
+	// evidence adds the rest: 64 deep is accepted, 65 deep rejected.
+	canonical := `{"overall":"pass","rules":[{"ruleId":"r","verdict":"pass","reason":null}]}`
+	for _, c := range []struct {
+		levels int
+		ok     bool
+	}{{61, true}, {62, false}} {
+		pub, priv, _ := makeKeyPair(t)
+		r := Receipt{Canonical: canonical, Signature: signV2(priv, canonical), Envelope: map[string]json.RawMessage{
+			"overall": json.RawMessage(`"pass"`),
+			"rules":   json.RawMessage(`[{"ruleId":"r","verdict":"pass","evidence":` + nestedText(c.levels) + `}]`),
+		}}
+		got := VerifyGuardianAttestation(r, pub)
+		if got.OK != c.ok || (!c.ok && got.Reason != "receipt nesting deeper than 64") {
+			t.Fatalf("evidence %d deep: got %+v", c.levels, got)
+		}
+	}
+}
+
+func TestNesting_JSONEqualIsBoundedAt64(t *testing.T) {
+	for _, c := range []struct {
+		levels int
+		want   bool
+	}{{64, true}, {65, false}, {20000, false}} {
+		v, err := decodeJSON([]byte(nestedText(c.levels)))
+		if c.levels > 10000 {
+			// encoding/json refuses this depth; build the value directly.
+			var deep any = []any{}
+			for i := 1; i < c.levels; i++ {
+				deep = []any{deep}
+			}
+			v, err = deep, nil
+		}
+		if err != nil {
+			t.Fatalf("decode %d: %v", c.levels, err)
+		}
+		if got := jsonEqual(v, v); got != c.want {
+			t.Fatalf("jsonEqual at %d levels = %v, want %v", c.levels, got, c.want)
+		}
+		if c.levels > 100 {
+			continue
+		}
+		objects := strings.Repeat(`{"k":`, c.levels-1) + `{}` + strings.Repeat(`}`, c.levels-1)
+		o, err := decodeJSON([]byte(objects))
+		if err != nil {
+			t.Fatalf("decode objects %d: %v", c.levels, err)
+		}
+		if got := jsonEqual(o, o); got != c.want {
+			t.Fatalf("jsonEqual on objects at %d levels = %v, want %v", c.levels, got, c.want)
+		}
+	}
+}
+
+func TestNesting_ParsingRejectsAReceipt65DeepWithTheSameReason(t *testing.T) {
+	const reason = "vaos: receipt nesting deeper than 64"
+	for _, text := range []string{
+		`{"canonical":"{}","signature":"v2=AA==","d":` + nestedText(64) + `}`,
+		`{"canonical":` + nestedText(64) + `,"signature":"v2=AA=="}`,
+		`{"d":` + nestedText(20000) + `}`,
+	} {
+		var r Receipt
+		if err := json.Unmarshal([]byte(text), &r); err == nil || (len(text) < 1000 && err.Error() != reason) {
+			t.Fatalf("Unmarshal %.30s: got %v", text, err)
+		}
+		if _, err := ParseReceipt([]byte(text)); err == nil || err.Error() != reason {
+			t.Fatalf("ParseReceipt %.30s: got %v", text, err)
+		}
+	}
+	at := `{"canonical":"{}","signature":"v2=AA==","d":` + nestedText(63) + `}`
+	if r, err := ParseReceipt([]byte(at)); err != nil || len(r.Envelope) != 1 {
+		t.Fatalf("ParseReceipt at 64 deep: %v", err)
+	}
+}
