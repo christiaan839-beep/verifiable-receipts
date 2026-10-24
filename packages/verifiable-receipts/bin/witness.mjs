@@ -48,14 +48,14 @@
  * second cosignature on another root at that size. A pending head is
  * resubmitted on the next poll exactly as saved (same canonical, same
  * signature), even if the log has since re-dated it. Each poll holds
- * <state>.lock ({pid, hostname, startedAt, nonce}, on the state
- * file's real path) from before the state is read to after it is
- * written; a second process on the same state file is refused
- * (state-locked). A lock on this host whose pid is not running, or is
- * this process's own pid, is removed as stale, under <state>.lock.break.
- * A running pid, another host or an unreadable lock is refused, with
- * --break-lock as the explicit way out. SIGTERM and SIGINT release
- * the lock (exit 143, 130). A head dated earlier than the saved one is
+ * <state>.lock (on the state file's real path) as a lease from before
+ * the state is read to after it is written, renewing its mtime every
+ * LEASE_RENEW_MS; a second process on the same state file is refused
+ * (state-locked) until the lease runs out (LEASE_MS). Its pid and
+ * hostname are for messages only. A stale lock is broken under
+ * <state>.lock.break; --break-lock is the explicit override. A
+ * process whose lock was taken over does not sign (lock-lost).
+ * SIGTERM and SIGINT release the lock (exit 143, 130). A head dated earlier than the saved one is
  * refused (receipts-log API.md: the timestamp "never decreases"). A
  * state file without logId (written by an earlier version)
  * still loads; the logId is added the next time the state is saved. A
@@ -94,6 +94,8 @@ import {
   linkSync,
   lstatSync,
   realpathSync,
+  utimesSync,
+  statSync,
 } from "node:fs";
 import {
   createPrivateKey,
@@ -209,10 +211,11 @@ function printHelp() {
       "  --once                  Single check + exit (don't loop)",
       "  --state <path>          Override state file location (symlinks are",
       "                          resolved; the lock is <real path>.lock)",
-      "  --break-lock            Remove the state file's lock even if it looks",
-      "                          held, say so on stderr, and go on. Only when",
-      "                          you are sure no other witness is running on",
-      "                          this state file.",
+      "  --break-lock            Remove the state file's lock (and its .break)",
+      "                          whatever holds it, say so on stderr, and go",
+      "                          on. If another witness is still running on",
+      "                          this state file, two witnesses can sign: use",
+      "                          it only when you are sure none is.",
       "  --json                  Emit JSON envelope per check",
       "  --help                  This message",
       "",
@@ -228,13 +231,15 @@ function printHelp() {
       "     (state-unwritable), a failed submission (resubmitted next poll, as",
       "     saved), or a v3= STH with --log-public-key",
       "",
-      "Each poll holds <state>.lock ({pid, hostname, startedAt, nonce}). A",
-      "lock on this host whose pid is gone, or is this process's own pid",
-      "(a run before a container restart), is removed as stale. A lock",
-      "whose pid is running, from another host, or that cannot be read is",
-      "refused (state-locked): if you are sure no other witness is running",
-      "on this state file, rerun with --break-lock or delete the lock.",
-      "SIGTERM and SIGINT release the lock and exit 143 and 130.",
+      "Each poll holds <state>.lock as a lease: the holder touches its",
+      "mtime every 5 s. A lock is stale only when its mtime is older than",
+      "LEASE_MS = 3 x --timeout + 30 s (120 s by default): a poll makes at",
+      "most three requests, each bounded by --timeout, plus local work.",
+      "Its pid and hostname are shown, never trusted. A stale lock is",
+      "broken under <state>.lock.break; a held one is refused",
+      "(state-locked) with the time its lease runs out, so a restarted",
+      "witness recovers by itself. SIGTERM and SIGINT release the lock",
+      "and exit 143 and 130.",
       "With --json each poll prints one JSON verdict line on stdout; the",
       "daemon banner goes to stderr.",
       "",
@@ -363,42 +368,69 @@ function saveState(path, state) {
   }
 }
 
-/** True when a process with this pid exists (EPERM: it exists, not ours). */
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err?.code === "EPERM";
-  }
-}
-
 const HOST = hostname();
 
-/** The lock this process holds, { path, nonce }, or null. */
+/**
+ * How often a held lock's lease is renewed: its mtime is touched by an
+ * unref'd timer. VR_WITNESS_LEASE_RENEW_MS may only shorten it (50 to
+ * 5000 ms; the tests use it): renewing more often is never less safe.
+ */
+const LEASE_RENEW_MS = (() => {
+  const v = Number(process.env.VR_WITNESS_LEASE_RENEW_MS);
+  return Number.isFinite(v) && v >= 50 && v <= 5000 ? v : 5000;
+})();
+
+/**
+ * LEASE_MS: a lock is stale only when its mtime is older than this,
+ * whatever pid, host or nonce it names (pids and hostnames repeat
+ * across containers and pid namespaces, so they prove nothing). A poll
+ * makes at most three requests (STH, consistency proof, cosignature),
+ * each bounded end to end by --timeout, plus local work (a signature,
+ * a few fsyncs) measured in milliseconds; 30 s more covers a slow disk.
+ * So even a poll whose renewal timer never ran (an event loop blocked
+ * throughout) ends inside its lease, and a renewed lease (every 5 s)
+ * is never close to running out. With the default 30 s timeout it is
+ * 120 s. A holder's own leaseMs, if longer, is honoured.
+ */
+function leaseMsFor(timeoutMs) {
+  return 3 * timeoutMs + 30_000;
+}
+const MAX_LEASE_MS = leaseMsFor(3600 * 1000);
+
+/** The lock this process holds, { path, nonce, timer }, or null. */
 let heldLock = null;
 
-/** What a refused lock message ends with: how to recover. */
-function lockRecovery(lockPath) {
-  return `if you are sure no other witness is running on this state file, rerun with --break-lock (or delete ${lockPath})`;
-}
+const secs = (ms) => `${Math.max(0, Math.round(ms / 1000))}s`;
+
+/** linkSync errors that mean "this file system has no hard links". */
+const NO_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "ENOSYS", "EXDEV", "EOPNOTSUPP"]);
 
 /**
  * Create `path` holding `record`, atomically: write a temporary file,
  * fsync it, then hard-link it into place, so the file is never seen
- * empty or half written. Throws EEXIST when `path` exists.
+ * empty or half written. Throws EEXIST when `path` exists. On a file
+ * system without hard links it falls back to openSync(path, "wx") and
+ * a write: still exclusive, but a reader can then see the file empty
+ * for a moment (it is refused as unreadable until its lease runs out).
  */
 function createWhole(path, record) {
+  const text = JSON.stringify(record);
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
+  let linked = false;
   try {
     try {
-      writeSync(fd, JSON.stringify(record));
+      writeSync(fd, text);
       fsyncSync(fd);
     } finally {
       closeSync(fd);
     }
-    linkSync(tmp, path);
+    try {
+      linkSync(tmp, path);
+      linked = true;
+    } catch (err) {
+      if (!NO_HARD_LINKS.has(err?.code)) throw err;
+    }
   } finally {
     try {
       unlinkSync(tmp);
@@ -406,36 +438,153 @@ function createWhole(path, record) {
       // Best effort: a leftover temporary file is harmless.
     }
   }
+  if (linked) return;
+  const fd2 = openSync(path, "wx", 0o600);
+  try {
+    writeSync(fd2, text);
+    fsyncSync(fd2);
+  } finally {
+    closeSync(fd2);
+  }
 }
 
 const UNWRITABLE = new Set(["EACCES", "EPERM", "EROFS"]);
 
+/** Remove `path` only if it still holds `nonce`. */
+function unlinkIfOurs(path, nonce) {
+  let record;
+  try {
+    record = JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    if (err?.code === "ENOENT") return "gone";
+    return "unreadable";
+  }
+  if (record?.nonce !== nonce) return "not-ours";
+  unlinkSync(path);
+  return "removed";
+}
+
 /**
- * Take <statePath>.lock for one poll. The lock holds
- * { pid, hostname, startedAt, nonce }. Returns null when taken, or
- * { verdict, message } when not:
- *   - a lock from another host is never broken automatically;
- *   - a lock whose pid is running (and is not this process's own pid,
- *     which after a container restart means a dead earlier run) is
- *     refused;
- *   - a lock that cannot be read is refused, never stolen;
- *   - a stale lock (pid gone, or our own pid) is removed only while
- *     holding <lock>.break (created "wx"), and only if it still holds
- *     the bytes read, so two processes cannot both break it and both
- *     go on;
+ * Take <lock>.break, the right to break a stale lock. Returns
+ * { nonce } or { problem }. A .break older than leaseMs is taken over:
+ * it is renamed aside, and kept aside only if it is still the bytes
+ * judged stale; otherwise it is put back.
+ */
+function takeBreak(breakPath, leaseMs) {
+  const nonce = randomUUID();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      createWhole(breakPath, { pid: process.pid, hostname: HOST, startedAt: new Date().toISOString(), nonce });
+      return { nonce };
+    } catch (err) {
+      if (err?.code !== "EEXIST") return { problem: `cannot create ${breakPath} (${err.message})` };
+    }
+    let st;
+    let raw;
+    try {
+      st = statSync(breakPath);
+      raw = readFileSync(breakPath, "utf8");
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      return { problem: `${breakPath} exists and cannot be read (${err.message})` };
+    }
+    const age = Date.now() - st.mtimeMs;
+    if (age <= leaseMs) {
+      return { problem: `another process is breaking it (${breakPath} was made ${secs(age)} ago)` };
+    }
+    const aside = `${breakPath}.${process.pid}.${randomUUID()}.stale`;
+    try {
+      renameSync(breakPath, aside);
+    } catch (err) {
+      if (err?.code === "ENOENT") continue;
+      return { problem: `cannot move the stale ${breakPath} aside (${err.message})` };
+    }
+    let moved = null;
+    try {
+      moved = readFileSync(aside, "utf8");
+    } catch {
+      // Treated as changed.
+    }
+    if (moved !== raw) {
+      // Not the one judged stale: put it back unless another took its place.
+      try {
+        linkSync(aside, breakPath);
+      } catch (err) {
+        if (NO_HARD_LINKS.has(err?.code) && !existsSync(breakPath)) renameSync(aside, breakPath);
+      }
+      try {
+        unlinkSync(aside);
+      } catch {
+        // Already renamed back.
+      }
+      return { problem: `another process is breaking it (${breakPath} changed)` };
+    }
+    unlinkSync(aside);
+    warn(`[witness] took over a stale ${breakPath} (made ${secs(age)} ago)`);
+  }
+  return { problem: `${breakPath} is contended` };
+}
+
+/** Touch the held lock's mtime every LEASE_RENEW_MS while it is ours. */
+function startRenewal(held) {
+  held.timer = setInterval(() => {
+    try {
+      const record = JSON.parse(readFileSync(held.path, "utf8"));
+      if (record?.nonce !== held.nonce) {
+        clearInterval(held.timer);
+        warn(`[witness] warning: ${held.path} is no longer this process's lock; not renewing it`);
+        return;
+      }
+      const now = new Date();
+      utimesSync(held.path, now, now);
+    } catch (err) {
+      if (!held.warned) {
+        held.warned = true;
+        warn(`[witness] warning: could not renew the lease on ${held.path} (${err.message})`);
+      }
+    }
+  }, LEASE_RENEW_MS);
+  held.timer.unref();
+}
+
+/** True while the lock file still holds this process's nonce. */
+function lockStillOurs() {
+  if (!heldLock) return false;
+  try {
+    return JSON.parse(readFileSync(heldLock.path, "utf8"))?.nonce === heldLock.nonce;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Take <statePath>.lock for one poll: a lease. The lock holds
+ * { pid, hostname, startedAt, nonce, leaseMs }, but those are only
+ * for messages and for the nonce-checked release; whether a lock is
+ * held is decided by its mtime alone, renewed every LEASE_RENEW_MS
+ * while held. Returns null when taken, or { verdict, message }:
+ *   - a lock renewed within the lease is refused, whatever it names,
+ *     with the time its lease runs out;
+ *   - an expired lock is broken only while holding <lock>.break, and
+ *     only if it still holds the bytes read;
  *   - with breakLock, the lock and <lock>.break are removed first,
  *     whatever holds them, said loudly on stderr.
  * Every refusal says how to recover.
  */
-function acquireLock(lockPath, breakLock) {
+function acquireLock(lockPath, breakLock, leaseMs) {
   const breakPath = lockPath + ".break";
-  const locked = (why) => ({
-    verdict: "state-locked",
-    message: `${why}; ${lockRecovery(lockPath)}`,
-  });
+  const locked = (why, retryAt) => {
+    const both = existsSync(breakPath);
+    const files = both ? `${lockPath} and ${breakPath}` : lockPath;
+    const when = retryAt ? `retry after ${retryAt}, when its lease runs out, or, ` : "";
+    return {
+      verdict: "state-locked",
+      message: `${why}${both ? ` (${lockPath} and ${breakPath} both exist)` : ""}; ${when}if you are sure no other witness is running on this state file, rerun with --break-lock (or delete ${files})`,
+    };
+  };
   if (breakLock) {
     warn(
-      `[witness] BREAKING LOCK ${lockPath} (--break-lock): removing it whatever holds it. Use --break-lock only when you are sure no other witness is running on this state file.`,
+      `[witness] BREAKING LOCK ${lockPath} (--break-lock): removing it whatever holds it. If another witness is still running on this state file, two witnesses can sign.`,
     );
     for (const p of [lockPath, breakPath]) {
       try {
@@ -453,8 +602,10 @@ function acquireLock(lockPath, breakLock) {
         hostname: HOST,
         startedAt: new Date().toISOString(),
         nonce,
+        leaseMs,
       });
-      heldLock = { path: lockPath, nonce };
+      heldLock = { path: lockPath, nonce, timer: null };
+      startRenewal(heldLock);
       return null;
     } catch (err) {
       if (UNWRITABLE.has(err?.code)) {
@@ -465,43 +616,40 @@ function acquireLock(lockPath, breakLock) {
       }
       if (err?.code !== "EEXIST") return locked(`cannot create ${lockPath} (${err.message})`);
     }
+    let st;
     let raw;
     try {
+      st = statSync(lockPath);
       raw = readFileSync(lockPath, "utf8");
     } catch (err) {
       if (err?.code === "ENOENT") continue;
       return locked(`${lockPath} exists and cannot be read (${err.message})`);
     }
-    let holder;
+    let holder = null;
     try {
       holder = JSON.parse(raw);
     } catch {
-      return locked(`${lockPath} exists and cannot be read (it is not a lock record)`);
+      // Unreadable: held until its lease runs out, like any other.
     }
-    const pid = holder?.pid;
-    if (!Number.isSafeInteger(pid) || pid <= 0) {
-      return locked(`${lockPath} exists and cannot be read (it has no valid pid)`);
-    }
-    if (holder.hostname !== undefined && holder.hostname !== HOST) {
+    const recorded = Number(holder?.leaseMs);
+    const lease = Math.max(
+      leaseMs,
+      Number.isFinite(recorded) && recorded > 0 ? Math.min(recorded, MAX_LEASE_MS) : 0,
+    );
+    const age = Date.now() - st.mtimeMs;
+    const who =
+      holder && typeof holder === "object"
+        ? `held by pid ${quote(holder.pid)} on host ${quote(holder.hostname)} since ${quote(holder.startedAt)}`
+        : "exists and cannot be read (it is not a lock record)";
+    if (age <= lease) {
       return locked(
-        `${lockPath} is held by pid ${pid} on host ${quote(holder.hostname)}; a lock from another host is never broken automatically`,
+        `${lockPath} ${who}, last renewed ${secs(age)} ago`,
+        new Date(st.mtimeMs + lease + 1000).toISOString(),
       );
     }
-    const ownPid = pid === process.pid;
-    if (!ownPid && pidAlive(pid)) {
-      return locked(
-        `${lockPath} is held by running process ${pid} (since ${quote(holder.startedAt)}); after a restart that pid may belong to an unrelated process`,
-      );
-    }
-    // Stale. Break it only while holding <lock>.break.
-    try {
-      createWhole(breakPath, { pid: process.pid, hostname: HOST, startedAt: new Date().toISOString() });
-    } catch (err) {
-      if (err?.code === "EEXIST") {
-        return locked(`another process is breaking the stale ${lockPath} (${breakPath} exists)`);
-      }
-      return locked(`cannot create ${breakPath} (${err.message})`);
-    }
+    // The lease ran out. Break it only while holding <lock>.break.
+    const brk = takeBreak(breakPath, leaseMs);
+    if (brk.problem) return locked(`${lockPath} is stale, but ${brk.problem}`);
     try {
       let now = null;
       try {
@@ -511,39 +659,33 @@ function acquireLock(lockPath, breakLock) {
       }
       if (now === raw) {
         unlinkSync(lockPath);
-        warn(
-          `[witness] removed stale lock ${lockPath} (pid ${pid} ${ownPid ? "is this process's own pid: a run before a restart" : "is not running"})`,
-        );
+        warn(`[witness] removed stale lock ${lockPath} (${who}; lease ran out: last renewed ${secs(age)} ago)`);
       }
     } catch (err) {
       return locked(`cannot remove stale ${lockPath} (${err.message})`);
     } finally {
       try {
-        unlinkSync(breakPath);
+        unlinkIfOurs(breakPath, brk.nonce);
       } catch {
-        // Best effort; a leftover <lock>.break is refused, with advice.
+        // A leftover <lock>.break ages out after the lease.
       }
     }
   }
   return locked(`${lockPath} is contended`);
 }
 
-/** Remove the lock this process holds, if it still holds our nonce. */
+/** Stop renewing, and remove the lock if it still holds our nonce. */
 function releaseLock() {
   const held = heldLock;
   heldLock = null;
   if (!held) return;
+  if (held.timer) clearInterval(held.timer);
   try {
-    const record = JSON.parse(readFileSync(held.path, "utf8"));
-    if (record?.nonce !== held.nonce) {
+    if (unlinkIfOurs(held.path, held.nonce) === "not-ours") {
       warn(`[witness] warning: ${held.path} is no longer this process's lock; left in place`);
-      return;
     }
-    unlinkSync(held.path);
   } catch (err) {
-    if (err?.code !== "ENOENT") {
-      warn(`[witness] warning: could not remove ${held.path} (${err.message})`);
-    }
+    warn(`[witness] warning: could not remove ${held.path} (${err.message})`);
   }
 }
 
@@ -822,7 +964,7 @@ async function runOnce(opts) {
   const io = { log, emit, refuse };
 
   const lockPath = opts.statePath + ".lock";
-  const lockProblem = acquireLock(lockPath, opts.breakLock);
+  const lockProblem = acquireLock(lockPath, opts.breakLock, opts.leaseMs);
   opts.breakLock = false; // only ever the first poll
   if (lockProblem) {
     const label = lockProblem.verdict === "state-unwritable" ? "STATE DIRECTORY NOT WRITABLE" : "STATE FILE LOCKED";
@@ -1018,6 +1160,15 @@ async function runLocked(opts, { log, emit, refuse }) {
     lastRoot: sth.rootHash,
     lastTimestamp: sth.timestamp,
   };
+  // The lease may have run out (a stalled process) and another taken
+  // the lock: then this process must not save or sign.
+  const lockLost = () =>
+    refuse(
+      "lock-lost",
+      2,
+      `the lock on ${opts.statePath}.lock was taken over (its lease ran out, or --break-lock); check for another witness on this state file`,
+    );
+  if (!lockStillOurs()) return lockLost();
   if (!resubmit) {
     try {
       saveState(opts.statePath, { ...head, pending: true });
@@ -1037,6 +1188,7 @@ async function runLocked(opts, { log, emit, refuse }) {
     treeSize: head.lastSize,
   });
 
+  if (!lockStillOurs()) return lockLost();
   // Sign the canonical rebuilt from the checked (or saved) fields.
   const signature = signCanonical(toSign, opts.privateKey);
   const submitBody = {
@@ -1167,6 +1319,7 @@ async function main() {
     breakLock: flags["break-lock"] === "true",
     expectedLogId,
     timeoutMs: Math.ceil(timeoutSec * 1000),
+    leaseMs: leaseMsFor(Math.ceil(timeoutSec * 1000)),
     intervalSec,
     json: flags.json,
   };

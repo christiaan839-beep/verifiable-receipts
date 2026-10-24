@@ -220,7 +220,7 @@ Measured on 24 October 2026 (Node 22, Python 3.12, Go 1.27):
 
 | Suite      | Result                                                     |
 | ---------- | ---------------------------------------------------------- |
-| TypeScript | 467 passed, none skipped (12 files, vitest 5)              |
+| TypeScript | 478 passed, none skipped (12 files, vitest 5)              |
 | Python     | 76 passed; conformance 26 passed; schemas 147 passed       |
 | Go         | 46 tests passed, 123 subtests                              |
 | Round trip | 18 checks passed                                           |

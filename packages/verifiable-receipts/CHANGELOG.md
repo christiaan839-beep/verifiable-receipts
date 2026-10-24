@@ -25,16 +25,18 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error cannot get a second one on another root at that size. A
   failed submission is resubmitted exactly as saved, with the same
   bytes and signature, even if the log has re-dated the head. Each
-  poll holds a lock file beside the state file's real path, so two
-  witness processes on one state file, on one host, do not both sign
-  while the lock is respected. A stale lock (its pid gone, or the
-  witness's own pid after a restart) is broken under a second lock
-  file, and only if unchanged; SIGTERM and SIGINT release the lock. A
-  lock from another host, a running pid or an unreadable lock is never
-  broken automatically: `--break-lock` is the explicit way out, for
-  when no other witness is running on that state file. Two hosts
-  sharing one state file over a network file system are only as safe
-  as its exclusive create.
+  poll holds a lock file beside the state file's real path, as a
+  lease renewed every 5 s, so two witness processes on one state file
+  do not both sign while each renews its lease: including two that
+  share a pid and hostname in separate pid namespaces. A lock is stale
+  only when its lease (3 × `--timeout` + 30 s) has run out; it is then
+  broken under a second lock file, and only if unchanged. A process
+  that finds its lock taken over (its own lease ran out) does not sign.
+  SIGTERM and SIGINT release the lock. `--break-lock` is the explicit
+  way out; if another witness is still running, two can sign. The
+  lease is judged by file mtimes, so on a network file system it is
+  only as good as the hosts' clocks and the file system's exclusive
+  create.
 - A state file that exists but cannot be read or is malformed is
   refused instead of treated as a first run.
 - Requests time out (`--timeout`, 1 to 3600 s, default 30), never

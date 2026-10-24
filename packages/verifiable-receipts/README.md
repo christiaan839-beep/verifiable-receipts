@@ -116,13 +116,21 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   exactly as saved, even if the log has since re-dated the head. Each
   poll holds `<state>.lock` (on the state file's real path, so a
   symlink and its target share it), so a second witness process on the
-  same state file is refused. A lock on this host whose pid is gone,
-  or is the witness's own pid (a run before a container restart), is
-  removed as stale; SIGTERM and SIGINT release the lock. A lock whose
-  pid is running, that comes from another host, or that cannot be read
-  is refused as `state-locked`: if you are sure no other witness is
-  running on that state file, rerun with `--break-lock` (or delete the
-  lock file). With `--log-public-key <pem>` it also verifies
+  same state file is refused. The lock is a lease: its holder touches
+  its mtime every 5 s, and it is stale only when its mtime is older
+  than `LEASE_MS` = 3 × `--timeout` + 30 s (120 s by default; a poll
+  makes at most three requests, each bounded by `--timeout`, plus local
+  work). The pid and hostname in it are shown, never trusted, because
+  containers and pid namespaces repeat them. A stale lock is broken
+  under `<state>.lock.break` (itself taken over once older than the
+  lease); a held one is refused as `state-locked`, saying when its
+  lease runs out, so a restarted witness recovers by itself. SIGTERM
+  and SIGINT release the lock. `--break-lock` removes it whatever holds
+  it: if another witness is still running on that state file, two
+  witnesses can sign, so use it only when you are sure none is. On a
+  file system without hard links the lock is created with an exclusive
+  open instead, and can be seen empty for a moment (it is then refused
+  as unreadable until its lease runs out). With `--log-public-key <pem>` it also verifies
   the log's `v2=` signature; without it, it prints that the log
   signature was not checked. A state file that exists but is
   unreadable or malformed is refused, not treated as a first run.

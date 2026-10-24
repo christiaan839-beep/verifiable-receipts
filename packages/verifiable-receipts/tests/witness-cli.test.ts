@@ -28,9 +28,10 @@ import {
   readdirSync,
   symlinkSync,
   lstatSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir, hostname } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { TransparencyLog, InMemoryLogStore } from "../src/log-store.js";
 import { canonicalizeSth, leafHash, treeRoot } from "../src/transparency.js";
 
@@ -326,10 +327,15 @@ interface Req {
   body?: Record<string, unknown>;
 }
 
-function runCliAsync(args: string[], nodeArgs: string[] = []): Promise<CliResult> {
+function runCliAsync(
+  args: string[],
+  nodeArgs: string[] = [],
+  env: Record<string, string> = {},
+): Promise<CliResult> {
   return new Promise((resolve) => {
     const child = spawn("node", [...nodeArgs, CLI, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, ...env },
     });
     let stdout = "";
     let stderr = "";
@@ -989,10 +995,11 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(existsSync(state + ".lock")).toBe(false);
   });
 
-  it("recovers a stale lock whose process is gone", async () => {
+  it("recovers a lock whose lease has expired", async () => {
     const state = freshState();
     const dead = spawnSync("node", ["-e", ""]).pid;
     writeFileSync(state + ".lock", JSON.stringify({ pid: dead, startedAt: "2026-10-24T00:00:00.000Z" }));
+    expireLease(state + ".lock");
     const r = await runCliAsync(args(state));
     expect(r.status).toBe(0);
     expect(verdictOf(r).verdict).toBe("witnessed");
@@ -1155,6 +1162,11 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     writeFileSync(file, lines.join("\n"));
     return ["--import", file];
   };
+  // Backdate a file's mtime by an hour: past any lease.
+  const expireLease = (file: string) => {
+    const past = new Date(Date.now() - 3600e3);
+    utimesSync(file, past, past);
+  };
   const lockOf = (pid: number, host = hostname()) =>
     JSON.stringify({ pid, hostname: host, startedAt: "2026-10-24T00:00:00.000Z", nonce: "test" });
   // Holds the next STH responses until `release` is called.
@@ -1172,7 +1184,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     return { release, seen };
   };
 
-  it("recovers a lock that holds its own pid (a restarted container)", async () => {
+  it("a fresh lock holding its own pid is refused, and says when to retry", async () => {
     const state = freshState();
     const pre = preload("own-pid-lock", [
       'import { writeFileSync } from "node:fs";',
@@ -1180,11 +1192,26 @@ describe("witness CLI — checks before cosigning (--once)", () => {
       `writeFileSync(${JSON.stringify(state + ".lock")}, JSON.stringify({ pid: process.pid, hostname: hostname(), startedAt: "2026-10-24T00:00:00.000Z", nonce: "old" }));`,
     ]);
     const r = await runCliAsync(args(state), pre);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(String(verdictOf(r).message)).toMatch(/retry after/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("a restarted witness recovers its own-pid lock once the lease runs out", async () => {
+    const state = freshState();
+    const lock = JSON.stringify(state + ".lock");
+    const pre = preload("own-pid-expired", [
+      'import { writeFileSync, utimesSync } from "node:fs";',
+      'import { hostname } from "node:os";',
+      `writeFileSync(${lock}, JSON.stringify({ pid: process.pid, hostname: hostname(), startedAt: "2026-10-24T00:00:00.000Z", nonce: "old" }));`,
+      `utimesSync(${lock}, new Date(Date.now() - 3600e3), new Date(Date.now() - 3600e3));`,
+    ]);
+    const r = await runCliAsync(args(state), pre);
     expect(r.status).toBe(0);
     expect(verdictOf(r).verdict).toBe("witnessed");
     expect(r.stderr).toMatch(/stale lock/);
     expect(posts()).toHaveLength(1);
-    expect(existsSync(state + ".lock")).toBe(false);
   });
 
   it("refuses a lock held by a live pid it may not signal (pid 1), and says how to recover", async () => {
@@ -1199,7 +1226,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(readFileSync(state + ".lock", "utf8")).toBe(lockOf(1));
   });
 
-  it("never breaks a lock from another host, even with a dead pid", async () => {
+  it("refuses a fresh lock from another host, naming it, even with a dead pid", async () => {
     const state = freshState();
     const dead = spawnSync("node", ["-e", ""]).pid;
     writeFileSync(state + ".lock", lockOf(dead, "some-other-host"));
@@ -1278,6 +1305,7 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     const state = freshState();
     const dead = spawnSync("node", ["-e", ""]).pid;
     writeFileSync(state + ".lock", lockOf(dead));
+    expireLease(state + ".lock");
     // Slow every unlink of the lock, widening the check-then-unlink gap.
     const pre = preload("slow-unlink", [
       'import fs from "node:fs";',
@@ -1488,6 +1516,206 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(r.status).toBe(2);
     expect(verdictOf(r).verdict).toBe("fetch-failed");
     expect(String(verdictOf(r).message)).toMatch(/ECONNREFUSED/);
+  });
+
+  // ── Round 5: the lock is a lease ──
+
+  it("I-1: two witnesses with the same pid and hostname (separate pid namespaces): one signs", async () => {
+    const state = freshState();
+    const fakepid = preload("fakepid", [
+      'import os from "node:os";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'Object.defineProperty(process, "pid", { value: 1, configurable: true });',
+      'os.hostname = () => "shared-host";',
+      "syncBuiltinESMExports();",
+    ]);
+    // Each STH request gets a different head of the same size.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let n = 0;
+    sthHandler = (res) => {
+      const k = n++;
+      void gate.then(() => {
+        const body = k === 0 ? honest() : headWith(honest(), { rootHash: "e".repeat(64) });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(body));
+      });
+    };
+    const a = runCliAsync(args(state), fakepid);
+    await waitUntil(() => n === 1);
+    const b = runCliAsync(args(state), fakepid);
+    await new Promise((r) => setTimeout(r, 400));
+    release();
+    const [ra, rb] = await Promise.all([a, b]);
+    expect([ra.status, rb.status].sort()).toEqual([0, 2]);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("refuses a fresh lock whatever its pid (a dead one here): pid liveness is not trusted", async () => {
+    const state = freshState();
+    const dead = spawnSync("node", ["-e", ""]).pid;
+    writeFileSync(state + ".lock", lockOf(dead));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("state-locked");
+    expect(String(v.message)).toMatch(/last renewed/);
+    expect(String(v.message)).toMatch(/retry after/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("renews the lease during a long poll, and a second process is refused meanwhile", async () => {
+    const state = freshState();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = 0;
+    postHandler = (res) => {
+      held++;
+      void gate.then(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, witnessCount: 1 }));
+      });
+    };
+    const env = { VR_WITNESS_LEASE_RENEW_MS: "100" };
+    const a = runCliAsync(args(state), [], env);
+    try {
+      await waitUntil(() => held === 1);
+      const m0 = statSync(state + ".lock").mtimeMs;
+      await new Promise((r) => setTimeout(r, 450)); // > 2 x the renewal interval
+      const m1 = statSync(state + ".lock").mtimeMs;
+      expect(m1).toBeGreaterThan(m0);
+      const b = await runCliAsync(args(state));
+      expect(b.status).toBe(2);
+      expect(verdictOf(b).verdict).toBe("state-locked");
+    } finally {
+      release();
+    }
+    const ra = await a;
+    expect(ra.status).toBe(0);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("takes over a stale <lock>.break", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", lockOf(12345));
+    expireLease(state + ".lock");
+    writeFileSync(state + ".lock.break", lockOf(12345));
+    expireLease(state + ".lock.break");
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(r.stderr).toMatch(/stale .*\.break/);
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock.break")).toBe(false);
+  });
+
+  it("a refusal names both <lock> and <lock>.break when both exist", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", lockOf(12345));
+    expireLease(state + ".lock");
+    writeFileSync(state + ".lock.break", lockOf(12345)); // fresh: someone is breaking it
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    const m = String(verdictOf(r).message);
+    expect(m).toContain(state + ".lock ");
+    expect(m).toContain(state + ".lock.break");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("does not break a lock that changed after it was judged stale (the exact-bytes re-check)", async () => {
+    const state = freshState();
+    const lock = state + ".lock";
+    writeFileSync(lock, lockOf(12345));
+    expireLease(lock);
+    const fresh = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
+    // After the CLI first reads the stale lock, another process replaces
+    // it with a fresh one.
+    const pre = preload("lock-replaced", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const read = fs.readFileSync;",
+      "const write = fs.writeFileSync;",
+      "let done = false;",
+      "fs.readFileSync = (p, ...rest) => {",
+      "  const out = read(p, ...rest);",
+      // The CLI uses the real path (on macOS /private/var/...): match the end.
+      `  if (!done && String(p).endsWith(${JSON.stringify(basename(lock))})) { done = true; write(p, ${JSON.stringify(fresh)}); }`,
+      "  return out;",
+      "};",
+      "syncBuiltinESMExports();",
+    ]);
+    const r = await runCliAsync(args(state), pre);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(readFileSync(lock, "utf8")).toBe(fresh);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("a lock taken over mid-poll: refuses to sign, and leaves the other lock in place", async () => {
+    const state = freshState();
+    const lock = state + ".lock";
+    const g = gateSth();
+    const a = runCliAsync(args(state));
+    await waitUntil(() => g.seen.n === 1);
+    const theirs = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
+    writeFileSync(lock, theirs);
+    g.release();
+    const r = await a;
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("lock-lost");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(lock, "utf8")).toBe(theirs);
+  });
+
+  it("a lock taken over between the pending save and the signature: no POST", async () => {
+    const state = freshState();
+    const theirs = JSON.stringify({ pid: 777, hostname: "h", startedAt: "2026-10-24T00:00:00.000Z", nonce: "theirs" });
+    // Right after the state file is renamed into place, another process
+    // takes the lock.
+    const pre = preload("takeover-after-save", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const rename = fs.renameSync;",
+      "const write = fs.writeFileSync;",
+      "fs.renameSync = (from, to) => {",
+      "  rename(from, to);",
+      `  if (String(to).endsWith(".json")) write(String(to) + ".lock", ${JSON.stringify(theirs)});`,
+      "};",
+      "syncBuiltinESMExports();",
+    ]);
+    const r = await runCliAsync(args(state), pre);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("lock-lost");
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state + ".lock", "utf8")).toBe(theirs);
+  });
+
+  it("without hard links (linkSync ENOTSUP) the lock still works: one signs", async () => {
+    const state = freshState();
+    const noLinks = preload("no-hard-links", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'fs.linkSync = () => { throw Object.assign(new Error("ENOTSUP: no hard links"), { code: "ENOTSUP" }); };',
+      "syncBuiltinESMExports();",
+    ]);
+    const g = gateSth();
+    const a = runCliAsync(args(state), noLinks);
+    await waitUntil(() => g.seen.n === 1);
+    const b = await runCliAsync(args(state), noLinks);
+    g.release();
+    const ra = await a;
+    expect(ra.status).toBe(0);
+    expect(verdictOf(ra).verdict).toBe("witnessed");
+    expect(b.status).toBe(2);
+    expect(verdictOf(b).verdict).toBe("state-locked");
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("--help documents the lease and that --break-lock can let two witnesses sign", () => {
+    const r = runCli(["--help"]);
+    expect(r.stdout).toMatch(/LEASE_MS/);
+    expect(r.stdout).toMatch(/both sign|two witnesses can sign/i);
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {
