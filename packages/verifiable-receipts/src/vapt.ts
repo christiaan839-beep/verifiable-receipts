@@ -112,11 +112,7 @@ function canonicalize(payload: VaptPayload): string {
 function base64UrlEncode(bytes: Uint8Array | string): string {
   const buf =
     typeof bytes === "string" ? Buffer.from(bytes, "utf8") : Buffer.from(bytes);
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return buf.toString("base64url");
 }
 
 function base64UrlDecode(s: string): Buffer {
