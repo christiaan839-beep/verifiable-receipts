@@ -5,6 +5,9 @@ v2 only: v3 (Ed25519 + ML-DSA-65) needs a post-quantum dependency and
 is not verified here.
 
 What ``verify_v2_receipt`` checks, in this order:
+  0. The receipt nests at most 64 deep (VAOS 2.0 section 7.2): the
+     receipt mapping is one level, and each list or mapping in it one
+     more.
   1. ``canonical`` and ``signature`` are non-empty strings.
   2. ``signature`` is "v2=<base64>" with standard base64.
   3. ``contentHash``, when present and not null, is a string equal to
@@ -13,7 +16,8 @@ What ``verify_v2_receipt`` checks, in this order:
      field.
   4. The Ed25519 signature verifies over the UTF-8 bytes of
      ``canonical``, exactly as given.
-  5. ``canonical`` parses as a JSON object.
+  5. ``canonical`` nests at most 64 deep, counted on its text before it
+     is parsed, and parses as a JSON object.
   6. Every other top-level field of the receipt (all but
      ``canonical``, ``contentHash`` and ``signature``) is present in
      that object with an equal JSON value. A field that disagrees, or
@@ -23,6 +27,9 @@ What ``verify_v2_receipt`` checks, in this order:
 The verifier does not re-derive ``canonical`` from the other fields:
 the signed bytes are the ``canonical`` string itself, whatever key
 order the issuer used.
+
+With both sides at most 64 deep, the recursive comparison never goes
+deeper than 64 frames, so no input reaches Python's recursion limit.
 """
 
 from __future__ import annotations
@@ -88,6 +95,61 @@ def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
     return key
 
 
+# The nesting limit of VAOS 2.0 section 7.2.
+_MAX_NESTING = 64
+
+
+def _nests_too_deep(value: Any) -> bool:
+    """Whether ``value`` nests deeper than _MAX_NESTING.
+
+    ``value`` is one level when it is a list, tuple or mapping, and each
+    one inside it one more. Walks an explicit stack, not the call stack.
+    """
+    stack: list[tuple[Any, int]] = [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, Mapping):
+            children = item.values()
+        elif isinstance(item, (list, tuple)):
+            children = item
+        else:
+            continue
+        if level > _MAX_NESTING:
+            return True
+        stack.extend((child, level + 1) for child in children)
+    return False
+
+
+def _text_nests_too_deep(text: str) -> bool:
+    """Whether JSON text opens more than _MAX_NESTING arrays and objects at once.
+
+    Read from the start, valid JSON or not: outside strings ``[`` and
+    ``{`` open one and ``]`` and ``}`` close one (when one is open); a
+    string runs from ``"`` to the next ``"`` not escaped by a backslash.
+    """
+    open_ = 0
+    in_string = False
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if in_string:
+            if c == "\\":
+                i += 1
+            elif c == '"':
+                in_string = False
+        elif c == '"':
+            in_string = True
+        elif c in "[{":
+            open_ += 1
+            if open_ > _MAX_NESTING:
+                return True
+        elif c in "]}" and open_ > 0:
+            open_ -= 1
+        i += 1
+    return False
+
+
 def _reject_constant(name: str) -> Any:
     # json.loads accepts NaN and Infinity by default; JSON does not.
     raise ValueError(f"{name} is not valid JSON")
@@ -137,22 +199,21 @@ def _json_equal(a: Any, b: Any) -> bool:
 
 def _check_envelope(receipt: Mapping[str, Any], canonical: str) -> str | None:
     """Return a reason string when the envelope disagrees with canonical."""
+    if _text_nests_too_deep(canonical):
+        return "canonical nesting deeper than 64"
     try:
         signed = _parse_canonical(canonical)
     except ValueError as exc:
         return str(exc)
     if not isinstance(signed, dict):
         return "canonical is not a JSON object"
-    try:
-        for key in sorted(receipt, key=str):
-            if key in _ENVELOPE_ONLY:
-                continue
-            if key not in signed:
-                return f'envelope field "{key}" is not in the signed canonical'
-            if not _json_equal(receipt[key], signed[key]):
-                return f'envelope field "{key}" disagrees with the signed canonical'
-    except RecursionError:
-        return "envelope is nested too deeply to compare"
+    for key in sorted(receipt, key=str):
+        if key in _ENVELOPE_ONLY:
+            continue
+        if key not in signed:
+            return f'envelope field "{key}" is not in the signed canonical'
+        if not _json_equal(receipt[key], signed[key]):
+            return f'envelope field "{key}" disagrees with the signed canonical'
     return None
 
 
@@ -177,6 +238,8 @@ def verify_v2_receipt(
     """
     if not isinstance(receipt, Mapping):
         return VerifyResult(False, "receipt must be a mapping")
+    if _nests_too_deep(receipt):
+        return VerifyResult(False, "receipt nesting deeper than 64")
 
     canonical = receipt.get("canonical")
     signature = receipt.get("signature")
@@ -253,8 +316,10 @@ def _guardian_rules_in_canonical_order(rules: list[Any], canonical: Any) -> list
     generic check rejects the envelope's ``rules``.
     """
     projected = [_guardian_rule_projection(r) for r in rules]
+    if not isinstance(canonical, str) or _text_nests_too_deep(canonical):
+        return projected
     try:
-        signed = _parse_canonical(canonical) if isinstance(canonical, str) else None
+        signed = _parse_canonical(canonical)
     except ValueError:
         return projected
     signed_rules = signed.get("rules") if isinstance(signed, dict) else None
@@ -304,6 +369,10 @@ def verify_guardian_attestation(
     """
     if not isinstance(attestation, Mapping):
         return VerifyResult(False, "receipt must be a mapping")
+    # Before the rules are projected and compared: the attestation as
+    # given, fields that are not signed included, nests at most 64 deep.
+    if _nests_too_deep(attestation):
+        return VerifyResult(False, "receipt nesting deeper than 64")
     view = {k: v for k, v in attestation.items() if k != _GUARDIAN_UNSIGNED}
     rules = view.get("rules")
     if isinstance(rules, list):

@@ -10,6 +10,7 @@
 
 import { createHash } from "node:crypto";
 import { canonicalJson } from "./canonical-json.js";
+import { nestsDeeperThan } from "./nesting.js";
 import { sha256Hex } from "./hash.js";
 
 export interface ZipEntry {
@@ -192,7 +193,8 @@ export function buildSignedBundle(
  * the files, recompute `bundleDigest()` over the archive's entries
  * (without MANIFEST.signed.json) and compare it with
  * `manifest.bundleDigest`. The receipts' own signatures are not
- * checked here either.
+ * checked here either. A manifest nested deeper than 64 (VAOS 2.0
+ * section 7.2) is rejected first, with reason "nesting-too-deep".
  */
 export function verifyManifest(
   manifest: BundleManifest,
@@ -203,10 +205,12 @@ export function verifyManifest(
       ok: false;
       reason:
         | "hash-mismatch"
+        | "nesting-too-deep"
         | "signature-mismatch"
         | "wrong-type"
         | "wrong-version";
     } {
+  if (nestsDeeperThan(manifest)) return { ok: false, reason: "nesting-too-deep" };
   if (manifest.type !== "verifiable-receipt-bundle") {
     return { ok: false, reason: "wrong-type" };
   }

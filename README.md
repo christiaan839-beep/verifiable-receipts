@@ -37,11 +37,12 @@ software by one author, not independently reviewed.
 
 A verifier:
 
-1. checks that `contentHash` (if present) is `sha256:` plus the hex
+1. rejects a receipt nested deeper than 64;
+2. checks that `contentHash` (if present) is `sha256:` plus the hex
    SHA-256 of `canonical`;
-2. checks the signature over the bytes of `canonical`, exactly as given;
-3. parses `canonical` as a JSON object;
-4. checks that every other field of the receipt is in that object with
+3. checks the signature over the bytes of `canonical`, exactly as given;
+4. parses `canonical` as a JSON object nested at most 64 deep;
+5. checks that every other field of the receipt is in that object with
    an equal value, and rejects the receipt otherwise.
 
 The formats are specified in

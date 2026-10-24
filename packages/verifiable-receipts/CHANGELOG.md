@@ -46,6 +46,25 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line escapes control characters, U+2028/U+2029 and the
   bidirectional controls, and strings from the log are printed quoted. `--interval` below 60 or not a number is
   a usage error.
+- `verifyGuardianAttestation` and `verifyManifest` return
+  `{ ok: false, reason: "nesting-too-deep" }` for input nested deeper
+  than 64 (VAOS 2.0 §7.2), checked first. Before, deep input made them
+  throw `RangeError` (stack overflow): `verifyManifest` at 5,000
+  levels, `verifyGuardianAttestation` at 20,000. `"nesting-too-deep"` is a new member of `verifyManifest`'s
+  reason type.
+- The conformance v2 verifier (`conformance/verify-v2.mjs`) rejects a
+  receipt nested deeper than 64 before any other check, and a
+  `canonical` whose text nests deeper than 64 before parsing it, with
+  the reasons `receipt nesting deeper than 64` and `canonical nesting
+  deeper than 64`, as the Python and Go verifiers now do. Before, a
+  receipt whose canonical and field nested 5,000 deep made it throw
+  `RangeError`.
+
+### Changed
+
+- `canonicalJson`, and with it `verifiable-receipts-sign`, refuses a
+  body nested deeper than 64 with an error instead of overflowing the
+  stack at a few thousand levels: no verifier accepts such a receipt.
 
 ## [0.4.0] — 2026-10-23
 

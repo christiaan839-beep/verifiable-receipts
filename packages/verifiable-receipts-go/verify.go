@@ -9,7 +9,9 @@
 // field of the receipt equals the same field in the parsed canonical.
 // It does not re-derive the canonical from the other fields, so it
 // accepts receipts from any issuer that signs the canonical string it
-// ships, whatever key order that issuer used.
+// ships, whatever key order that issuer used. A receipt or a canonical
+// nested deeper than 64 is rejected before it is decoded or compared
+// (VAOS 2.0 section 7.2).
 package vaos
 
 import (
@@ -153,13 +155,16 @@ func LoadEd25519PublicKeyFromPEM(pemBytes []byte) (ed25519.PublicKey, error) {
 // supplied Ed25519 public key.
 //
 // Returns OK=true only when, checked in this order:
+//   - The receipt nests at most 64 deep: the receipt object is one
+//     level, and each array or object in an Envelope field one more
 //   - Receipt has a non-empty Canonical
 //   - Receipt has a non-empty Signature starting with "v2=" and
 //     followed by standard base64
 //   - ContentHash (if present, even empty) equals "sha256:" + hex(sha256(canonical))
 //   - The Ed25519 signature verifies over the canonical UTF-8 bytes,
 //     exactly as given
-//   - Canonical parses as a JSON object
+//   - Canonical nests at most 64 deep, counted on its text before it
+//     is decoded, and parses as a JSON object
 //   - Every field in Envelope is present in that object with an equal
 //     JSON value (numbers by numeric value, objects regardless of key
 //     order); a field that disagrees, or that the canonical does not
@@ -168,6 +173,9 @@ func LoadEd25519PublicKeyFromPEM(pemBytes []byte) (ed25519.PublicKey, error) {
 // Never panics on adversarial input. Returns a short Reason string
 // on any failure.
 func VerifyV2Receipt(r Receipt, pub ed25519.PublicKey) VerifyResult {
+	if receiptNestsTooDeep(r) {
+		return VerifyResult{OK: false, Reason: "receipt nesting deeper than 64"}
+	}
 	if r.Canonical == "" {
 		return VerifyResult{OK: false, Reason: "missing canonical projection"}
 	}
@@ -215,6 +223,50 @@ func VerifyV2Receipt(r Receipt, pub ed25519.PublicKey) VerifyResult {
 	return VerifyResult{OK: true}
 }
 
+// maxNesting is the nesting limit of VAOS 2.0 section 7.2.
+const maxNesting = 64
+
+// textNestsDeeper reports whether JSON text opens more than limit arrays
+// and objects at once, read from the start, valid JSON or not: outside
+// strings '[' and '{' open one and ']' and '}' close one (when one is
+// open); a string runs from '"' to the next '"' not escaped by '\\'.
+func textNestsDeeper(text string, limit int) bool {
+	open := 0
+	inString := false
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; {
+		case inString:
+			if c == '\\' {
+				i++
+			} else if c == '"' {
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			open++
+			if open > limit {
+				return true
+			}
+		case (c == ']' || c == '}') && open > 0:
+			open--
+		}
+	}
+	return false
+}
+
+// receiptNestsTooDeep reports whether the receipt nests deeper than
+// maxNesting: its object is one level, so each Envelope field may nest
+// maxNesting - 1 deep. Canonical, ContentHash and Signature are strings.
+func receiptNestsTooDeep(r Receipt) bool {
+	for _, raw := range r.Envelope {
+		if textNestsDeeper(string(raw), maxNesting-1) {
+			return true
+		}
+	}
+	return false
+}
+
 // decodeJSON parses one JSON value, keeping numbers as json.Number,
 // and rejects trailing data.
 func decodeJSON(data []byte) (any, error) {
@@ -230,9 +282,21 @@ func decodeJSON(data []byte) (any, error) {
 	return v, nil
 }
 
+// decodeShallowJSON is decodeJSON for text that nests at most maxNesting
+// deep; deeper text is an error.
+func decodeShallowJSON(text string) (any, error) {
+	if textNestsDeeper(text, maxNesting) {
+		return nil, errors.New("nesting deeper than 64")
+	}
+	return decodeJSON([]byte(text))
+}
+
 // checkEnvelope returns a reason when an Envelope field disagrees with,
 // or is absent from, the parsed canonical, or "" when all agree.
 func checkEnvelope(r Receipt) string {
+	if textNestsDeeper(r.Canonical, maxNesting) {
+		return "canonical nesting deeper than 64"
+	}
 	parsed, err := decodeJSON([]byte(r.Canonical))
 	if err != nil {
 		return "canonical is not valid JSON"
@@ -268,7 +332,8 @@ func checkEnvelope(r Receipt) string {
 // jsonEqual reports deep JSON-value equality: the same JSON type and
 // the same value, with numbers compared by numeric value (1 equals
 // 1.0), arrays element by element and objects key by key regardless of
-// key order. Both values come from decodeJSON.
+// key order. Both values come from decodeJSON, after the nesting checks,
+// so it recurses at most 64 deep.
 func jsonEqual(a, b any) bool {
 	switch x := a.(type) {
 	case nil:
@@ -350,6 +415,11 @@ func numberValue(n json.Number) (float64, bool) {
 // Do not rely on totalMs, durationMs or evidence: no signature covers
 // them.
 func VerifyGuardianAttestation(r Receipt, pub ed25519.PublicKey) VerifyResult {
+	// Before the rules are projected and compared: the attestation as
+	// given, fields that are not signed included, nests at most 64 deep.
+	if receiptNestsTooDeep(r) {
+		return VerifyResult{OK: false, Reason: "receipt nesting deeper than 64"}
+	}
 	return VerifyV2Receipt(guardianSignedView(r), pub)
 }
 
@@ -405,7 +475,9 @@ func guardianRules(raw json.RawMessage, canonical string) (json.RawMessage, bool
 	}
 
 	ordered := projected
-	if parsed, err := decodeJSON([]byte(canonical)); err == nil {
+	// A canonical nested too deep is not decoded here: VerifyV2Receipt
+	// rejects it.
+	if parsed, err := decodeShallowJSON(canonical); err == nil {
 		if signed, ok := parsed.(map[string]any); ok {
 			if signedRules, ok := signed["rules"].([]any); ok {
 				if matched, ok := matchOrder(projected, signedRules); ok {

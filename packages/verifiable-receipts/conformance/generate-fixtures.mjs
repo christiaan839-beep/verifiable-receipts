@@ -45,6 +45,14 @@ const ENVELOPE = {
   verdictId: "v_conf_001",
 };
 
+// A value nested `levels` arrays deep: nested(1) is [], nested(2) is
+// [[]]. A receipt that holds it in a field nests one level deeper.
+function nested(levels) {
+  let value = [];
+  for (let i = 1; i < levels; i++) value = [value];
+  return value;
+}
+
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
 const { privateKey: wrongKey } = generateKeyPairSync("ed25519");
 
@@ -197,6 +205,37 @@ const fixtures = {
     expected: {
       ok: false,
       reasonContains: 'envelope field "approvedBy" is not in the signed canonical',
+    },
+  },
+  // VAOS 2.0 section 7.2: a receipt nested deeper than 64 is rejected
+  // before anything else is checked. The signing key is the
+  // corpus key, so the canonical cannot be made deep here; the depth is
+  // in a field beside it, which the canonical does not hold.
+  "v2-invalid-deep-nesting.json": {
+    description:
+      "v2 invalid — the receipt nests 65 deep (a field 64 arrays deep), one more than the limit; rejected before the signature is checked",
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+      nested: nested(64),
+    },
+    expected: { ok: false, reasonContains: "nesting deeper than 64" },
+  },
+  // Exactly at the limit: the depth check lets it through, and the
+  // envelope check rejects the field, which the canonical does not hold.
+  "v2-invalid-nesting-at-limit.json": {
+    description:
+      "v2 invalid — the receipt nests exactly 64 deep (a field 63 arrays deep): the depth limit lets it through, and the field is not in the signed canonical",
+    receipt: {
+      canonical: CANONICAL,
+      contentHash,
+      signature: signWith(privateKey),
+      nested: nested(63),
+    },
+    expected: {
+      ok: false,
+      reasonContains: 'envelope field "nested" is not in the signed canonical',
     },
   },
 };

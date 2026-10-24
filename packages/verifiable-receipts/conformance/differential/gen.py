@@ -8,7 +8,10 @@ signs receipts with it, and writes <out-dir>/cases.jsonl: one object per
 line, {"id", "kind": "receipt" | "inclusion", "raw": <JSON text>}. Each
 verifier parses "raw" with its own language's JSON parser, as a caller
 would. Most cases start valid and get one or two mutations, so they sit
-near the edge of what a verifier accepts.
+near the edge of what a verifier accepts. Some nest a receipt or its
+canonical near the depth limit of 64 (VAOS 2.0 section 7) or far past it,
+up to 20,000 deep; their JSON text is built by hand, since json.dumps
+cannot write it.
 """
 
 from __future__ import annotations
@@ -157,6 +160,55 @@ def receipt_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
     return raw
 
 
+def nest(rng: random.Random, levels: int) -> str:
+    """JSON text nested `levels` deep: arrays and objects, mixed at random."""
+    opens, closes = [], []
+    for _ in range(levels):
+        if rng.random() < 0.5:
+            opens.append("[")
+            closes.append("]")
+        else:
+            opens.append('{"k":')
+            closes.append("}")
+    return "".join(opens) + "0" + "".join(reversed(closes))
+
+
+def depth_case(rng: random.Random, key: Ed25519PrivateKey) -> str:
+    """A signed receipt whose canonical, or a field beside it, nests deep.
+
+    The canonical {"d": X} nests one deeper than X, and so does a receipt
+    with the field "d": X; 63 levels in X is the deepest every verifier
+    accepts.
+    """
+    levels = rng.choice(
+        [rng.randrange(1, 63), 62, 63, 63, 64, 64, 65, rng.randrange(65, 300), 1000, 5000, 20000]
+    )
+    value = nest(rng, levels)
+    shape = rng.randrange(6)
+    if shape == 0:  # brackets inside strings do not count
+        hidden = json.dumps("[" * levels + '\\"' + "{" * levels)
+        canonical = '{"s":' + hidden + ',"d":' + value + "}"
+    elif shape == 1:  # deep and not valid JSON
+        canonical = '{"d":' + value[: rng.randrange(len(value))]
+    elif shape == 2:  # a shallow canonical; the depth is beside it
+        canonical = '{"a":1}'
+    else:
+        canonical = '{"d":' + value + "}"
+    sig = "v2=" + base64.b64encode(key.sign(canonical.encode())).decode()
+    fields = [
+        '"canonical":' + json.dumps(canonical),
+        '"contentHash":"sha256:' + hashlib.sha256(canonical.encode()).hexdigest() + '"',
+        '"signature":"' + sig + '"',
+    ]
+    beside = rng.randrange(4)
+    if beside == 1 or shape == 2:  # the same value beside the canonical
+        fields.append('"d":' + value)
+    elif beside == 2:  # a value nested another depth
+        fields.append('"d":' + nest(rng, rng.choice([levels - 1, levels + 1, 64, 65]) or 1))
+    rng.shuffle(fields)
+    return "{" + ",".join(fields) + "}"
+
+
 def inclusion_case(rng: random.Random) -> str:
     size = rng.choice(
         [
@@ -216,7 +268,12 @@ def main() -> int:
     with (out / "cases.jsonl").open("w", encoding="utf-8") as fh:
         for i in range(count):
             kind = "receipt" if rng.random() < 0.6 else "inclusion"
-            raw = receipt_case(rng, key) if kind == "receipt" else inclusion_case(rng)
+            if kind == "inclusion":
+                raw = inclusion_case(rng)
+            elif rng.random() < 0.08:
+                raw = depth_case(rng, key)
+            else:
+                raw = receipt_case(rng, key)
             fh.write(json.dumps({"id": i, "kind": kind, "raw": raw}) + "\n")
     print(f"{count} cases, seed {seed}")
     return 0

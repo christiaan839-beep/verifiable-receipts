@@ -131,7 +131,9 @@ The issuer:
    step 2, and SHOULD set `contentHash` to `sha256:` followed by the
    hex SHA-256 of its UTF-8 bytes. Every other field of the receipt
    MUST appear in `canonical` with the same value (§7, steps 5 and 6).
-   (Step added 16 October 2026.)
+   (Step added 16 October 2026.) Neither the receipt nor `canonical`
+   may nest deeper than 64 (§7.2): no verifier accepts such a receipt,
+   so an issuer MUST NOT sign one. (Added 24 October 2026.)
 
 ### 6.2 Wire format
 
@@ -163,7 +165,9 @@ key rotations propagate within one deploy cycle.
 
 ## 7. Verification Procedure
 
-Given a receipt and the issuer's verification key, a verifier:
+Given a receipt and the issuer's verification key, a verifier first
+rejects the receipt if it nests deeper than 64 (§7.2), before it reads
+any field, and then:
 
 1. Parses `signature`. If the prefix is `v1=`, fall back to VAOS 1.0
    §8. If the prefix is `v2=`, continue. Any other prefix → reject.
@@ -188,7 +192,8 @@ Given a receipt and the issuer's verification key, a verifier:
    (e.g. `crypto.verify(null, message, publicKey, signature)` in
    Node.js, or `ed25519.verify` in any other library) with the
    canonical bytes, the decoded signature, and the verification key.
-5. Parses `canonical` as JSON and rejects unless it is a JSON object.
+5. Rejects `canonical` if its text nests deeper than 64 (§7.2); then
+   parses it as JSON and rejects unless it is a JSON object.
 6. For every other top-level field of the receipt (all but
    `canonical`, `contentHash` and `signature`), rejects when the
    object has no such key or holds a different value under it. Values
@@ -224,7 +229,52 @@ log lines containing the receipt body) before the signature check
 returns true. Side-effects on an unverified receipt are how
 upstream-injection attacks succeed.
 
-### 7.1 HTTP API (informational)
+A verifier MUST return a verdict for every input: it MUST NOT raise,
+throw, panic or exhaust its stack on a receipt, however malformed or
+deeply nested.
+
+### 7.2 Nesting depth
+
+The nesting depth of a JSON value is 0 for a string, number, boolean or
+null; an array or object nests one level deeper than the deepest value
+in it, or 1 deep when it is empty. So `[]` and `{}` nest 1 deep,
+`{"a":[1]}` 2 deep, and a receipt one level deeper than its deepest
+field.
+
+- A receipt MUST NOT nest deeper than 64. A verifier MUST reject such
+  a receipt before step 1, counting on the receipt as given: fields
+  that the receipt's format leaves unsigned count too.
+- The text of `canonical` MUST NOT nest deeper than 64. A verifier
+  MUST count its depth on the text, before it parses it, and reject it
+  at step 5 when more than 64 levels are open at once. Reading the text
+  from its first character: outside a string, `[` and `{` open a level,
+  and `]` and `}` close the innermost open level, if any; a string runs
+  from a `"` to the next `"`, and a `\` inside a string escapes the
+  character after it. The verifier counts this way whether or not the
+  text is valid JSON, so a canonical that is too deep and also
+  malformed is rejected for its depth by every verifier.
+
+With both sides at most 64 deep, the comparison of step 6 never goes
+deeper than 64 levels, and a verifier never parses or walks anything
+deeper. 64 is far more than a receipt needs (a Guardian attestation
+whose rules carry evidence nests 5 deep) and far less than the depths
+at which common engines fail: on 24 October 2026 the JavaScript
+verifier of this repository overflowed Node.js's stack comparing a
+field 5,000 deep, CPython's default recursion limit is 1,000, and Go's
+`encoding/json` refuses JSON nested deeper than 10,000.
+
+> **Clarification (24 October 2026).** This section is new. Before it,
+> the JavaScript conformance verifier threw a `RangeError` on a receipt
+> whose canonical and field nested 5,000 deep, the Python verifier
+> rejected the same receipt at 1,000 levels because it reached its
+> recursion limit, and the Go verifier accepted it: the three gave
+> different verdicts on the same receipt. The verifiers in this
+> repository now reject such receipts with the reasons `receipt nesting
+> deeper than 64` and `canonical nesting deeper than 64`, and the
+> fixtures `v2-invalid-deep-nesting.json` and
+> `v2-invalid-nesting-at-limit.json` test the limit on the receipt.
+
+### 7.3 HTTP API (informational)
 
 Issuers MAY expose a verification endpoint for clients without
 Ed25519 libraries:
@@ -276,6 +326,8 @@ For VAOS 2.0 specifically:
 |                                     | accepting `v2=` from that issuer; a `v3=` signature contains a valid `v2=` signature. See VAOS 3.0 §9.                 |
 | Canonicalization drift              | Implementations MUST share the projection code path with VAOS 1.0. The reference impl in                                |
 |                                     | `@sovereign-matrix/verifiable-receipts` is the conformance test.                                                        |
+| Deeply nested JSON                  | A receipt or canonical nested deeper than 64 is rejected before it is walked or parsed (§7.2), so no input exhausts    |
+|                                     | a verifier's stack or makes verifiers in different languages disagree.                                                  |
 
 ---
 

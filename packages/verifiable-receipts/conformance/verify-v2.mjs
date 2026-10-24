@@ -7,6 +7,8 @@
  * makes the same checks, in the same order and with the same reasons,
  * as verify_v2_receipt (Python) and VerifyV2Receipt (Go):
  *
+ *   0. The receipt nests at most 64 deep (VAOS 2.0 §7.2): the receipt
+ *      object is one level, and each array or object in it one more.
  *   1. `canonical` and `signature` are non-empty strings.
  *   2. `signature` is "v2=<base64>" with standard base64.
  *   3. `contentHash`, when present and not null, is a string equal to
@@ -16,7 +18,8 @@
  *      same way.)
  *   4. The Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
  *      exactly as given.
- *   5. `canonical` parses as a JSON object.
+ *   5. `canonical` nests at most 64 deep, counted on its text before it
+ *      is parsed, and parses as a JSON object.
  *   6. Every other top-level field of the receipt equals the same field
  *      of that object (deep JSON-value equality); a field that
  *      disagrees, or that the canonical lacks, is rejected.
@@ -24,6 +27,10 @@
  * JavaScript reads every JSON number as an IEEE 754 double, so integers
  * beyond 2^53 that differ only past that precision compare equal here,
  * where the Python and Go verifiers compare them exactly.
+ *
+ * With both sides at most 64 deep, the recursive jsonEqual below never
+ * recurses deeper than 64 when verifyV2Receipt calls it, so no receipt
+ * can overflow the stack.
  */
 import { createHash, verify as nodeVerify } from "node:crypto";
 
@@ -33,6 +40,52 @@ const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+
 
 function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** The nesting limit of VAOS 2.0 §7.2. */
+const MAX_NESTING = 64;
+
+/**
+ * Whether `value` nests deeper than MAX_NESTING: `value` is one level
+ * when it is an array or object, and each array or object inside it one
+ * more. Walks an explicit stack, so it cannot overflow the call stack.
+ */
+function nestsTooDeep(value) {
+  const stack = [[value, 1]];
+  while (stack.length > 0) {
+    const [v, level] = stack.pop();
+    if (v === null || typeof v !== "object") continue;
+    if (level > MAX_NESTING) return true;
+    for (const child of Array.isArray(v) ? v : Object.values(v)) {
+      if (child !== null && typeof child === "object") stack.push([child, level + 1]);
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether JSON text opens more than MAX_NESTING arrays and objects at
+ * once, read from the start, valid JSON or not: outside strings `[` and
+ * `{` open one and `]` and `}` close one (when one is open); a string
+ * runs from `"` to the next `"` not escaped by `\`.
+ */
+function textNestsTooDeep(text) {
+  let open = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') {
+      inString = true;
+    } else if (c === "[" || c === "{") {
+      if (++open > MAX_NESTING) return true;
+    } else if ((c === "]" || c === "}") && open > 0) {
+      open--;
+    }
+  }
+  return false;
 }
 
 /**
@@ -69,6 +122,7 @@ export function jsonEqual(a, b) {
  */
 export function verifyV2Receipt(receipt, publicKey) {
   if (!isObject(receipt)) return { ok: false, reason: "receipt must be an object" };
+  if (nestsTooDeep(receipt)) return { ok: false, reason: "receipt nesting deeper than 64" };
   const { canonical, signature, contentHash } = receipt;
   if (typeof canonical !== "string" || canonical === "") {
     return { ok: false, reason: "missing canonical projection" };
@@ -113,6 +167,9 @@ export function verifyV2Receipt(receipt, publicKey) {
   }
 
   // Only now parse the canonical: these bytes are authenticated.
+  if (textNestsTooDeep(canonical)) {
+    return { ok: false, reason: "canonical nesting deeper than 64" };
+  }
   let signed;
   try {
     signed = JSON.parse(canonical);

@@ -159,7 +159,12 @@ async function main() {
   }
 
   const fields = withoutSignerFields(body);
-  const canonical = canonicalJson(fields);
+  let canonical;
+  try {
+    canonical = canonicalJson(fields);
+  } catch (err) {
+    fail(`could not canonicalize the receipt: ${err.message}`);
+  }
   const canonicalBytes = Buffer.from(canonical, "utf8");
   const contentHash =
     "sha256:" + createHash("sha256").update(canonicalBytes).digest("hex");

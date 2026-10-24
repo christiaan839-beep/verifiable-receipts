@@ -246,6 +246,73 @@ class TestEnvelopeConsistency:
             assert result.reason == "canonical is not valid JSON"
 
 
+def _nested(levels: int) -> list:
+    """A value ``levels`` lists deep, built without recursion."""
+    value: list = []
+    for _ in range(levels - 1):
+        value = [value]
+    return value
+
+
+def _nested_text(levels: int) -> str:
+    return "[" * levels + "]" * levels
+
+
+class TestNestingDepth:
+    """VAOS 2.0 section 7.2: nothing nested deeper than 64 is compared or parsed."""
+
+    def test_accepts_a_receipt_and_canonical_nested_exactly_64_deep(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"d":' + _nested_text(63) + "}"
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical), "d": _nested(63)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(True)
+
+    def test_rejects_a_receipt_nested_65_deep_first(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"a":1}'
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical), "d": _nested(64)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
+
+    @pytest.mark.parametrize(
+        "canonical",
+        ['{"d":' + _nested_text(64) + "}", '{"d":' + "[" * 64, "x" + "{" * 65],
+        ids=["valid", "unterminated", "not-json"],
+    )
+    def test_rejects_a_canonical_nested_65_deep_valid_json_or_not(self, canonical: str) -> None:
+        priv, pub_pem = _make_keypair()
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(
+            False, "canonical nesting deeper than 64"
+        )
+
+    def test_does_not_count_brackets_inside_strings(self) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"s":"' + "[" * 100 + '\\\\\\"' + "{" * 100 + '"}'
+        json.loads(canonical)
+        receipt = {"canonical": canonical, "signature": _sign_v2(priv, canonical)}
+        assert verify_v2_receipt(receipt, pub_pem) == VerifyResult(True)
+
+    @pytest.mark.parametrize("depth", [5_000, 20_000])
+    def test_returns_a_verdict_at_depth(self, depth: int) -> None:
+        priv, pub_pem = _make_keypair()
+        canonical = '{"d":' + _nested_text(depth) + "}"
+        signature = _sign_v2(priv, canonical)
+        deep = {"canonical": canonical, "signature": signature, "d": _nested(depth)}
+        assert verify_v2_receipt(deep, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
+        assert verify_v2_receipt({"canonical": canonical, "signature": signature}, pub_pem) == (
+            VerifyResult(False, "canonical nesting deeper than 64")
+        )
+        rules = [{"ruleId": "r", "verdict": "pass", "reason": _nested(depth)}]
+        attestation = {"canonical": canonical, "signature": signature, "rules": rules}
+        assert verify_guardian_attestation(attestation, pub_pem) == VerifyResult(
+            False, "receipt nesting deeper than 64"
+        )
+
+
 class TestGuardianAttestation:
     """The envelope ``runGuardian`` (TypeScript) returns."""
 

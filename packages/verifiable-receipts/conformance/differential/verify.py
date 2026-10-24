@@ -33,7 +33,10 @@ def main() -> int:
             verdict: dict[str, object] = {"id": case["id"]}
             try:
                 value = json.loads(case["raw"])
-            except ValueError:
+            except (ValueError, RecursionError):
+                # A parse failure is a rejection, as in the TypeScript and
+                # Go runners; json.loads raises RecursionError on text
+                # nested some thousands deep.
                 verdict["ok"] = False
             else:
                 try:

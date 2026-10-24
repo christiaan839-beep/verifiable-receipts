@@ -93,7 +93,8 @@ The canonicalization algorithm of VAOS 1.0 §6 carries forward
 unchanged. Both signatures in a VAOS 3.0 dual signature MUST be
 computed over **the same** UTF-8 byte string produced by that
 projection. Implementations MUST NOT recanonicalize the payload
-between the two signing operations.
+between the two signing operations. The receipt body MUST NOT nest
+deeper than 64 (VAOS 2.0 §7.2).
 
 ---
 
@@ -144,7 +145,10 @@ charset=utf-8` and `Access-Control-Allow-Origin: *`.
 ## 7. Verification Procedure
 
 Given a v3 receipt, the Ed25519 verification key, and the ML-DSA-65
-verification key, a verifier:
+verification key, a verifier first rejects the receipt if it nests
+deeper than 64, before it reads any field, as VAOS 2.0 §7.2 says; the
+canonical bytes of step 4 MUST NOT nest deeper than 64 either. It
+then:
 
 1. Parses the version prefix.
    - `v1=` → fall back to VAOS 1.0 §8.

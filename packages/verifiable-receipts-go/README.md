@@ -58,6 +58,8 @@ func main() {
 
 `VerifyV2Receipt` checks, in this order:
 
+0. The receipt nests at most 64 deep (VAOS 2.0 §7.2): the receipt is one
+   level, and each array or object in an `Envelope` field one more.
 1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
    followed by canonical standard base64 (padding bits zero).
 2. If the receipt has a contentHash, it equals the hex SHA-256 of
@@ -67,7 +69,8 @@ func main() {
    checked.
 3. The Ed25519 signature verifies over the bytes of `Canonical`, exactly
    as given.
-4. `Canonical` parses as a JSON object.
+4. `Canonical` nests at most 64 deep, counted on its text before it is
+   decoded, and parses as a JSON object.
 5. Every field in `Envelope` is in that object with an equal JSON value
    (numbers by value, integers exactly, objects regardless of key
    order). A field that disagrees, such as `"overall": "fail"` beside a

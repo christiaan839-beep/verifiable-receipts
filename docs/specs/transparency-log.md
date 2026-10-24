@@ -150,6 +150,13 @@ throw) when one fails.
 - Index arithmetic MUST be exact over that whole range: 32-bit
   operations accept a proof for a small tree as a proof for a tree of
   2^32 + 2 leaves.
+- Proofs and tree heads are flat: a valid one nests 2 deep (an object
+  holding an array of hashes), and nothing in it is compared as a
+  nested JSON value. An audit-path or consistency-proof entry that is
+  an array or object is not a hash and MUST be rejected as one, without
+  looking inside it, so no input makes a verifier recurse. A verifier
+  that parses a proof or tree head from JSON text MAY reject text that
+  nests deeper than 64 (VAOS 2.0 §7.2) before parsing it.
 
 Test vectors: `packages/verifiable-receipts/conformance/fixtures/`.
 `inclusion-uppercase-hex.json`, `inclusion-0x-prefix.json`,
