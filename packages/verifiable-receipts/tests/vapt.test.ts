@@ -373,3 +373,24 @@ describe("VAPT parseVapt — defensive parsing", () => {
     expect(parseVapt(`vapt1.${b64}.sig`)).toBeNull();
   });
 });
+
+describe("VAPT wire encoding", () => {
+  // Unpadded RFC 4648 base64url, written out by hand as a reference.
+  const reference = (b: Uint8Array): string =>
+    Buffer.from(b)
+      .toString("base64")
+      .split("+").join("-")
+      .split("/").join("_")
+      .split("=").join("");
+
+  it("writes each part as unpadded base64url, for every length", () => {
+    for (let n = 0; n <= 64; n++) {
+      const sig = Uint8Array.from({ length: n }, (_, i) => (i * 37 + n * 11 + 0xf8) & 0xff);
+      const token = mintVapt(freshPayload(), () => sig);
+      const [payloadPart, sigPart] = token.slice(token.indexOf("vapt1.") + 6).split(".");
+      expect(sigPart).toBe(reference(sig));
+      expect(payloadPart).not.toMatch(/[+/=]/);
+      expect(Array.from(parseVapt(token)?.signature ?? [])).toEqual(Array.from(sig));
+    }
+  });
+});
