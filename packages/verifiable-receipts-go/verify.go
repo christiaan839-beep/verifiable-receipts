@@ -33,7 +33,9 @@ import (
 //
 // Unmarshal a receipt's JSON into a Receipt to fill all four fields:
 // Canonical, ContentHash and Signature from their keys, and Envelope
-// from every other top-level key.
+// from every other top-level key. Use it as a named field, not an
+// embedded one: its MarshalJSON and UnmarshalJSON would be promoted
+// and hide the outer struct's own fields.
 type Receipt struct {
 	// Canonical is the exact UTF-8 byte string the issuer signed.
 	Canonical string `json:"canonical"`
@@ -102,7 +104,9 @@ func (r *Receipt) UnmarshalJSON(data []byte) error {
 // has one: ContentHash is non-empty, or UnmarshalJSON read a string
 // contentHash (even ""). So a receipt with no hash stays without one
 // after a round trip, and a parsed "" stays a defect. Envelope is not
-// written, as before.
+// written, as before, so a receipt read back from this output has no
+// envelope fields to check against its canonical: keep the original
+// bytes to verify a receipt later, not a re-marshalled copy.
 func (r Receipt) MarshalJSON() ([]byte, error) {
 	type wire struct {
 		Canonical   string  `json:"canonical"`
