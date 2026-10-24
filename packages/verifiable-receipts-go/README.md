@@ -1,7 +1,7 @@
 # sovereign-matrix verifiable-receipts (Go)
 
 **Go verifier for VAOS receipts** — the Go counterpart to
-[`@sovereign-matrix/verifiable-receipts`](../verifiable-receipts)
+[`@sovereignos/verifiable-receipts`](../verifiable-receipts)
 (TypeScript) and
 [`sovereign-matrix-verifiable-receipts`](../verifiable-receipts-py)
 (Python). The TypeScript and Python packages are not on npm or PyPI yet.
@@ -112,7 +112,7 @@ fmt.Println(ok) // true if leaf provably appears in the tree
 ## What this package is NOT
 
 - **Not an issuer.** The TypeScript package
-  (`@sovereign-matrix/verifiable-receipts`, including its
+  (`@sovereignos/verifiable-receipts`, including its
   `verifiable-receipts-sign` CLI) and the Python package
   (`sign_v2_receipt`) sign receipts; this module verifies what either
   signs. The round trip in

@@ -5,7 +5,7 @@ the package's manifest and point at a commit on `main`.
 
 | Package | Version in | Tag |
 |---|---|---|
-| npm `@sovereign-matrix/verifiable-receipts` | `packages/verifiable-receipts/package.json` | `js-vX.Y.Z` |
+| npm `@sovereignos/verifiable-receipts` | `packages/verifiable-receipts/package.json` | `js-vX.Y.Z` |
 | PyPI `sovereign-matrix-verifiable-receipts` | `packages/verifiable-receipts-py/pyproject.toml` | `py-vX.Y.Z` |
 | Go `github.com/christiaan839-beep/verifiable-receipts/packages/verifiable-receipts-go` | the tag | `packages/verifiable-receipts-go/vX.Y.Z` |
 
@@ -54,12 +54,12 @@ project.
 npm adds a trusted publisher only to a package that already exists, so the
 first version goes up by hand:
 
-1. Create the npm organisation `sovereign-matrix` if it does not exist, and
-   turn on 2FA for your npm account.
+1. The package publishes under the npm organisation `sovereignos`. Make
+   sure you are an owner of it and that 2FA is on for your npm account.
 2. Push `js-v0.4.0`. With `NPM_TRUSTED_PUBLISHING` unset the workflow skips
    the npm job and still attaches the attested tarball to the GitHub release.
 3. Download that tarball, check it with `gh attestation verify`, and publish
-   it: `npm publish sovereign-matrix-verifiable-receipts-0.4.0.tgz --access public`.
+   it: `npm publish sovereignos-verifiable-receipts-0.4.0.tgz --access public`.
 4. In the package's settings on npmjs.com, add a trusted publisher: GitHub
    Actions, `christiaan839-beep` / `verifiable-receipts`, workflow
    `release.yml`, environment `release`, allowed action: stage publish only.

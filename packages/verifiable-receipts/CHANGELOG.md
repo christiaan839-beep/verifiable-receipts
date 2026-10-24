@@ -1,10 +1,16 @@
 # Changelog
 
-All notable changes to `@sovereign-matrix/verifiable-receipts` are documented
+All notable changes to `@sovereignos/verifiable-receipts` are documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- The package is published as `@sovereignos/verifiable-receipts`, the
+  npm organisation that exists. No version was ever published under the
+  old `@sovereign-matrix` scope, so nothing moves for existing users.
 
 ### Security
 
@@ -245,7 +251,7 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The version number now reflects what is actually in the package. The
 public surface area has grown well past `0.1.0`; this release bumps to
 `0.3.0` to align with every workspace consumer that already declares
-`@sovereign-matrix/verifiable-receipts: ">=0.3.0"` as a peer dependency.
+`@sovereignos/verifiable-receipts: ">=0.3.0"` as a peer dependency.
 
 ### Added
 

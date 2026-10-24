@@ -1,5 +1,5 @@
 /**
- * @sovereign-matrix/verifiable-receipts
+ * @sovereignos/verifiable-receipts
  *
  * Sign receipts for AI agent actions and verify them later.
  *

@@ -7,7 +7,7 @@
 | Status         | Draft (open for comment)                                         |
 | Editor         | Sovereign Matrix — `sovereign.systems007@gmail.com`              |
 | License        | CC0 1.0 (public domain)                                          |
-| Reference impl | `@sovereign-matrix/verifiable-receipts` (Apache-2.0)             |
+| Reference impl | `@sovereignos/verifiable-receipts` (Apache-2.0)             |
 | Discussion     | https://github.com/christiaan839-beep/verifiable-receipts/issues |
 
 > The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174).
@@ -414,7 +414,7 @@ For VAOS 2.0 specifically:
 | Quantum cryptanalysis (CRQC)        | Ed25519 is broken under a sufficiently large quantum computer. Migrate to VAOS 3.0 (dual-sign with ML-DSA-65) and stop  |
 |                                     | accepting `v2=` from that issuer; a `v3=` signature contains a valid `v2=` signature. See VAOS 3.0 §9.                 |
 | Canonicalization drift              | Implementations MUST share the projection code path with VAOS 1.0. The reference impl in                                |
-|                                     | `@sovereign-matrix/verifiable-receipts` is the conformance test.                                                        |
+|                                     | `@sovereignos/verifiable-receipts` is the conformance test.                                                        |
 | Deeply nested JSON                  | A receipt or canonical nested deeper than 64 is rejected before it is walked or parsed (§7.2), so no input exhausts    |
 |                                     | a verifier's stack or makes verifiers in different languages disagree.                                                  |
 | Verifiers that accept different     | Every verifier makes the choices of §7.3: `S < L`, the cofactorless check, `R` compared as encoded.                     |
