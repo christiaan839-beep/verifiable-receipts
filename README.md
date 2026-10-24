@@ -216,18 +216,17 @@ python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-recei
 bash packages/verifiable-receipts/conformance/roundtrip/run.sh
 ```
 
-Measured on 23 October 2026 (Node 22, Python 3.13, Go 1.24):
+Measured on 24 October 2026 (Node 22, Python 3.12, Go 1.27):
 
-| Suite      | Result                                                      |
-| ---------- | ----------------------------------------------------------- |
-| TypeScript | 323 passed, 4 skipped (10 files, vitest 5)                  |
-| Python     | 66 passed; conformance 16 passed                            |
-| Go         | 36 tests passed, one with a subtest per fixture             |
-| Round trip | 18 checks passed                                            |
+| Suite      | Result                                                     |
+| ---------- | ---------------------------------------------------------- |
+| TypeScript | 488 passed, none skipped (12 files, vitest 5)              |
+| Python     | 76 passed; conformance 26 passed; schemas 147 passed       |
+| Go         | 46 tests passed, 123 subtests                              |
+| Round trip | 18 checks passed                                           |
 
-The four skipped TypeScript tests are the witness CLI's network flow
-(`tests/witness-cli.test.ts`). CI (`.github/workflows/test.yml`) runs
-all of the above on every push and pull request.
+CI (`.github/workflows/test.yml`) runs all of the above on every push
+and pull request.
 
 ## License
 

@@ -4,6 +4,49 @@ All notable changes to `@sovereign-matrix/verifiable-receipts` are documented
 here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- `verifiable-receipts-witness` cosigns only the tree head it checked.
+  It rebuilds the canonical from the fields and signs that, after
+  requiring the log's `canonical` to match it byte for byte; before,
+  a log could pass the consistency proof with one root and have the
+  witness sign a canonical naming another. It also refuses: a field
+  with more than one spelling, or a field the schema does not allow;
+  an empty tree whose root is not SHA-256 of no bytes; a `logId` with
+  control characters, one that differs from its state file, or one
+  that differs from the new `--log-id`; a different root at a size it
+  already signed; a timestamp earlier than the one it saved; and, with
+  the new `--log-public-key`, a log signature that does not verify, or
+  a `v3=` head.
+- The witness saves the new head atomically before the signature
+  leaves the process, so a log that stores a cosignature but answers
+  an error cannot get a second one on another root at that size. A
+  failed submission is resubmitted exactly as saved, with the same
+  bytes and signature, even if the log has re-dated the head. Each
+  poll holds a lock file beside the state file's real path, as a
+  lease renewed every 5 s, so two witness processes on one state file
+  do not both sign while each renews its lease: including two that
+  share a pid and hostname in separate pid namespaces. A lock is stale
+  only when its lease (3 × `--timeout` + 30 s) has run out; it is then
+  broken under a second lock file, and only if unchanged. A process
+  that finds its lock taken over (its own lease ran out) neither
+  saves nor signs, and no save moves the state file to a smaller tree
+  size or to another root at the same size.
+  SIGTERM and SIGINT release the lock. `--break-lock` is the explicit
+  way out; if another witness is still running, two can sign. The
+  lease is judged by file mtimes, so on a network file system it is
+  only as good as the hosts' clocks and the file system's exclusive
+  create.
+- A state file that exists but cannot be read or is malformed is
+  refused instead of treated as a first run.
+- Requests time out (`--timeout`, 1 to 3600 s, default 30), never
+  follow a redirect, and refuse bodies over 1 MiB. Every `[witness]`
+  line escapes control characters, U+2028/U+2029 and the
+  bidirectional controls, and strings from the log are printed quoted. `--interval` below 60 or not a number is
+  a usage error.
+
 ## [0.4.0] — 2026-10-23
 
 ### Removed (breaking)
