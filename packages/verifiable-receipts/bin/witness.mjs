@@ -48,10 +48,14 @@
  * second cosignature on another root at that size. A pending head is
  * resubmitted on the next poll exactly as saved (same canonical, same
  * signature), even if the log has since re-dated it. Each poll holds
- * <state>.lock (pid and start time) from before the state is read to
- * after it is written; a second process on the same state file is
- * refused (state-locked), and a lock whose pid is not running is
- * removed as stale. A head dated earlier than the saved one is
+ * <state>.lock ({pid, hostname, startedAt, nonce}, on the state
+ * file's real path) from before the state is read to after it is
+ * written; a second process on the same state file is refused
+ * (state-locked). A lock on this host whose pid is not running, or is
+ * this process's own pid, is removed as stale, under <state>.lock.break.
+ * A running pid, another host or an unreadable lock is refused, with
+ * --break-lock as the explicit way out. SIGTERM and SIGINT release
+ * the lock (exit 143, 130). A head dated earlier than the saved one is
  * refused (receipts-log API.md: the timestamp "never decreases"). A
  * state file without logId (written by an earlier version)
  * still loads; the logId is added the next time the state is saved. A
@@ -66,18 +70,19 @@
  *   2  Usage error (bad flags, a fetch that failed, timed out, was
  *      redirected or was too large, malformed STH, a bad state file or
  *      one that cannot be saved, a state file locked by another
- *      process, a failed submission, a v3= STH with --log-public-key)
+ *      process or in a directory it cannot write, a failed submission,
+ *      a v3= STH with --log-public-key)
  *
  * Every request has a timeout (--timeout, 1 to 3600 s, default 30), a
  * 1 MiB response-body limit (see MAX_BODY_BYTES) and never follows a
  * redirect. With --json, a poll prints exactly one JSON verdict line on
- * stdout. Every [witness] line escapes control characters and
- * U+2028/U+2029, and strings from the log are printed quoted.
+ * stdout. Every [witness] line escapes control characters,
+ * U+2028/U+2029 and the bidirectional controls, and strings from the
+ * log are printed quoted.
  */
 
 import {
   readFileSync,
-  statSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -86,6 +91,9 @@ import {
   closeSync,
   renameSync,
   unlinkSync,
+  linkSync,
+  lstatSync,
+  realpathSync,
 } from "node:fs";
 import {
   createPrivateKey,
@@ -94,8 +102,8 @@ import {
   sign as edSign,
   verify as edVerify,
 } from "node:crypto";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { homedir, hostname } from "node:os";
 import {
   canonicalizeSth,
   treeRoot,
@@ -108,21 +116,23 @@ import { fail, parseArgs } from "./cli.mjs";
 const EMPTY_ROOT = treeRoot([]);
 
 /**
- * Control characters, and the JSON/JS line separators U+2028/U+2029.
- * A logId may not contain them: it is printed on [witness] lines.
+ * Control characters, the line separators U+2028/U+2029, and the
+ * bidirectional controls (U+200E, U+200F, U+202A-U+202E,
+ * U+2066-U+2069) that can make a line read differently from its
+ * bytes. A logId may not contain them: it is printed on [witness]
+ * lines.
  */
 // eslint-disable-next-line no-control-regex -- matching them is the point
-const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/;
 
 /**
- * JSON.stringify, then \uXXXX for what it leaves raw but a
- * line-splitting viewer may break a line on: the C1 controls
- * (U+0080-U+009F, NEL among them) and U+2028/U+2029. Everything this
- * CLI prints that a log or a file supplied goes through it.
+ * JSON.stringify, then \uXXXX for what it leaves raw but a viewer may
+ * break a line on or reorder: the C1 controls (U+0080-U+009F, NEL
+ * among them), U+2028/U+2029 and the bidirectional controls.
  */
 function safeJson(value) {
   return JSON.stringify(value).replace(
-    /[\u0080-\u009f\u2028\u2029]/g,
+    /[\u0080-\u009f\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069]/g,
     (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
   );
 }
@@ -133,13 +143,12 @@ function quote(s) {
 }
 
 /**
- * One output line with every C0 and C1 control character and
- * U+2028/U+2029 written as \uXXXX, so nothing inside it (an error
- * message, a file's bytes) can end the line or start a forged one.
+ * One output line with every character UNSAFE_TEXT matches written as
+ * \uXXXX, so nothing inside it (an error message, a file's bytes) can
+ * end the line, start a forged one or reorder it.
  */
 function escapeLine(text) {
-  // eslint-disable-next-line no-control-regex -- matching them is the point
-  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) =>
+  return text.replace(new RegExp(UNSAFE_TEXT.source, "g"), (c) =>
     "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
   );
 }
@@ -198,7 +207,12 @@ function printHelp() {
       "                          Without it the log signature is not checked.",
       "  --interval <sec>        Daemon poll interval, 60 or more (default 3600)",
       "  --once                  Single check + exit (don't loop)",
-      "  --state <path>          Override state file location",
+      "  --state <path>          Override state file location (symlinks are",
+      "                          resolved; the lock is <real path>.lock)",
+      "  --break-lock            Remove the state file's lock even if it looks",
+      "                          held, say so on stderr, and go on. Only when",
+      "                          you are sure no other witness is running on",
+      "                          this state file.",
       "  --json                  Emit JSON envelope per check",
       "  --help                  This message",
       "",
@@ -210,11 +224,19 @@ function printHelp() {
       "  2  Usage error, a fetch that failed, timed out, was redirected or",
       "     was too large, malformed STH, a bad state file or one that",
       "     cannot be saved, a state file locked by another witness",
-      "     process, a failed submission (resubmitted next poll, as",
+      "     process (state-locked) or in a directory it cannot write",
+      "     (state-unwritable), a failed submission (resubmitted next poll, as",
       "     saved), or a v3= STH with --log-public-key",
       "",
-      "Each poll holds <state>.lock; a lock whose process is gone is",
-      "removed. With --json each poll prints one JSON verdict line.",
+      "Each poll holds <state>.lock ({pid, hostname, startedAt, nonce}). A",
+      "lock on this host whose pid is gone, or is this process's own pid",
+      "(a run before a container restart), is removed as stale. A lock",
+      "whose pid is running, from another host, or that cannot be read is",
+      "refused (state-locked): if you are sure no other witness is running",
+      "on this state file, rerun with --break-lock or delete the lock.",
+      "SIGTERM and SIGINT release the lock and exit 143 and 130.",
+      "With --json each poll prints one JSON verdict line on stdout; the",
+      "daemon banner goes to stderr.",
       "",
       "Daemon mode writes a stderr line for every non-zero verdict: exit 1",
       "halts the daemon, anything else is retried at the next poll.",
@@ -351,54 +373,203 @@ function pidAlive(pid) {
   }
 }
 
+const HOST = hostname();
+
+/** The lock this process holds, { path, nonce }, or null. */
+let heldLock = null;
+
+/** What a refused lock message ends with: how to recover. */
+function lockRecovery(lockPath) {
+  return `if you are sure no other witness is running on this state file, rerun with --break-lock (or delete ${lockPath})`;
+}
+
 /**
- * Take <statePath>.lock for one poll: created with "wx", holding our
- * pid and start time. Returns null when taken, or why it was not.
- * A lock whose pid is not running is stale and is removed (said on
- * stderr); a lock that cannot be read, or whose pid is running, is
- * left alone. Two processes that find the same stale lock at the same
- * moment could both remove it; the inode check narrows that window to
- * the gap between a stat and an unlink.
+ * Create `path` holding `record`, atomically: write a temporary file,
+ * fsync it, then hard-link it into place, so the file is never seen
+ * empty or half written. Throws EEXIST when `path` exists.
  */
-function acquireLock(lockPath) {
-  for (let attempt = 0; attempt < 2; attempt++) {
+function createWhole(path, record) {
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
     try {
-      const fd = openSync(lockPath, "wx", 0o600);
+      writeSync(fd, JSON.stringify(record));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    linkSync(tmp, path);
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // Best effort: a leftover temporary file is harmless.
+    }
+  }
+}
+
+const UNWRITABLE = new Set(["EACCES", "EPERM", "EROFS"]);
+
+/**
+ * Take <statePath>.lock for one poll. The lock holds
+ * { pid, hostname, startedAt, nonce }. Returns null when taken, or
+ * { verdict, message } when not:
+ *   - a lock from another host is never broken automatically;
+ *   - a lock whose pid is running (and is not this process's own pid,
+ *     which after a container restart means a dead earlier run) is
+ *     refused;
+ *   - a lock that cannot be read is refused, never stolen;
+ *   - a stale lock (pid gone, or our own pid) is removed only while
+ *     holding <lock>.break (created "wx"), and only if it still holds
+ *     the bytes read, so two processes cannot both break it and both
+ *     go on;
+ *   - with breakLock, the lock and <lock>.break are removed first,
+ *     whatever holds them, said loudly on stderr.
+ * Every refusal says how to recover.
+ */
+function acquireLock(lockPath, breakLock) {
+  const breakPath = lockPath + ".break";
+  const locked = (why) => ({
+    verdict: "state-locked",
+    message: `${why}; ${lockRecovery(lockPath)}`,
+  });
+  if (breakLock) {
+    warn(
+      `[witness] BREAKING LOCK ${lockPath} (--break-lock): removing it whatever holds it. Use --break-lock only when you are sure no other witness is running on this state file.`,
+    );
+    for (const p of [lockPath, breakPath]) {
       try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
+        unlinkSync(p);
+      } catch (err) {
+        if (err?.code !== "ENOENT") return locked(`cannot remove ${p} (${err.message})`);
       }
+    }
+  }
+  const nonce = randomUUID();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      createWhole(lockPath, {
+        pid: process.pid,
+        hostname: HOST,
+        startedAt: new Date().toISOString(),
+        nonce,
+      });
+      heldLock = { path: lockPath, nonce };
       return null;
     } catch (err) {
-      if (err?.code !== "EEXIST") return `cannot create ${lockPath} (${err.message})`;
+      if (UNWRITABLE.has(err?.code)) {
+        return {
+          verdict: "state-unwritable",
+          message: `cannot create ${lockPath} (${err.message}); make the state file's directory writable by this user, or pass --state <path> in a writable directory`,
+        };
+      }
+      if (err?.code !== "EEXIST") return locked(`cannot create ${lockPath} (${err.message})`);
     }
-    let holder;
-    let ino;
+    let raw;
     try {
-      ino = statSync(lockPath).ino;
-      holder = JSON.parse(readFileSync(lockPath, "utf8"));
+      raw = readFileSync(lockPath, "utf8");
     } catch (err) {
       if (err?.code === "ENOENT") continue;
-      return `${lockPath} exists and cannot be read (${err.message}); remove it by hand if no witness is running`;
+      return locked(`${lockPath} exists and cannot be read (${err.message})`);
+    }
+    let holder;
+    try {
+      holder = JSON.parse(raw);
+    } catch {
+      return locked(`${lockPath} exists and cannot be read (it is not a lock record)`);
     }
     const pid = holder?.pid;
     if (!Number.isSafeInteger(pid) || pid <= 0) {
-      return `${lockPath} has no valid pid; remove it by hand if no witness is running`;
+      return locked(`${lockPath} exists and cannot be read (it has no valid pid)`);
     }
-    if (pidAlive(pid)) {
-      return `${lockPath} is held by running process ${pid} (since ${quote(holder.startedAt)})`;
+    if (holder.hostname !== undefined && holder.hostname !== HOST) {
+      return locked(
+        `${lockPath} is held by pid ${pid} on host ${quote(holder.hostname)}; a lock from another host is never broken automatically`,
+      );
+    }
+    const ownPid = pid === process.pid;
+    if (!ownPid && pidAlive(pid)) {
+      return locked(
+        `${lockPath} is held by running process ${pid} (since ${quote(holder.startedAt)}); after a restart that pid may belong to an unrelated process`,
+      );
+    }
+    // Stale. Break it only while holding <lock>.break.
+    try {
+      createWhole(breakPath, { pid: process.pid, hostname: HOST, startedAt: new Date().toISOString() });
+    } catch (err) {
+      if (err?.code === "EEXIST") {
+        return locked(`another process is breaking the stale ${lockPath} (${breakPath} exists)`);
+      }
+      return locked(`cannot create ${breakPath} (${err.message})`);
     }
     try {
-      if (statSync(lockPath).ino !== ino) continue;
-      unlinkSync(lockPath);
+      let now = null;
+      try {
+        now = readFileSync(lockPath, "utf8");
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+      if (now === raw) {
+        unlinkSync(lockPath);
+        warn(
+          `[witness] removed stale lock ${lockPath} (pid ${pid} ${ownPid ? "is this process's own pid: a run before a restart" : "is not running"})`,
+        );
+      }
     } catch (err) {
-      if (err?.code !== "ENOENT") return `cannot remove stale ${lockPath} (${err.message})`;
+      return locked(`cannot remove stale ${lockPath} (${err.message})`);
+    } finally {
+      try {
+        unlinkSync(breakPath);
+      } catch {
+        // Best effort; a leftover <lock>.break is refused, with advice.
+      }
     }
-    warn(`[witness] removed stale lock ${lockPath} (pid ${pid} is not running)`);
   }
-  return `${lockPath} is contended`;
+  return locked(`${lockPath} is contended`);
+}
+
+/** Remove the lock this process holds, if it still holds our nonce. */
+function releaseLock() {
+  const held = heldLock;
+  heldLock = null;
+  if (!held) return;
+  try {
+    const record = JSON.parse(readFileSync(held.path, "utf8"));
+    if (record?.nonce !== held.nonce) {
+      warn(`[witness] warning: ${held.path} is no longer this process's lock; left in place`);
+      return;
+    }
+    unlinkSync(held.path);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      warn(`[witness] warning: could not remove ${held.path} (${err.message})`);
+    }
+  }
+}
+
+/**
+ * The real path of the state file (its directory's real path plus its
+ * name, when the file does not exist yet), so a symlink and its target
+ * share one lock and the rename replaces the target, not the link.
+ */
+function resolveStatePath(path) {
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    if (err?.code !== "ENOENT") fail(`cannot resolve --state ${path} (${err.message})`);
+  }
+  let link = false;
+  try {
+    link = lstatSync(path).isSymbolicLink();
+  } catch {
+    // Nothing at the path: a first run.
+  }
+  if (link) fail(`--state ${path} is a symbolic link to nothing`);
+  try {
+    return join(realpathSync(dirname(path)), basename(path));
+  } catch (err) {
+    return fail(`cannot resolve the directory of --state ${path} (${err.message})`);
+  }
 }
 
 function loadPrivateKey(keyPath) {
@@ -481,7 +652,9 @@ async function request(url, init, what, timeoutMs) {
     if (/redirect/i.test(String(err?.cause?.message ?? ""))) {
       throw new Error(`${what} got a redirect, which is never followed`, { cause: err });
     }
-    throw err;
+    const cause = err?.cause;
+    const why = cause ? ` (${quote(cause.message ?? String(cause))})` : "";
+    throw new Error(`${what}: ${err?.message ?? String(err)}${why}`, { cause: err });
   }
 }
 
@@ -649,18 +822,16 @@ async function runOnce(opts) {
   const io = { log, emit, refuse };
 
   const lockPath = opts.statePath + ".lock";
-  const lockProblem = acquireLock(lockPath);
+  const lockProblem = acquireLock(lockPath, opts.breakLock);
+  opts.breakLock = false; // only ever the first poll
   if (lockProblem) {
-    return refuse("state-locked", 2, `STATE FILE LOCKED — ${lockProblem}`);
+    const label = lockProblem.verdict === "state-unwritable" ? "STATE DIRECTORY NOT WRITABLE" : "STATE FILE LOCKED";
+    return refuse(lockProblem.verdict, 2, `${label} — ${lockProblem.message}`);
   }
   try {
     return await runLocked(opts, io);
   } finally {
-    try {
-      unlinkSync(lockPath);
-    } catch (err) {
-      warn(`[witness] warning: could not remove ${lockPath} (${err.message})`);
-    }
+    releaseLock();
   }
 }
 
@@ -910,9 +1081,10 @@ async function runLocked(opts, { log, emit, refuse }) {
 
 async function runDaemon(opts) {
   const intervalSec = opts.intervalSec;
-  process.stdout.write(
-    `[witness] daemon mode — polling ${opts.url} every ${intervalSec}s\n`,
-  );
+  const banner = `[witness] daemon mode — polling ${opts.url} every ${intervalSec}s`;
+  // --json keeps stdout to JSON lines.
+  if (opts.json === "true") warn(banner);
+  else process.stdout.write(escapeLine(banner) + "\n");
   while (true) {
     try {
       const r = await runOnce(opts);
@@ -924,9 +1096,32 @@ async function runDaemon(opts) {
         warn(`[witness] ${r.verdict} (exit ${r.exit}) — will retry in ${intervalSec}s`);
       }
     } catch (err) {
-      warn(`[witness] poll error (will retry in ${intervalSec}s): ${quote(err?.message ?? String(err))}`);
+      const message = err?.message ?? String(err);
+      warn(`[witness] poll error (will retry in ${intervalSec}s): ${quote(message)}`);
+      if (opts.json === "true") {
+        process.stdout.write(safeJson({ verdict: "error", message }) + "\n");
+      }
     }
     await new Promise((r) => setTimeout(r, intervalSec * 1000));
+  }
+}
+
+/** Set from the flags; main's catch uses it to keep --json output whole. */
+let jsonMode = false;
+
+function installSignalHandlers() {
+  // A terminated poll releases its lock. (Node as PID 1 in a container
+  // otherwise ignores SIGTERM until it is SIGKILLed.) The daemon's
+  // sleep is a timer, so a signal ends it at once.
+  for (const [signal, code] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+  ]) {
+    process.on(signal, () => {
+      releaseLock();
+      warn(`[witness] ${signal}: lock released, exiting`);
+      process.exit(code);
+    });
   }
 }
 
@@ -937,6 +1132,8 @@ async function main() {
     process.exit(0);
   }
   const flags = parseArgs(argv);
+  jsonMode = flags.json === "true";
+  installSignalHandlers();
   if (!flags.url) fail("--url is required");
   if (!flags.key) fail("--key is required");
   if (!flags["witness-id"]) fail("--witness-id is required");
@@ -966,7 +1163,8 @@ async function main() {
     logPublicKey: flags["log-public-key"]
       ? loadLogPublicKey(flags["log-public-key"])
       : undefined,
-    statePath: flags.state ?? defaultStatePath(flags["witness-id"]),
+    statePath: resolveStatePath(flags.state ?? defaultStatePath(flags["witness-id"])),
+    breakLock: flags["break-lock"] === "true",
     expectedLogId,
     timeoutMs: Math.ceil(timeoutSec * 1000),
     intervalSec,
@@ -984,7 +1182,7 @@ async function main() {
 main().catch((err) => {
   const message = err?.message ?? String(err);
   // --json: one verdict line on stdout for this failure too.
-  if (process.argv.includes("--json")) {
+  if (jsonMode) {
     process.stdout.write(safeJson({ verdict: "error", message }) + "\n");
   }
   fail(quote(message));

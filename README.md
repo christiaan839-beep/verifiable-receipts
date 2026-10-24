@@ -220,9 +220,9 @@ Measured on 24 October 2026 (Node 22, Python 3.12, Go 1.27):
 
 | Suite      | Result                                                     |
 | ---------- | ---------------------------------------------------------- |
-| TypeScript | 436 passed, none skipped (12 files, vitest 5)              |
-| Python     | 76 passed; conformance 24 passed; schemas 143 passed       |
-| Go         | 43 tests passed, 107 subtests                              |
+| TypeScript | 467 passed, none skipped (12 files, vitest 5)              |
+| Python     | 76 passed; conformance 26 passed; schemas 147 passed       |
+| Go         | 46 tests passed, 123 subtests                              |
 | Round trip | 18 checks passed                                           |
 
 CI (`.github/workflows/test.yml`) runs all of the above on every push

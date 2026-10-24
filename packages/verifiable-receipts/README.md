@@ -114,8 +114,15 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   than the one it saved. It saves the new head atomically before the
   signature leaves the process; a failed submission is resubmitted
   exactly as saved, even if the log has since re-dated the head. Each
-  poll holds `<state>.lock`, so a second witness process on the same
-  state file is refused. With `--log-public-key <pem>` it also verifies
+  poll holds `<state>.lock` (on the state file's real path, so a
+  symlink and its target share it), so a second witness process on the
+  same state file is refused. A lock on this host whose pid is gone,
+  or is the witness's own pid (a run before a container restart), is
+  removed as stale; SIGTERM and SIGINT release the lock. A lock whose
+  pid is running, that comes from another host, or that cannot be read
+  is refused as `state-locked`: if you are sure no other witness is
+  running on that state file, rerun with `--break-lock` (or delete the
+  lock file). With `--log-public-key <pem>` it also verifies
   the log's `v2=` signature; without it, it prints that the log
   signature was not checked. A state file that exists but is
   unreadable or malformed is refused, not treated as a first run.
@@ -123,9 +130,10 @@ npx verifiable-receipts-witness --url https://log.example --key witness.pem --wi
   never follow a redirect, and bodies over 1 MiB are refused. Exit 0
   witnessed or no change; 1 the log misbehaved; 2 usage error, a fetch
   that failed, timed out, was redirected or too large, malformed head,
-  bad, unsavable or locked state file, failed submission, or a `v3=`
-  head with `--log-public-key`. With `--json` each poll prints one
-  JSON verdict line. The daemon writes a stderr line for every
+  bad, unsavable, locked (`state-locked`) or unwritable
+  (`state-unwritable`) state file, failed submission, or a `v3=` head
+  with `--log-public-key`. With `--json` each poll prints one JSON
+  verdict line on stdout, and the daemon's banner goes to stderr. The daemon writes a stderr line for every
   non-zero verdict, halts on 1 and retries the rest.
 
 ## Development

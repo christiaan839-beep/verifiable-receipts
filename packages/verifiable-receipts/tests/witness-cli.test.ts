@@ -26,8 +26,10 @@ import {
   chmodSync,
   statSync,
   readdirSync,
+  symlinkSync,
+  lstatSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { TransparencyLog, InMemoryLogStore } from "../src/log-store.js";
 import { canonicalizeSth, leafHash, treeRoot } from "../src/transparency.js";
@@ -796,8 +798,8 @@ describe("witness CLI — checks before cosigning (--once)", () => {
       const r = await runCliAsync(args(join(locked, "state.json")));
       expect(r.status).toBe(2);
       // The lock file sits beside the state file, so taking it fails first.
-      expect(verdictOf(r).verdict).toBe("state-locked");
-      expect(String(verdictOf(r).message)).toMatch(/cannot create/);
+      expect(verdictOf(r).verdict).toBe("state-unwritable");
+      expect(String(verdictOf(r).message)).toMatch(/writable/);
       expect(requests.filter((q) => q.method === "GET")).toHaveLength(0);
       expect(posts()).toHaveLength(0);
     } finally {
@@ -1143,6 +1145,349 @@ describe("witness CLI — checks before cosigning (--once)", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toMatch(/--interval/);
     expect(requests).toHaveLength(0);
+  });
+
+  // ── Round 4: lock recovery, signals, symlinks, escaping ──
+
+  // A preload module run inside the CLI before it starts.
+  const preload = (name: string, lines: string[]) => {
+    const file = join(dir, `${name}-${++stateN}.mjs`);
+    writeFileSync(file, lines.join("\n"));
+    return ["--import", file];
+  };
+  const lockOf = (pid: number, host = hostname()) =>
+    JSON.stringify({ pid, hostname: host, startedAt: "2026-10-24T00:00:00.000Z", nonce: "test" });
+  // Holds the next STH responses until `release` is called.
+  const gateSth = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const seen = { n: 0 };
+    sthHandler = (res) => {
+      seen.n++;
+      void gate.then(() => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(honest()));
+      });
+    };
+    return { release, seen };
+  };
+
+  it("recovers a lock that holds its own pid (a restarted container)", async () => {
+    const state = freshState();
+    const pre = preload("own-pid-lock", [
+      'import { writeFileSync } from "node:fs";',
+      'import { hostname } from "node:os";',
+      `writeFileSync(${JSON.stringify(state + ".lock")}, JSON.stringify({ pid: process.pid, hostname: hostname(), startedAt: "2026-10-24T00:00:00.000Z", nonce: "old" }));`,
+    ]);
+    const r = await runCliAsync(args(state), pre);
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(r.stderr).toMatch(/stale lock/);
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("refuses a lock held by a live pid it may not signal (pid 1), and says how to recover", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", lockOf(1));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("state-locked");
+    expect(String(v.message)).toMatch(/--break-lock/);
+    expect(posts()).toHaveLength(0);
+    expect(readFileSync(state + ".lock", "utf8")).toBe(lockOf(1));
+  });
+
+  it("never breaks a lock from another host, even with a dead pid", async () => {
+    const state = freshState();
+    const dead = spawnSync("node", ["-e", ""]).pid;
+    writeFileSync(state + ".lock", lockOf(dead, "some-other-host"));
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    const v = verdictOf(r);
+    expect(v.verdict).toBe("state-locked");
+    expect(String(v.message)).toMatch(/some-other-host/);
+    expect(String(v.message)).toMatch(/--break-lock/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("refuses an empty lock file as unreadable", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", "");
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-locked");
+    expect(String(verdictOf(r).message)).toMatch(/cannot be read/);
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("--break-lock removes a live-looking lock, says so loudly, and witnesses", async () => {
+    const state = freshState();
+    writeFileSync(state + ".lock", lockOf(process.pid));
+    const r = await runCliAsync(args(state, ["--break-lock"]));
+    expect(r.status).toBe(0);
+    expect(verdictOf(r).verdict).toBe("witnessed");
+    expect(r.stderr).toMatch(/BREAKING LOCK/);
+    expect(posts()).toHaveLength(1);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("SIGTERM mid-poll releases the lock and exits 143", async () => {
+    const state = freshState();
+    const g = gateSth();
+    const d = startDaemon(args(state));
+    try {
+      await waitUntil(() => g.seen.n === 1);
+      expect(existsSync(state + ".lock")).toBe(true);
+      d.child.kill("SIGTERM");
+      expect(await d.exited).toBe(143);
+      expect(existsSync(state + ".lock")).toBe(false);
+      expect(posts()).toHaveLength(0);
+    } finally {
+      g.release();
+    }
+  });
+
+  it("SIGINT mid-poll releases the lock and exits 130", async () => {
+    const state = freshState();
+    const g = gateSth();
+    const d = startDaemon(args(state));
+    try {
+      await waitUntil(() => g.seen.n === 1);
+      d.child.kill("SIGINT");
+      expect(await d.exited).toBe(130);
+      expect(existsSync(state + ".lock")).toBe(false);
+    } finally {
+      g.release();
+    }
+  });
+
+  it("SIGTERM during the daemon's sleep exits 143 at once", async () => {
+    const state = freshState();
+    const d = startDaemon(args(state).filter((a) => a !== "--once"));
+    await waitUntil(() => posts().length === 1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(d.running()).toBe(true);
+    d.child.kill("SIGTERM");
+    expect(await d.exited).toBe(143);
+    expect(existsSync(state + ".lock")).toBe(false);
+  });
+
+  it("two processes breaking one stale lock: exactly one signs", async () => {
+    const state = freshState();
+    const dead = spawnSync("node", ["-e", ""]).pid;
+    writeFileSync(state + ".lock", lockOf(dead));
+    // Slow every unlink of the lock, widening the check-then-unlink gap.
+    const pre = preload("slow-unlink", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const real = fs.unlinkSync;",
+      "fs.unlinkSync = (p) => {",
+      '  if (String(p).endsWith(".lock")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);',
+      "  return real(p);",
+      "};",
+      "syncBuiltinESMExports();",
+    ]);
+    const [a, b] = await Promise.all([runCliAsync(args(state), pre), runCliAsync(args(state), pre)]);
+    expect([a.status, b.status].sort()).toEqual([0, 2]);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it("a symlinked state path and its target share one lock, and the symlink stays", async () => {
+    const sub = join(dir, `symlink-${++stateN}`);
+    mkdirSync(sub);
+    const real = join(sub, "real.json");
+    const link = join(sub, "link.json");
+    const root2 = treeRoot([leafHash("leaf-0"), leafHash("leaf-1")]);
+    writeFileSync(real, JSON.stringify({ logId: "test-log", lastSize: 2, lastRoot: root2 }));
+    symlinkSync("real.json", link);
+    const g = gateSth();
+    const a = runCliAsync(args(link));
+    await waitUntil(() => g.seen.n === 1);
+    const b = await runCliAsync(args(real));
+    g.release();
+    const ra = await a;
+    expect(ra.status).toBe(0);
+    expect(b.status).toBe(2);
+    expect(verdictOf(b).verdict).toBe("state-locked");
+    expect(posts()).toHaveLength(1);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect((JSON.parse(readFileSync(real, "utf8")) as { lastSize: number }).lastSize).toBe(3);
+  });
+
+  it("daemon --json: stdout is JSON lines only, the banner goes to stderr", async () => {
+    const state = freshState();
+    writeFileSync(state, "not json");
+    const d = startDaemon(args(state).filter((a) => a !== "--once"));
+    try {
+      await d.waitFor(/bad-state .*retry/);
+      await waitUntil(() => d.output().stdout.includes("\n"));
+      const { stdout, stderr } = d.output();
+      expect(stderr).toMatch(/daemon mode/);
+      const lines = stdout.trim().split("\n");
+      expect(lines.length).toBeGreaterThan(0);
+      for (const l of lines) expect(() => JSON.parse(l) as unknown).not.toThrow();
+    } finally {
+      d.child.kill("SIGKILL");
+      await d.exited;
+    }
+  });
+
+  // An old-format state at the current head makes the witness save it
+  // (to add the logId); a failing rename there is an unexpected throw.
+  const throwingPoll = () => {
+    const state = freshState();
+    const sth = tlog.currentSth();
+    writeFileSync(state, JSON.stringify({ lastSize: sth.treeSize, lastRoot: sth.rootHash }));
+    const pre = preload("rename-throws", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'fs.renameSync = () => { throw Object.assign(new Error("EIO: simulated"), { code: "EIO" }); };',
+      "syncBuiltinESMExports();",
+    ]);
+    return { state, pre };
+  };
+
+  it("daemon --json: a thrown poll error is a JSON line too", async () => {
+    const { state, pre } = throwingPoll();
+    const child = spawn("node", [...pre, CLI, ...args(state).filter((a) => a !== "--once")], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (x: Buffer) => (stdout += x.toString("utf8")));
+    child.stderr.on("data", (x: Buffer) => (stderr += x.toString("utf8")));
+    try {
+      // stdout and stderr are separate pipes: wait for both.
+      await waitUntil(() => /poll error/.test(stderr) && stdout.includes("\n"));
+      const lines = stdout.trim().split("\n");
+      expect(lines).toHaveLength(1);
+      expect((JSON.parse(lines[0]) as { verdict: string }).verdict).toBe("error");
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it("--json=true: an unexpected error in --once is one JSON line", async () => {
+    const { state, pre } = throwingPoll();
+    const r = await runCliAsync(
+      [...args(state).filter((a) => a !== "--json"), "--json=true"],
+      pre,
+    );
+    expect(r.status).toBe(2);
+    const lines = r.stdout.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect((JSON.parse(lines[0]) as { verdict: string }).verdict).toBe("error");
+  });
+
+  it.each([
+    ["U+200E", "\u200e"],
+    ["U+200F", "\u200f"],
+    ["U+202A", "\u202a"],
+    ["U+202E", "\u202e"],
+    ["U+2066", "\u2066"],
+    ["U+2069", "\u2069"],
+  ])("refuses a logId with the bidi control %s", async (_n, ch) => {
+    rewrite = (b) => headWith(b, { logId: `x${ch}y` });
+    const r = await runCliAsync(args(freshState()));
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("malformed-sth");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("escapes bidi controls in a log's error body", async () => {
+    postHandler = (res) => {
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.end("a\u202e[witness] desrever\u2066b\u200fc");
+    };
+    const text = await runCliAsync(args(freshState()).filter((a) => a !== "--json"));
+    const all = text.stdout + text.stderr;
+    expect(all).not.toMatch(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
+    expect(all).toContain("\\u202e");
+    const json = await runCliAsync(args(freshState()));
+    expect(json.stdout).not.toMatch(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/);
+    expect(json.stdout).toContain("\\u202e");
+  });
+
+  it.each([
+    ["ESC", "\u001b"],
+    ["NEL", "\u0085"],
+    ["U+2028", "\u2028"],
+    ["U+2029", "\u2029"],
+    ["U+202E", "\u202e"],
+  ])("escapes a raw %s in text that is not quoted (a state file's bytes)", async (_n, ch) => {
+    const state = freshState();
+    // JSON.parse quotes the start of the bad text in its error message,
+    // raw: the character goes first so it is always in that excerpt.
+    writeFileSync(state, `${ch}[witness] forged`);
+    const r = await runCliAsync(args(state).filter((a) => a !== "--json"));
+    expect(r.status).toBe(2);
+    const all = r.stdout + r.stderr;
+    expect(all.includes(ch)).toBe(false);
+    expect(all).toContain("\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
+  });
+
+  it("prints the log's error body quoted", async () => {
+    postHandler = (res) => {
+      res.writeHead(500, { "content-type": "text/plain" });
+      res.end('he said "hi"');
+    };
+    const r = await runCliAsync(args(freshState()).filter((a) => a !== "--json"));
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain('"he said \\"hi\\""');
+  });
+
+  it("a directory fsync that fails with EIO: state-save-failed, no POST", async () => {
+    const pre = preload("dir-fsync-eio", [
+      'import fs from "node:fs";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      "const open = fs.openSync;",
+      "const fsync = fs.fsyncSync;",
+      "const dirs = new Set();",
+      "fs.openSync = (p, ...rest) => {",
+      "  const fd = open(p, ...rest);",
+      "  try { if (fs.statSync(p).isDirectory()) dirs.add(fd); } catch { /* not there */ }",
+      "  return fd;",
+      "};",
+      "fs.fsyncSync = (fd) => {",
+      '  if (dirs.has(fd)) throw Object.assign(new Error("EIO: simulated"), { code: "EIO" });',
+      "  return fsync(fd);",
+      "};",
+      "syncBuiltinESMExports();",
+    ]);
+    const r = await runCliAsync(args(freshState()), pre);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("state-save-failed");
+    expect(posts()).toHaveLength(0);
+  });
+
+  it("does not write through a planted <state>.tmp", async () => {
+    const sub = join(dir, `planted-${++stateN}`);
+    mkdirSync(sub);
+    const state = join(sub, "state.json");
+    const victim = join(sub, "victim.txt");
+    writeFileSync(victim, "untouched");
+    symlinkSync("victim.txt", state + ".tmp");
+    const r = await runCliAsync(args(state));
+    expect(r.status).toBe(0);
+    expect(readFileSync(victim, "utf8")).toBe("untouched");
+    expect(lstatSync(state).isFile()).toBe(true);
+    expect(lstatSync(state + ".tmp").isSymbolicLink()).toBe(true);
+  });
+
+  it("a fetch that fails says why (the cause), quoted", async () => {
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", () => resolve()));
+    const addr = closed.address();
+    if (!addr || typeof addr === "string") throw new Error("no address");
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    const a = args(freshState());
+    a[a.indexOf("--url") + 1] = `http://127.0.0.1:${addr.port}`;
+    const r = await runCliAsync(a);
+    expect(r.status).toBe(2);
+    expect(verdictOf(r).verdict).toBe("fetch-failed");
+    expect(String(verdictOf(r).message)).toMatch(/ECONNREFUSED/);
   });
 
   it("loads a state file written before logId was saved, and adds the logId", async () => {

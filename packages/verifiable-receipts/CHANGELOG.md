@@ -25,14 +25,22 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an error cannot get a second one on another root at that size. A
   failed submission is resubmitted exactly as saved, with the same
   bytes and signature, even if the log has re-dated the head. Each
-  poll holds a lock file beside the state file, so two witness
-  processes on one state file cannot each sign a different head.
+  poll holds a lock file beside the state file's real path, so two
+  witness processes on one state file, on one host, do not both sign
+  while the lock is respected. A stale lock (its pid gone, or the
+  witness's own pid after a restart) is broken under a second lock
+  file, and only if unchanged; SIGTERM and SIGINT release the lock. A
+  lock from another host, a running pid or an unreadable lock is never
+  broken automatically: `--break-lock` is the explicit way out, for
+  when no other witness is running on that state file. Two hosts
+  sharing one state file over a network file system are only as safe
+  as its exclusive create.
 - A state file that exists but cannot be read or is malformed is
   refused instead of treated as a first run.
 - Requests time out (`--timeout`, 1 to 3600 s, default 30), never
   follow a redirect, and refuse bodies over 1 MiB. Every `[witness]`
-  line escapes control characters and U+2028/U+2029, and strings from
-  the log are printed quoted. `--interval` below 60 or not a number is
+  line escapes control characters, U+2028/U+2029 and the
+  bidirectional controls, and strings from the log are printed quoted. `--interval` below 60 or not a number is
   a usage error.
 
 ## [0.4.0] — 2026-10-23
