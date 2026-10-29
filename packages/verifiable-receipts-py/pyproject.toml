@@ -26,7 +26,11 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp>=2.3,<3"]
 test = ["pytest", "hypothesis==6.168.5"]
+
+[project.scripts]
+verifiable-receipts-mcp = "sovereign_matrix.verifiable_receipts.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/christiaan839-beep/verifiable-receipts"

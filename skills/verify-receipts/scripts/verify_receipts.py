@@ -39,8 +39,6 @@ def _verdict(text: str, pem: bytes) -> tuple[bool, str | None]:
         receipt = parse_receipt(text)
     except ValueError as err:
         return False, str(err)
-    if not isinstance(receipt, dict):
-        return False, "receipt is not a JSON object"
     result = verify_v2_receipt(receipt, pem)
     return result.ok, result.reason
 
