@@ -32,6 +32,12 @@ are in the git history only.
   deeper than 64")` at any depth, a duplicate key the parser discards
   included, where `json.loads` alone raises `RecursionError` some
   thousands of levels down.
+- `verifiable-receipts-mcp`, a Model Context Protocol server over stdio
+  with three read-only tools: `verify_receipt`, `verify_receipt_log` (a
+  JSONL log, one verdict per line) and `verify_receipt_in_log` (an RFC
+  9162 inclusion proof against a tree head's root hash). Install it with
+  the new `mcp` extra. Inputs are capped at 4 MiB of text and 10,000
+  receipts per call.
 
 ### Changed
 

@@ -126,6 +126,23 @@ fmt.Println(res.OK, res.Reason)
 
 Each package's README has the full API.
 
+## For agents: an Agent Skill and an MCP server
+
+Both run offline over the Python verifier, and both are tested against
+every v2 conformance fixture.
+
+- [`skills/verify-receipts`](skills/verify-receipts) is an
+  [Agent Skill](https://agentskills.io/specification): a folder any agent
+  that supports the standard can load to check receipts against an
+  issuer's public key and report which fail and why. Copy the folder
+  into the agent's skills directory.
+- `verifiable-receipts-mcp` is a
+  [Model Context Protocol](https://modelcontextprotocol.io) server with
+  three read-only tools: verify a receipt, verify a JSONL log of
+  receipts, and verify a receipt's inclusion proof against a tree head.
+  The [Python package README](packages/verifiable-receipts-py/README.md#mcp-server)
+  says how to add it to Claude Code or any MCP client.
+
 ## The transparency log
 
 `transparency.ts` implements RFC 6962 §2.1 hashing (`0x00` before a

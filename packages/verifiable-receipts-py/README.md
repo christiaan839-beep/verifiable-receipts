@@ -113,19 +113,65 @@ proof = {"leafIndex": 42, "treeSize": 100, "auditPath": ["…", "…"]}
 ok = verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex)
 ```
 
-## Tests
+## MCP server
 
-Measured on 23 October 2026: **66 passed** (pytest, Python 3.13).
+`verifiable-receipts-mcp` serves three read-only tools over stdio to any
+[Model Context Protocol](https://modelcontextprotocol.io) client. It makes
+no network request and keeps no state. It needs the `mcp` extra.
+
+| Tool | Checks |
+|---|---|
+| `verify_receipt` | One receipt (its JSON text) against the issuer's public key (PEM). Returns `ok` and the failure `reason`. |
+| `verify_receipt_log` | Every receipt in a JSONL log against one key: counts and one verdict per line. |
+| `verify_receipt_in_log` | A receipt's RFC 9162 inclusion proof (`leaf_index`, `tree_size`, `audit_path`) against a tree head's root hash. It does not check the tree head's signature. |
+
+Each tool accepts up to 4 MiB of text; `verify_receipt_log` checks up to
+10,000 receipts per call.
+
+Add it to Claude Code:
 
 ```bash
-pip install "./verifiable-receipts/packages/verifiable-receipts-py[test]"
+claude mcp add verifiable-receipts -- uvx --from "sovereign-matrix-verifiable-receipts[mcp]" verifiable-receipts-mcp
+```
+
+Before the package is on PyPI, install it from the repository instead:
+
+```bash
+claude mcp add verifiable-receipts -- uvx --from "sovereign-matrix-verifiable-receipts[mcp] @ git+https://github.com/christiaan839-beep/verifiable-receipts@main#subdirectory=packages/verifiable-receipts-py" verifiable-receipts-mcp
+```
+
+Other clients take the same command in their server configuration:
+
+```json
+{
+  "mcpServers": {
+    "verifiable-receipts": {
+      "command": "uvx",
+      "args": ["--from", "sovereign-matrix-verifiable-receipts[mcp]", "verifiable-receipts-mcp"]
+    }
+  }
+}
+```
+
+A pass proves that the holder of the issuer's private key signed exactly
+the receipt's canonical text. It does not prove the content is true or
+that a log is complete, and it is only as good as the public key: get the
+key from the issuer, not from whoever sent the receipts.
+
+## Tests
+
+Measured on 29 October 2026: **149 passed** (pytest, Python 3.12, with the `mcp`
+extra; without it the MCP server's tests are skipped).
+
+```bash
+pip install "./verifiable-receipts/packages/verifiable-receipts-py[test,mcp]"
 python -m pytest verifiable-receipts/packages/verifiable-receipts-py/tests
 ```
 
 The cross-language conformance suite, which runs this verifier against the
 shared fixtures, is
 [`../verifiable-receipts/conformance/conformance.py`](../verifiable-receipts/conformance/conformance.py)
-(16 passed on the same day). The round trip in
+(31 passed on the same day). The round trip in
 [`../verifiable-receipts/conformance/roundtrip/`](../verifiable-receipts/conformance/roundtrip)
 signs with this package and checks the result in Go and node.
 
