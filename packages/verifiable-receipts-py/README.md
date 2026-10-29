@@ -2,7 +2,7 @@
 
 Python signer and verifier for VAOS receipts, the counterpart
 to the TypeScript library in [`../verifiable-receipts`](../verifiable-receipts).
-Version 0.2.1, Apache-2.0 (see [LICENSE](./LICENSE)).
+Version 0.3.0, Apache-2.0 (see [LICENSE](./LICENSE)).
 
 It signs and verifies Ed25519 (`v2=`) receipts, verifies Guardian
 attestations from the TypeScript `runGuardian`, and verifies RFC 9162

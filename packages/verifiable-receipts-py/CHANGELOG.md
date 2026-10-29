@@ -7,6 +7,8 @@ are in the git history only.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-29
+
 ### Security
 
 - `verify_v2_receipt` and `verify_guardian_attestation` reject a receipt
