@@ -126,6 +126,15 @@ fmt.Println(res.OK, res.Reason)
 
 Each package's README has the full API.
 
+## Agent Skill
+
+[`skills/verify-receipts`](skills/verify-receipts) is an
+[Agent Skill](https://agentskills.io/specification): a folder any agent
+that supports the standard can load to check receipts against an
+issuer's public key with the Python verifier, and report which fail and
+why. Copy the folder into the agent's skills directory. Its script runs
+offline and is tested against every v2 conformance fixture.
+
 ## The transparency log
 
 `transparency.ts` implements RFC 6962 §2.1 hashing (`0x00` before a
