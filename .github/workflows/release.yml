@@ -67,7 +67,7 @@ jobs:
   test:
     name: Test
     needs: plan
-    uses: ./.github/workflows/test.yml
+    uses: $/.github/workflows/test.yml
     permissions:
       contents: read # check out the code to test
 
