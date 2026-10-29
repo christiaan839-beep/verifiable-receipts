@@ -6,6 +6,8 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-29
+
 ### Changed
 
 - The package is published as `@sovereignos/verifiable-receipts`, the

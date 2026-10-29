@@ -67,7 +67,7 @@ jobs:
   test:
     name: Test
     needs: plan
-    uses: $/.github/workflows/test.yml
+    uses: ./.github/workflows/test.yml
     permissions:
       contents: read # check out the code to test
 
@@ -254,12 +254,15 @@ jobs:
         run: |
           set -euo pipefail
           notes="$RUNNER_TEMP/notes.md"
-          if [ "$KIND" = js ]; then
-            awk -v v="$VERSION" '
-              index($0, "## [" v "]") == 1 { on = 1; next }
-              on && /^## \[/ { exit }
-              on { print }' packages/verifiable-receipts/CHANGELOG.md > "$notes"
-          fi
+          case "$KIND" in
+            js) changelog=packages/verifiable-receipts/CHANGELOG.md ;;
+            py) changelog=packages/verifiable-receipts-py/CHANGELOG.md ;;
+            go) changelog=packages/verifiable-receipts-go/CHANGELOG.md ;;
+          esac
+          awk -v v="$VERSION" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }' "$changelog" > "$notes"
           args=(--verify-tag --title "$TAG")
           if [ -s "$notes" ]; then args+=(--notes-file "$notes"); else args+=(--generate-notes); fi
           if [ -d assets ]; then args+=(assets/*); fi

@@ -22,8 +22,8 @@ attestation bundle (`attestation.sigstore.json`).
 2. Tag the merge commit, signed, and push the tag:
 
    ```
-   git tag -s js-v0.4.0 -m "js-v0.4.0"
-   git push origin js-v0.4.0
+   git tag -s js-v0.5.0 -m "js-v0.5.0"
+   git push origin js-v0.5.0
    ```
 
 3. Approve the `release` deployment in the Actions run.
@@ -56,10 +56,10 @@ first version goes up by hand:
 
 1. The package publishes under the npm organisation `sovereignos`. Make
    sure you are an owner of it and that 2FA is on for your npm account.
-2. Push `js-v0.4.0`. With `NPM_TRUSTED_PUBLISHING` unset the workflow skips
+2. Push `js-v0.5.0`. With `NPM_TRUSTED_PUBLISHING` unset the workflow skips
    the npm job and still attaches the attested tarball to the GitHub release.
 3. Download that tarball, check it with `gh attestation verify`, and publish
-   it: `npm publish sovereignos-verifiable-receipts-0.4.0.tgz --access public`.
+   it: `npm publish sovereignos-verifiable-receipts-0.5.0.tgz --access public`.
 4. In the package's settings on npmjs.com, add a trusted publisher: GitHub
    Actions, `christiaan839-beep` / `verifiable-receipts`, workflow
    `release.yml`, environment `release`, allowed action: stage publish only.
