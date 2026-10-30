@@ -24,8 +24,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { verify as nodeVerify } from "node:crypto";
-import { loadEd25519PublicKey, verifyManifest } from "../dist/index.js";
+import { loadEd25519PublicKey, verifyEd25519, verifyManifest } from "../dist/index.js";
 import { textNestsDeeperThan } from "../dist/nesting.js";
 import { fail, parseArgs, readStdin } from "./cli.mjs";
 
@@ -124,7 +123,9 @@ async function main() {
       if (!s.startsWith("v2=")) return false;
       const sig = Buffer.from(s.slice(3), "base64");
       if (sig.toString("base64") !== s.slice(3)) return false;
-      return nodeVerify(null, Buffer.from(canonical, "utf8"), pubKey, sig);
+      // The strict profile of VAOS 2.0 section 7.3: R and S are checked
+      // before node:crypto sees the signature.
+      return verifyEd25519(pubKey, Buffer.from(canonical, "utf8"), sig).ok;
     } catch {
       return false;
     }

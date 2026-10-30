@@ -102,7 +102,6 @@ import {
   createPublicKey,
   randomUUID,
   sign as edSign,
-  verify as edVerify,
 } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
@@ -112,6 +111,7 @@ import {
   verifyConsistencyProof,
 } from "../dist/transparency.js";
 import { isHashHex } from "../dist/hash.js";
+import { verifyEd25519 } from "../dist/ed25519-key.js";
 import { fail, parseArgs } from "./cli.mjs";
 
 /** Root of the empty tree: SHA-256 of no bytes (RFC 6962 section 2.1). */
@@ -967,12 +967,15 @@ function sthShapeError(sth) {
   return null;
 }
 
-/** Verify the log's v2= Ed25519 signature over `canonical`. */
+/**
+ * Verify the log's v2= Ed25519 signature over `canonical`, under the
+ * strict profile of VAOS 2.0 section 7.3 (verifyEd25519).
+ */
 function verifyLogSignature(canonical, signature, publicKey) {
   try {
     const sig = Buffer.from(signature.slice(3), "base64");
     if (sig.length !== 64) return false;
-    return edVerify(null, Buffer.from(canonical, "utf8"), publicKey, sig);
+    return verifyEd25519(publicKey, Buffer.from(canonical, "utf8"), sig).ok;
   } catch {
     return false;
   }

@@ -9,3 +9,8 @@ export function verifyV2Receipt(
   receipt: Record<string, unknown>,
   publicKey: KeyObject,
 ): { ok: boolean; reason?: string };
+export function verifyEd25519Strict(
+  publicKey: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): { ok: boolean; reason?: string };

@@ -13,7 +13,8 @@
  * - `stream-attestation`: a Merkle commitment over a stream's chunks.
  * - `vapt`: short-lived, scoped Ed25519 payment tokens.
  * - `loadEd25519PublicKey`: loads a verification key, refusing the weak
- *   keys of VAOS 2.0 section 7.3.
+ *   keys of VAOS 2.0 section 7.3; `verifyEd25519` verifies a signature
+ *   under that section's strict profile.
  *
  * The wire formats are in SPEC.md and docs/specs/.
  *
@@ -96,7 +97,12 @@ export {
   type SignedTreeHead,
 } from "./transparency.js";
 
-export { ed25519PublicKeyProblem, loadEd25519PublicKey } from "./ed25519-key.js";
+export {
+  ed25519PublicKeyProblem,
+  ed25519SignatureProblem,
+  loadEd25519PublicKey,
+  verifyEd25519,
+} from "./ed25519-key.js";
 
 export {
   TransparencyLog,
