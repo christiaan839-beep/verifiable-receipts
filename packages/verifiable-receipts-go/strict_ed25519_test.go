@@ -231,3 +231,24 @@ func TestStrict_KeepsTheExistingKeyReasons(t *testing.T) {
 		t.Fatalf("short key: %q", got)
 	}
 }
+
+// Go's arguments are byte slices, so only nil and empty slices stand for
+// the bad inputs the TypeScript and Python tests try: they fail without
+// a panic, with the reasons of any wrong length.
+func TestStrict_NilAndEmptyInputs(t *testing.T) {
+	pub := strictPub()
+	sig := sigWithR(edScalarMult(rScalar, edBase), strictMsg, pub, rScalar)
+	for name, c := range map[string]struct {
+		pub, msg, sig []byte
+		reason        string
+	}{
+		"nil key":       {nil, strictMsg, sig, "public key is not 32 bytes"},
+		"empty key":     {[]byte{}, strictMsg, sig, "public key is not 32 bytes"},
+		"nil signature": {pub, strictMsg, nil, genericReason},
+		"nil message":   {pub, nil, sig, genericReason},
+	} {
+		if got := VerifyEd25519(c.pub, c.msg, c.sig); got.OK || got.Reason != c.reason {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
+}

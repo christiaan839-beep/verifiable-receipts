@@ -72,7 +72,7 @@ function powMod(b, e) {
 const inv = (a) => powMod(a, P - 2n);
 const D = mod(-121665n * inv(121666n));
 const SQRT_M1 = powMod(2n, (P - 1n) / 4n);
-const IDENTITY = [0n, 1n, 1n, 0n];
+const IDENTITY = Object.freeze([0n, 1n, 1n, 0n]);
 
 function add([x1, y1, z1, t1], [x2, y2, z2, t2]) {
   const a = mod((y1 - x1) * (y2 - x2));
@@ -170,6 +170,7 @@ function rawKeyProblem(raw) {
  * which fails.
  */
 function ed25519KeyProblem(publicKey) {
+  if (publicKey?.asymmetricKeyType !== "ed25519") return null;
   let x;
   try {
     x = publicKey.export({ format: "jwk" }).x;
@@ -206,6 +207,9 @@ function signatureProblem(sig) {
  * @returns {{ ok: boolean, reason?: string }}
  */
 export function verifyEd25519Strict(publicKey, message, signature) {
+  for (const arg of [publicKey, message, signature]) {
+    if (!(arg instanceof Uint8Array)) return { ok: false, reason: DOES_NOT_VERIFY };
+  }
   const keyProblem = rawKeyProblem(publicKey);
   if (keyProblem) return { ok: false, reason: keyProblem };
   const sig = Buffer.from(signature);

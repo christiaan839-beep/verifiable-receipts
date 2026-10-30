@@ -171,3 +171,20 @@ def test_the_existing_key_reasons_stay() -> None:
     assert _ed25519_key_problem(ed.encode(T8)) == "public key is a small-order point"
     assert _ed25519_key_problem(PUB) is None
     assert verify_ed25519(PUB[:31], MSG, bytes(64)).reason == "public key is not 32 bytes"
+
+
+@pytest.mark.parametrize("bad", [32, 64, -1, "not bytes", None, [1, 2], 1.5])
+def test_verify_ed25519_refuses_inputs_that_are_not_bytes(bad: object) -> None:
+    # bytes(32) would be 32 zero bytes, bytes(-1) and bytes("x") raise: none
+    # of them is the caller's key, message or signature.
+    sig = sig_with_r(ed.scalar_mult(R_SCALAR, ed.BASE), MSG, r=R_SCALAR)
+    for args in ((bad, MSG, sig), (PUB, bad, sig), (PUB, MSG, bad)):
+        result = verify_ed25519(*args)  # type: ignore[arg-type]
+        assert not result.ok
+        assert result.reason == GENERIC
+
+
+def test_verify_ed25519_takes_bytearray_and_memoryview() -> None:
+    sig = sig_with_r(ed.scalar_mult(R_SCALAR, ed.BASE), MSG, r=R_SCALAR)
+    assert verify_ed25519(bytearray(PUB), bytearray(MSG), bytearray(sig)).ok
+    assert verify_ed25519(memoryview(PUB), memoryview(MSG), memoryview(sig)).ok

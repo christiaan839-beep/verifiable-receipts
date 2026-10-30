@@ -35,7 +35,7 @@ var (
 	edBaseY = edMod(new(big.Int).Mul(big.NewInt(4), edInv(big.NewInt(5))))
 	// edBase is the base point B.
 	edBase = func() edPoint {
-		x, _ := edRecoverX(edBaseY, 0)
+		x, _ := edRecoverX(edXSquared(edBaseY), 0)
 		return edPoint{x, new(big.Int).Set(edBaseY), big.NewInt(1), edMod(new(big.Int).Mul(x, edBaseY))}
 	}()
 )
@@ -118,10 +118,9 @@ func edXSquared(y *big.Int) *big.Int {
 	return edMul(new(big.Int).Sub(y2, big.NewInt(1)), edInv(new(big.Int).Add(edMul(edD, y2), big.NewInt(1))))
 }
 
-// edRecoverX is the x of the point with this y and sign (RFC 8032
-// section 5.1.3); ok is false when there is none.
-func edRecoverX(y *big.Int, sign uint) (x *big.Int, ok bool) {
-	x2 := edXSquared(y)
+// edRecoverX is the x with x^2 = x2 = edXSquared(y) and this sign (RFC
+// 8032 section 5.1.3); ok is false when there is none.
+func edRecoverX(x2 *big.Int, sign uint) (x *big.Int, ok bool) {
 	if x2.Sign() == 0 {
 		return big.NewInt(0), sign == 0
 	}
@@ -162,10 +161,11 @@ func edDecode(data []byte) (edPoint, string) {
 	if y.Cmp(edP) >= 0 {
 		return edPoint{}, edNotCanonical
 	}
-	if edXSquared(y).Sign() == 0 && sign == 1 {
+	x2 := edXSquared(y)
+	if x2.Sign() == 0 && sign == 1 {
 		return edPoint{}, edNotCanonical
 	}
-	x, ok := edRecoverX(y, sign)
+	x, ok := edRecoverX(x2, sign)
 	if !ok {
 		return edPoint{}, edNotOnCurve
 	}

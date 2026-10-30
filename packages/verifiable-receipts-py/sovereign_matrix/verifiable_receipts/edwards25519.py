@@ -81,9 +81,13 @@ def is_on_curve(p: Point) -> bool:
     return (y2 - x2 - z2 - D * p.T * p.T) % P == 0 and (p.X * p.Y - p.Z * p.T) % P == 0
 
 
-def _recover_x(y: int, sign: int) -> int | None:
-    """The x of the point with this y and sign (RFC 8032 section 5.1.3), or None."""
-    x2 = (y * y - 1) * pow(D * y * y + 1, P - 2, P) % P
+def _x_squared(y: int) -> int:
+    """x^2 = (y^2 - 1) / (d y^2 + 1) for a point with this y."""
+    return (y * y - 1) * pow(D * y * y + 1, P - 2, P) % P
+
+
+def _recover_x(x2: int, sign: int) -> int | None:
+    """The x with x^2 = x2 and this sign (RFC 8032 section 5.1.3), or None."""
     if x2 == 0:
         return None if sign else 0
     x = pow(x2, (P + 3) // 8, P)
@@ -95,7 +99,7 @@ def _recover_x(y: int, sign: int) -> int | None:
 
 
 BASE_Y = 4 * pow(5, P - 2, P) % P
-_BASE_X = _recover_x(BASE_Y, 0)
+_BASE_X = _recover_x(_x_squared(BASE_Y), 0)
 assert _BASE_X is not None
 BASE = Point(_BASE_X, BASE_Y, 1, _BASE_X * BASE_Y % P)
 
@@ -113,10 +117,10 @@ def decode(data: bytes) -> tuple[Point | None, str | None]:
     y, sign = n & ((1 << 255) - 1), n >> 255
     if y >= P:
         return None, NOT_CANONICAL
-    x2 = (y * y - 1) * pow(D * y * y + 1, P - 2, P) % P
+    x2 = _x_squared(y)
     if x2 == 0 and sign:
         return None, NOT_CANONICAL
-    x = _recover_x(y, sign)
+    x = _recover_x(x2, sign)
     if x is None:
         return None, NOT_ON_CURVE
     return Point(x, y, 1, x * y % P), None

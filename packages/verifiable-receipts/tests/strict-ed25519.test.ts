@@ -169,3 +169,31 @@ describe("strict Ed25519", () => {
     expect(verifyEd25519Strict(PUB.subarray(0, 31), MSG, Buffer.alloc(64)).reason).toBe("public key is not 32 bytes");
   });
 });
+
+describe("strict Ed25519 — inputs that are not bytes", () => {
+  it("verifyEd25519 never throws on a signature, message or key that is not a Uint8Array", () => {
+    const sig = sigWithR(scalarMult(R_SCALAR, BASE), MSG, PUB, R_SCALAR);
+    for (const bad of [undefined, null, 42, "not bytes", {}, [1, 2, 3]] as unknown[]) {
+      expect(() => verifyEd25519(PUB, MSG, bad as Uint8Array)).not.toThrow();
+      expect(verifyEd25519(PUB, MSG, bad as Uint8Array)).toEqual({ ok: false, reason: GENERIC });
+      expect(verifyEd25519(PUB, bad as Uint8Array, sig)).toEqual({ ok: false, reason: GENERIC });
+      expect(verifyEd25519(bad as Uint8Array, MSG, sig)).toEqual({ ok: false, reason: GENERIC });
+      expect(verifyEd25519Strict(PUB, MSG, bad as Uint8Array)).toEqual({ ok: false, reason: GENERIC });
+      expect(verifyEd25519Strict(bad as Uint8Array, MSG, sig)).toEqual({ ok: false, reason: GENERIC });
+    }
+  });
+
+  it("verifyV2Receipt leaves a key that is not Ed25519 to the signature check", () => {
+    // An X25519 key exports a JWK x too; it must not be read as an Ed25519 point.
+    const sig = sigWithR(scalarMult(R_SCALAR, BASE), MSG, PUB, R_SCALAR);
+    const x25519 = createPublicKey({ key: { kty: "OKP", crv: "X25519", x: le32(2n).toString("base64url") }, format: "jwk" });
+    expect(verifyV2Receipt(receipt(MSG, sig), x25519)).toEqual({ ok: false, reason: GENERIC });
+    expect(verifyEd25519(x25519, MSG, sig)).toEqual({ ok: false, reason: GENERIC });
+  });
+
+  it("scalarMult(0n, p) hands out an identity that cannot be changed", () => {
+    const o = scalarMult(0n, BASE);
+    expect(Object.isFrozen(o)).toBe(true);
+    expect(Object.isFrozen(IDENTITY)).toBe(true);
+  });
+});

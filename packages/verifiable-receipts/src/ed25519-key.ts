@@ -9,7 +9,7 @@
  * every correct Ed25519 verifier, cofactored or cofactorless, and OpenSSL
  * 3.5.9's refusal of a small-order R, give the same verdict.
  */
-import { createPublicKey, verify as nodeVerify, type KeyObject } from "node:crypto";
+import { KeyObject, createPublicKey, verify as nodeVerify } from "node:crypto";
 import { L, pointProblem } from "./edwards25519.js";
 
 /**
@@ -101,7 +101,8 @@ function rawOf(key: KeyObject): Uint8Array | null {
  * section 7.3: the key (`ed25519PublicKeyProblem`), then R and S
  * (`ed25519SignatureProblem`), then node:crypto's cofactorless check over
  * R and A as given. `publicKey` is a KeyObject or the raw 32 bytes.
- * Never throws; the reason on failure is one of the reasons above or
+ * Never throws: an argument that is not a Uint8Array (or, for the key,
+ * a KeyObject) fails with the last reason below; the reason on failure is one of the reasons above or
  * "signature does not verify under the supplied public key".
  *
  * @public
@@ -111,6 +112,9 @@ export function verifyEd25519(
   message: Uint8Array,
   signature: Uint8Array,
 ): { ok: boolean; reason?: string } {
+  if (!(message instanceof Uint8Array) || !(signature instanceof Uint8Array)) {
+    return { ok: false, reason: DOES_NOT_VERIFY };
+  }
   let key: KeyObject;
   let raw: Uint8Array | null;
   try {
@@ -123,6 +127,7 @@ export function verifyEd25519(
         format: "jwk",
       });
     } else {
+      if (!(publicKey instanceof KeyObject)) return { ok: false, reason: DOES_NOT_VERIFY };
       key = publicKey;
       raw = rawOf(key);
     }

@@ -178,8 +178,13 @@ def verify_ed25519(public_key: bytes, message: bytes, signature: bytes) -> Verif
 
     Returns:
         VerifyResult(ok=True), or VerifyResult(False, reason), with the
-        reasons of verify_v2_receipt.
+        reasons of verify_v2_receipt. An argument that is not bytes,
+        bytearray or memoryview fails with "signature does not verify
+        under the supplied public key"; it never raises.
     """
+    args = (public_key, message, signature)
+    if not all(isinstance(a, (bytes, bytearray, memoryview)) for a in args):
+        return VerifyResult(False, _SIGNATURE_DOES_NOT_VERIFY)
     problem = _ed25519_key_problem(bytes(public_key))
     if problem is None:
         problem = _ed25519_signature_problem(bytes(signature))

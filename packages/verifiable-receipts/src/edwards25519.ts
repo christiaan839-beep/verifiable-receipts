@@ -55,7 +55,8 @@ export interface Point {
   T: bigint;
 }
 
-export const IDENTITY: Point = { X: 0n, Y: 1n, Z: 1n, T: 0n };
+/** The identity (0, 1), frozen: scalarMult(0n, p) returns this object. */
+export const IDENTITY: Readonly<Point> = Object.freeze({ X: 0n, Y: 1n, Z: 1n, T: 0n });
 
 /** p + q (RFC 8032 section 5.1.4); also p + p. */
 export function pointAdd(p: Point, q: Point): Point {
@@ -99,9 +100,14 @@ export function isOnCurve(p: Point): boolean {
   return mod(y2 - x2 - z2 - D * p.T * p.T) === 0n && mod(p.X * p.Y - p.Z * p.T) === 0n;
 }
 
-/** The x of the point with this y and sign (RFC 8032 section 5.1.3), or null. */
-function recoverX(y: bigint, sign: bigint): bigint | null {
-  const x2 = mod((y * y - 1n) * inv(D * y * y + 1n));
+/** x^2 = (y^2 - 1) / (d y^2 + 1) for a point with this y. */
+const xSquared = (y: bigint): bigint => mod((y * y - 1n) * inv(D * y * y + 1n));
+
+/**
+ * The x of the point with this y and sign, given x2 = xSquared(y) (RFC
+ * 8032 section 5.1.3), or null.
+ */
+function recoverX(x2: bigint, sign: bigint): bigint | null {
   if (x2 === 0n) return sign ? null : 0n;
   let x = pow(x2, (P + 3n) / 8n);
   if (mod(x * x - x2) !== 0n) x = mod(x * SQRT_M1);
@@ -111,7 +117,7 @@ function recoverX(y: bigint, sign: bigint): bigint | null {
 
 /** 4/5, the y of the base point. */
 export const BASE_Y = mod(4n * inv(5n));
-const BASE_X = recoverX(BASE_Y, 0n) as bigint;
+const BASE_X = recoverX(xSquared(BASE_Y), 0n) as bigint;
 /** The base point B. */
 export const BASE: Point = { X: BASE_X, Y: BASE_Y, Z: 1n, T: mod(BASE_X * BASE_Y) };
 
@@ -133,9 +139,9 @@ export function decode(data: Uint8Array): [Point, null] | [null, string] {
   const y = n & ((1n << 255n) - 1n);
   const sign = n >> 255n;
   if (y >= P) return [null, NOT_CANONICAL];
-  const x2 = mod((y * y - 1n) * inv(D * y * y + 1n));
+  const x2 = xSquared(y);
   if (x2 === 0n && sign) return [null, NOT_CANONICAL];
-  const x = recoverX(y, sign);
+  const x = recoverX(x2, sign);
   if (x === null) return [null, NOT_ON_CURVE];
   return [{ X: x, Y: y, Z: 1n, T: mod(x * y) }, null];
 }
