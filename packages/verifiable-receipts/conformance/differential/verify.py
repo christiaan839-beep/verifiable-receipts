@@ -52,8 +52,10 @@ def main() -> int:
         for line in fh:
             case = json.loads(line)
             verdict: dict[str, object] = {"id": case["id"]}
+            # An Ed25519 edge case carries its own key.
+            key = case["pem"].encode() if "pem" in case else pem
             try:
-                verdict["ok"], verdict["reason"] = judge(case["kind"], case["raw"], pem)
+                verdict["ok"], verdict["reason"] = judge(case["kind"], case["raw"], key)
             except Exception as err:  # noqa: BLE001 - recorded, and fails the run
                 verdict.update(ok=False, threw=repr(err))
             out.write(json.dumps(verdict) + "\n")

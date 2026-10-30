@@ -239,6 +239,14 @@ whose `runId` or unsigned evidence nests near the limit or past it.
 Some receipts repeat a field, once shallow and once deep, in either
 order: the parser keeps the last copy, but the depth is counted on the
 text.
+About one receipt in ten is an Ed25519 edge case (VAOS 2.0 §7.3) under
+a key of its own, which the case carries as PEM (`pem`) and the runners
+use instead of `public.pem`: an ordinary key, or one of mixed or small
+order, off the curve or non-canonical; an R that is honest, the
+identity, of small or mixed order, non-canonical, off the curve or
+random; an S that is r + k·a, k·a, 0, plus L or random. They are built
+with the Python verifier's edwards25519 arithmetic, so some pass the
+cofactorless check of the libraries and not the strict profile.
 Each verifier parses each receipt as a caller would: TypeScript with
 `parseReceipt`, Python with `parse_receipt` and Go with `ParseReceipt`,
 which all refuse text nested deeper than 64 with the verifiers' reason
@@ -251,7 +259,10 @@ bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
 
 The arguments are the number of cases and the seed. The `fuzz` workflow
 runs 20,000 cases with seed 1 on every pull request and a million with a
-new seed every night. The seed decides the cases and the key, so the same
+new seed every night, and runs them again with the TypeScript verifier
+on Node 24 (200,000 at night): Node 24.22 (OpenSSL 3.5.9) refuses an R
+of small order that Node 22 accepts, which only the strict profile makes
+every verifier refuse. The seed decides the cases and the key, so the same
 count and seed give byte-identical cases and verdicts. When a run fails,
 `collect.py` gathers `run.json` (the count and seed), `summary.txt`,
 `public.pem`, the first 50 disagreements and their lines of `cases.jsonl`,
@@ -263,7 +274,12 @@ above 2^53 − 1, and the three receipt verifiers comparing integers above
 Its depth cases, added on 24 October 2026, found 71 disagreements in
 20,000 cases on the verifiers of that day: TypeScript overflowed its
 stack comparing a deep field, Python rejected at its recursion limit
-and Go accepted. All three now reject nesting deeper than 64.
+and Go accepted. All three now reject nesting deeper than 64. Its
+Ed25519 edge cases, added on 30 October 2026, found 8 disagreements in
+20,000 cases (seed 1) on the verifiers as they were before the strict
+profile, with the TypeScript verifier on Node 24.22.1: R = identity
+with S = k·a, which Node refused and Python and Go accepted. They found
+none on Node 22, and none on either line with the strict profile.
 
 ## Stability
 

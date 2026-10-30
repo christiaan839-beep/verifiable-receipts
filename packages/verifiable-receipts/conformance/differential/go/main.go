@@ -9,7 +9,10 @@ package main
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"math"
 	"os"
@@ -22,6 +25,8 @@ type testCase struct {
 	ID   int    `json:"id"`
 	Kind string `json:"kind"`
 	Raw  string `json:"raw"`
+	// PEM is an Ed25519 edge case's own key, used instead of public.pem.
+	PEM string `json:"pem,omitempty"`
 }
 
 type result struct {
@@ -75,6 +80,23 @@ func judge(pub []byte, c testCase) (r result) {
 			r.OK, r.Threw = false, fmt.Sprint(p)
 		}
 	}()
+	if c.PEM != "" {
+		// Parsed without LoadEd25519PublicKeyFromPEM, which refuses weak
+		// keys, so that the verifier gives the reason, as in the other
+		// runners.
+		block, _ := pem.Decode([]byte(c.PEM))
+		if block == nil {
+			r.Threw = "key: no PEM block"
+			return r
+		}
+		key, err := x509.ParsePKIXPublicKey(block.Bytes)
+		edKey, ok := key.(ed25519.PublicKey)
+		if err != nil || !ok {
+			r.Threw = fmt.Sprint("key: ", err)
+			return r
+		}
+		pub = edKey
+	}
 	if c.Kind == "receipt" || c.Kind == "guardian" {
 		receipt, err := vaos.ParseReceipt([]byte(c.Raw))
 		if err != nil {
