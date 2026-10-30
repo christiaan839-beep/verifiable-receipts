@@ -62,15 +62,21 @@ func main() {
    level, and each array or object in an `Envelope` field one more.
 1. `Canonical` and `Signature` are non-empty, and `Signature` is `v2=`
    followed by canonical standard base64 (padding bits zero). The public
-   key is not a point of small order or a non-canonical encoding (VAOS
-   2.0 §7.3); `LoadEd25519PublicKeyFromPEM` refuses such keys too.
+   key is a canonical encoding of a point of order L: not of small or
+   mixed order, not off the curve (VAOS 2.0 §7.3, the strict profile);
+   `LoadEd25519PublicKeyFromPEM` refuses such keys too.
 2. If the receipt has a contentHash, it equals the hex SHA-256 of
    `Canonical` (the `sha256:` prefix is optional). It has one when the
    receipt's JSON has a string `contentHash`, even `""`, or when
    `ContentHash` is non-empty; an absent or `null` `contentHash` is not
    checked.
 3. The Ed25519 signature verifies over the bytes of `Canonical`, exactly
-   as given.
+   as given. Before `crypto/ed25519` sees it, its R must be a canonical
+   encoding of a point of order L (not of small order, the identity
+   included, nor of mixed order) and its S below L: so this verifier,
+   the TypeScript one on Node.js 22 or 24 and the Python one give the
+   same verdict on every signature. `VerifyEd25519(pub, message, sig)`
+   makes the same checks on one raw signature.
 4. `Canonical` nests at most 64 deep, counted on its text before it is
    decoded, and parses as a JSON object.
 5. Every field in `Envelope` is in that object with an equal JSON value

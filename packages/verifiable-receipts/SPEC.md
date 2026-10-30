@@ -70,10 +70,17 @@ v2=<base64 of the 64-byte Ed25519 signature over canonical>
 ```
 
 ```ts
-import { sign, verify } from "node:crypto";
+import { sign } from "node:crypto";
+import { verifyEd25519 } from "@sovereignos/verifiable-receipts";
 const wire = "v2=" + sign(null, Buffer.from(canonical, "utf8"), privateKey).toString("base64");
-const ok = verify(null, Buffer.from(canonical, "utf8"), publicKey, Buffer.from(wire.slice(3), "base64"));
+const { ok } = verifyEd25519(publicKey, Buffer.from(canonical, "utf8"), Buffer.from(wire.slice(3), "base64"));
 ```
+
+Verify under the strict profile of VAOS 2.0 §7.3, as `verifyEd25519`
+does: the key and the signature's R are canonical encodings of points
+of order L, and S is below L, checked before the cofactorless check of
+`node:crypto`. `crypto.verify` alone answers differently on Node.js 22
+and 24.22 for an R of small order.
 
 ---
 
@@ -89,7 +96,8 @@ implemented by `@noble/post-quantum` 0.7. The literal `.` is the only
 separator.
 
 ```ts
-import { sign, verify } from "node:crypto";
+import { sign } from "node:crypto";
+import { verifyEd25519 } from "@sovereignos/verifiable-receipts";
 import { signMlDsa65, verifyDualSig, formatV3Wire } from "@sovereignos/verifiable-receipts/pq-sign";
 
 const ed = sign(null, Buffer.from(canonical, "utf8"), edPrivateKey).toString("base64");
@@ -97,7 +105,7 @@ const wire = formatV3Wire(ed, signMlDsa65(canonical, mldsaSecretKey));
 
 const verdict = verifyDualSig(canonical, wire, mldsaPublicKey, (c, sig) =>
   sig.startsWith("v2=") &&
-  verify(null, Buffer.from(c, "utf8"), edPublicKey, Buffer.from(sig.slice(3), "base64")),
+  verifyEd25519(edPublicKey, Buffer.from(c, "utf8"), Buffer.from(sig.slice(3), "base64")).ok,
 );
 // { ok, ed25519, mldsa65 }: ok is true only when both halves verify.
 ```

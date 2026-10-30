@@ -8,9 +8,41 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1] — 2026-10-30
 
-This version releases the 0.5.0 changes below; it adds nothing to the
-library. 0.5.0 was tagged but never published: the release workflow
-failed before publishing (fixed in #35).
+This version releases the 0.5.0 changes below, and adds the strict
+Ed25519 profile of VAOS 2.0 §7.3. 0.5.0 was tagged but never
+published: the release workflow failed before publishing (fixed in
+#35).
+
+### Security
+
+- Ed25519 signatures are verified under a strict profile (VAOS 2.0
+  §7.3, amended 30 October 2026), so every verifier gives one verdict.
+  Before, `node:crypto` on Node.js 24.22.1 (OpenSSL 3.5.9) rejected a
+  signature with R = identity that Node.js 22, the Python and Go
+  verifiers and the browsers accepted, and WebKit on Linux rejected one
+  under a mixed-order key that the rest accepted. Now, before
+  `node:crypto` sees a signature, the key and the signature's R must be
+  canonical encodings of points of order L, and S must be below L. A
+  signature an honest signer makes is never refused.
+  - New: `verifyEd25519(publicKey, message, signature)`, returning
+    `{ ok, reason }`, and `ed25519SignatureProblem(signature)`.
+  - `ed25519PublicKeyProblem` and `loadEd25519PublicKey` also refuse a
+    key off the curve (`public key is not a point on the curve`) and a
+    key of mixed order (`public key is not in the prime-order
+    subgroup`). Their answers are cached per key.
+  - New reasons for R: `signature R is not a canonical encoding`, `...
+    is not a point on the curve`, `... is a small-order point`, `... is
+    not in the prime-order subgroup`. `S >= L` keeps `signature does
+    not verify under the supplied public key`.
+  - The `verifiable-receipts` CLI and `verifiable-receipts-witness`
+    (its `--log-public-key` check) verify through `verifyEd25519`.
+  - Pure BigInt edwards25519 arithmetic (`src/edwards25519.ts`), no new
+    dependency.
+- The conformance suite has twenty Ed25519 edge fixtures
+  (`conformance/fixtures/ed25519-*.json`, written by
+  `generate-ed25519-fixtures.py`) and a fixture kind, `ed25519`, for
+  RFC 8032's test vectors. The differential run builds Ed25519 edge
+  cases and runs the TypeScript verifier on Node.js 22 and 24.
 
 ### Fixed
 

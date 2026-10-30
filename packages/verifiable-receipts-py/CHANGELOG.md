@@ -24,9 +24,25 @@ are in the git history only.
   (y >= p), with the reasons `public key is a small-order point` and
   `public key is not a canonical encoding` (VAOS 2.0 §7.3). Under the
   identity key, for one, a signature verifies every message.
+- Ed25519 signatures are verified under the strict profile of VAOS 2.0
+  §7.3 (amended 30 October 2026), so this verifier, the TypeScript one
+  on Node.js 22 or 24.22 and the Go one give one verdict on every
+  signature. Before `cryptography` sees a signature, its R must be a
+  canonical encoding of a point of order L (not of small order, the
+  identity included, nor of mixed order) and its S below L; a key must
+  be a point of order L too. Before, R = identity with S = k*a verified
+  here and in Go but not on Node.js 24.22.1 (OpenSSL 3.5.9). New
+  reasons: `public key is not a point on the curve`, `public key is not
+  in the prime-order subgroup`, `signature R is not a canonical
+  encoding`, `signature R is not a point on the curve`, `signature R is
+  a small-order point`, `signature R is not in the prime-order
+  subgroup`. PEM loading refuses the new keys too; its answer is cached
+  per key. The arithmetic is pure Python (`edwards25519.py`).
 
 ### Added
 
+- `verify_ed25519(public_key, message, signature)`: one raw Ed25519
+  signature under the strict profile, returning a `VerifyResult`.
 - `parse_receipt(text)` reads a receipt from JSON text, counting its
   depth on the text first: it raises `ValueError("receipt nesting
   deeper than 64")` at any depth, a duplicate key the parser discards
