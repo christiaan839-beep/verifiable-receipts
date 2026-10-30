@@ -94,6 +94,8 @@ jobs:
           package-manager-cache: false
       - run: npm ci
       - run: npm run build
+      # npm pack does not create its destination directory.
+      - run: mkdir -p "$RUNNER_TEMP/dist"
       - run: npm pack --pack-destination "$RUNNER_TEMP/dist"
       - id: attest
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
