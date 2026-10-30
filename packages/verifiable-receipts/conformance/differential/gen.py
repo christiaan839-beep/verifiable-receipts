@@ -3,8 +3,9 @@ Writes random receipts and inclusion proofs for the differential run.
 
 Usage: python gen.py <out-dir> <cases> <seed>
 
-Makes a throwaway Ed25519 key (public half in <out-dir>/public.pem),
-signs receipts with it, and writes <out-dir>/cases.jsonl: one object per
+Derives a throwaway Ed25519 key from the seed (public half in
+<out-dir>/public.pem), signs receipts with it, and writes
+<out-dir>/cases.jsonl: one object per
 line, {"id", "kind": "receipt" | "inclusion", "raw": <JSON text>}. Each
 verifier parses "raw" with its own language's JSON parser, as a caller
 would. Most cases start valid and get one or two mutations, so they sit
@@ -15,6 +16,10 @@ cannot write it. A few are Guardian attestations shaped like runGuardian's,
 whose runId or unsigned evidence nests near the limit or past it. Some
 repeat a field, once shallow and once deep, in either order: the parser
 keeps the last copy, but the depth counted on the text includes both.
+
+The seed decides everything: the same seed and count give byte-identical
+public.pem and cases.jsonl (Ed25519 signing is deterministic), so a
+failing run is reproduced by running it again with its seed.
 """
 
 from __future__ import annotations
@@ -332,10 +337,17 @@ def inclusion_case(rng: random.Random) -> str:
     return json.dumps(proof)
 
 
+def seed_key(seed: int) -> Ed25519PrivateKey:
+    """The signing key for a seed: SHA-256 of a label and the seed, as the private key."""
+    return Ed25519PrivateKey.from_private_bytes(
+        hashlib.sha256(f"verifiable-receipts differential key {seed}".encode()).digest()
+    )
+
+
 def main() -> int:
     out, count, seed = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
     rng = random.Random(seed)
-    key = Ed25519PrivateKey.generate()
+    key = seed_key(seed)
     out.mkdir(parents=True, exist_ok=True)
     (out / "public.pem").write_bytes(
         key.public_key().public_bytes(
