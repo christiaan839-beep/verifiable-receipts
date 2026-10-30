@@ -1,6 +1,6 @@
 {
   "name": "@sovereignos/verifiable-receipts",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Sign receipts for AI agent actions and verify them later: Ed25519 and ML-DSA-65 signatures, an RFC 9162 Merkle transparency log, m-of-n co-signing, stream attestation and signed ZIP bundles.",
   "license": "Apache-2.0",
   "author": "Christiaan de Wet <sovereign.systems007@gmail.com>",

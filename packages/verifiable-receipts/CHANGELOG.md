@@ -6,6 +6,19 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-30
+
+This version releases the 0.5.0 changes below; it adds nothing to the
+library. 0.5.0 was tagged but never published: the release workflow
+failed before publishing (fixed in #35).
+
+### Fixed
+
+- The release workflow creates the `npm pack` destination directory
+  before packing. `npm pack --pack-destination` does not create it, so
+  the build of `js-v0.5.0` failed with ENOENT before anything was
+  published (#35).
+
 ## [0.5.0] — 2026-10-30
 
 ### Changed
