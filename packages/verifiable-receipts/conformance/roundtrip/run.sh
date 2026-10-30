@@ -10,8 +10,12 @@
 # signature for body.json, then edits one field of each signed file and
 # checks that all three verifiers reject the edit. It also signs two
 # attestations whose unsigned evidence makes them 64 and 65 deep, which
-# all three must accept and reject (VAOS 2.0 section 7.2). The key lives in a
-# temporary directory that is removed on exit.
+# all three must accept and reject (VAOS 2.0 section 7.2). Last, it runs
+# the 20 Ed25519 fixtures (conformance/fixtures/ed25519-*.json) through
+# each language's public pre-checks, ed25519PublicKeyProblem and
+# ed25519SignatureProblem and their Python and Go twins, and checks that
+# the three give the same key and signature reason on every fixture. The
+# key lives in a temporary directory that is removed on exit.
 #
 # Needs node 22+ with packages/verifiable-receipts built (`npm install`
 # there), python 3.10+ with `cryptography`, and go 1.22+. The Python
@@ -37,7 +41,7 @@ PRIV="$WORK/ed25519-private.pem"
 PUB="$WORK/ed25519-public.pem"
 
 node "$HERE/keygen.mjs" "$WORK"
-(cd "$HERE/go" && go build -o "$WORK/verify-go" .)
+(cd "$HERE/go" && go build -o "$WORK/verify-go" . && go build -o "$WORK/ed25519checks-go" ./ed25519checks)
 
 "$PYTHON" "$HERE/sign.py" "$PRIV" "$HERE/body.json" "$WORK/python-signer.json"
 node "$PKG/bin/sign.mjs" --input "$HERE/body.json" --key "$PRIV" \
@@ -106,8 +110,28 @@ check rejected guardian "$WORK/guardian-overall-edited.json"
 check ok guardian "$WORK/guardian-nested-64.json"
 check rejected guardian "$WORK/guardian-nested-65.json"
 
+# The public Ed25519 pre-checks: the same reasons in all three languages.
+FIXTURES="$HERE/../fixtures"
+"$PYTHON" "$HERE/ed25519-checks.py" "$FIXTURES" > "$WORK/checks-python.txt"
+node "$HERE/ed25519-checks.mjs" "$FIXTURES" > "$WORK/checks-node.txt"
+"$WORK/ed25519checks-go" "$FIXTURES" > "$WORK/checks-go.txt"
+vectors="$(wc -l < "$WORK/checks-python.txt" | tr -d ' ')"
+for verifier in node go; do
+  if ! diff -u "$WORK/checks-python.txt" "$WORK/checks-$verifier.txt"; then
+    echo "FAIL Ed25519 pre-checks: python and $verifier differ" >&2
+    failures=$((failures + 1))
+  fi
+done
+if [ "$vectors" -ne 20 ]; then
+  echo "FAIL Ed25519 pre-checks: $vectors fixtures, expected 20" >&2
+  failures=$((failures + 1))
+fi
+if [ "$failures" -eq 0 ]; then
+  printf 'pass %-34s python, go, node: the same reasons\n' "ed25519-*.json ($vectors)"
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "round trip: $failures check(s) failed" >&2
   exit 1
 fi
-echo "round trip: 24 checks passed (3 signers x 3 verifiers, signed and edited; a Guardian attestation 64 and 65 deep)"
+echo "round trip: 24 checks passed (3 signers x 3 verifiers, signed and edited; a Guardian attestation 64 and 65 deep), and the Ed25519 pre-checks agree on 20 fixtures in all three languages"

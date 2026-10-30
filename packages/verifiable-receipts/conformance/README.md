@@ -20,7 +20,7 @@ correct on inputs the corpus does not cover.
 | `../verifiable-receipts-go/conformance_test.go` | Go harness (`go test`).                                                       |
 | `generate-fixtures.mjs`                         | Regenerates the key and the v2 fixtures (see below).                          |
 | `generate-ed25519-fixtures.py`                  | Regenerates the Ed25519 edge fixtures, `fixtures/ed25519-*.json` (see below). |
-| `roundtrip/`                                    | Signs and verifies across languages with a throwaway key (see below).         |
+| `roundtrip/`                                    | Round trip across languages; the Ed25519 pre-checks agree (see below).        |
 
 ## Fixture shape
 
@@ -206,7 +206,14 @@ then verifies all three files with the Python, Go and node verifiers,
 edits one field of each, and checks that all three verifiers reject the
 edits. It also signs two Guardian attestations whose unsigned evidence
 makes them 64 and 65 deep, which all three must accept and reject: 24
-checks. It deletes the key when it finishes. CI runs it in the
+checks. Last, it runs the 20 `fixtures/ed25519-*.json` through each
+language's public pre-checks (TypeScript `ed25519PublicKeyProblem` and
+`ed25519SignatureProblem`, Python `ed25519_public_key_problem` and
+`ed25519_signature_problem`, Go `Ed25519PublicKeyProblem` and
+`Ed25519SignatureProblem`; `roundtrip/ed25519-checks.*` and
+`roundtrip/go/ed25519checks`) and checks that the three print the same
+key reason and signature reason for every fixture. It deletes the key
+when it finishes. CI runs it in the
 `roundtrip` job.
 
 ```bash

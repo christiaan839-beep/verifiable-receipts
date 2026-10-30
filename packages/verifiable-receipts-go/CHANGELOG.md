@@ -33,6 +33,12 @@ Earlier changes are in the git history only.
 
 - `VerifyEd25519(pub, message, sig)`: one raw Ed25519 signature under
   the strict profile, returning a `VerifyResult`.
+- `Ed25519PublicKeyProblem(pub)` and `Ed25519SignatureProblem(sig)`, the
+  two pre-checks of `VerifyEd25519` on their own: why a raw key, or a
+  signature's R and S, is refused, or `""`. The same reasons, in the
+  same order, as TypeScript `ed25519PublicKeyProblem` and
+  `ed25519SignatureProblem`; a key that is not 32 bytes gets `public key
+  is not 32 bytes`.
 
 ## [0.1.0] — 2026-10-30
 

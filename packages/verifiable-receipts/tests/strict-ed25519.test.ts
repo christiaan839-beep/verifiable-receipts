@@ -10,6 +10,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { createHash, createPublicKey, verify as nodeVerify, type KeyObject } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   BASE,
   IDENTITY,
@@ -196,4 +198,45 @@ describe("strict Ed25519 — inputs that are not bytes", () => {
     expect(Object.isFrozen(o)).toBe(true);
     expect(Object.isFrozen(IDENTITY)).toBe(true);
   });
+});
+
+/**
+ * The shared corpus, conformance/fixtures/ed25519-*.json, through the two
+ * exported pre-checks: a fixture that fails on its key expects the key's
+ * reason; any other expects no key problem and, when it fails, the
+ * signature's reason. The Python and Go tests check the same, and the
+ * round trip (conformance/roundtrip/) checks that the three languages
+ * give the same pair of answers on every fixture.
+ */
+describe("the exported pre-checks on the Ed25519 fixtures", () => {
+  const dir = join(__dirname, "..", "conformance", "fixtures");
+  const files = readdirSync(dir).filter((f) => f.startsWith("ed25519-") && f.endsWith(".json")).sort();
+
+  it("there are 20", () => {
+    expect(files).toHaveLength(20);
+  });
+
+  for (const file of files) {
+    it(file, () => {
+      const fixture = JSON.parse(readFileSync(join(dir, file), "utf8"));
+      let raw: Buffer;
+      let sig: Buffer;
+      if (fixture.ed25519) {
+        raw = Buffer.from(fixture.ed25519.publicKey, "hex");
+        sig = Buffer.from(fixture.ed25519.signature, "hex");
+      } else {
+        const spki = Buffer.from(fixture.publicKeyPem.replace(/-----[^-]+-----|\s/g, ""), "base64");
+        raw = spki.subarray(spki.length - 32);
+        sig = Buffer.from(fixture.receipt.signature.slice("v2=".length), "base64");
+      }
+      const expected: string | undefined = fixture.expected.reasonContains;
+      expect(fixture.expected.ok).toBe(expected === undefined);
+      if (expected?.startsWith("public key ")) {
+        expect(ed25519PublicKeyProblem(raw)).toBe(expected);
+      } else {
+        expect(ed25519PublicKeyProblem(raw)).toBeNull();
+        expect(ed25519SignatureProblem(sig)).toBe(expected ?? null);
+      }
+    });
+  }
 });

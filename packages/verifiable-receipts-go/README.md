@@ -76,7 +76,13 @@ func main() {
    included, nor of mixed order) and its S below L: so this verifier,
    the TypeScript one on Node.js 22 or 24 and the Python one give the
    same verdict on every signature. `VerifyEd25519(pub, message, sig)`
-   makes the same checks on one raw signature.
+   makes the same checks on one raw signature, and
+   `Ed25519PublicKeyProblem(pub)` and `Ed25519SignatureProblem(sig)`
+   make the key check and the R and S check on their own, returning the
+   reason or `""` (the same reasons as TypeScript and Python). The
+   checks on R and S depend only on the signature, so a caller that
+   tries one signature under several keys can make them once; a key's
+   answer is cached.
 4. `Canonical` nests at most 64 deep, counted on its text before it is
    decoded, and parses as a JSON object.
 5. Every field in `Envelope` is in that object with an equal JSON value

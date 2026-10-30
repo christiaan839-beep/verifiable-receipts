@@ -82,7 +82,13 @@ print(result.reason)  # None, or why it failed
    identity included, nor of mixed order) and its S below L: so this
    verifier, the TypeScript one on Node.js 22 or 24 and the Go one give
    the same verdict on every signature. `verify_ed25519(public_key,
-   message, signature)` makes the same checks on one raw signature.
+   message, signature)` makes the same checks on one raw signature, and
+   `ed25519_public_key_problem(raw)` and `ed25519_signature_problem(signature)`
+   make the key check and the R and S check on their own, returning the
+   reason or `None` (the same reasons as TypeScript and Go). The checks
+   on R and S depend only on the signature, so a caller that tries one
+   signature under several keys can make them once; a key's answer is
+   cached.
 4. `canonical` nests at most 64 deep, counted on its text before it is
    parsed, and parses as a JSON object.
 5. Every other field of the receipt is in that object with an equal JSON

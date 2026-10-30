@@ -344,7 +344,13 @@ dependency-free edwards25519 arithmetic (TypeScript
 `src/edwards25519.ts`, and its copy in `conformance/verify-v2.mjs`;
 Python `edwards25519.py`; Go `edwards25519.go`), with the same constants,
 before they call Node.js `crypto.verify`, Python `cryptography` or Go
-`crypto/ed25519`.
+`crypto/ed25519`. Each exports the two pre-checks on their own, with
+the reasons below and in the same order: TypeScript
+`ed25519PublicKeyProblem` and `ed25519SignatureProblem`, Python
+`ed25519_public_key_problem` and `ed25519_signature_problem`, Go
+`Ed25519PublicKeyProblem` and `Ed25519SignatureProblem`. The checks on
+`R` and `S` depend only on the signature, so a caller that tries one
+signature under several keys can make them once.
 
 "Taming the many EdDSAs" (Chalkias, Garillot and Nikolaenko, 2020)
 catalogues these choices and their test vectors. Its recommended
