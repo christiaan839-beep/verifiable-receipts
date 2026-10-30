@@ -5,23 +5,23 @@
  * verifyInclusionProof from the built package.
  *
  * Usage: node verify.mjs <public.pem> <cases.jsonl> <out.jsonl>
- * Writes one {"id", "ok", "reason"} line per case ("parse failed" when the
- * text does not parse); "threw" records an exception,
- * which the verifiers must never raise.
+ * Writes one {"id", "ok", "reason"} line per case, in case order ("parse
+ * failed" when the text does not parse); "threw" records an exception,
+ * which the verifiers must never raise. Cases are read a line at a time
+ * and verdicts written in batches, so memory does not grow with the
+ * number of cases.
  */
 import { createPublicKey, verify } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, readFileSync, writeSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { parseReceipt, verifyV2Receipt } from "../verify-v2.mjs";
 import { verifyInclusionProof } from "../../dist/transparency.js";
 import { verifyGuardianAttestation } from "../../dist/guardian.js";
 
 const TOO_DEEP = "receipt nesting deeper than 64";
-const [keyPath, casesPath, outPath] = process.argv.slice(2);
-const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
-const verdicts = [];
-for (const line of readFileSync(casesPath, "utf8").split("\n")) {
-  if (line === "") continue;
-  const { id, kind, raw } = JSON.parse(line);
+const BATCH = 1000; // verdicts per write
+
+function judge({ id, kind, raw }, publicKey) {
   let value;
   try {
     // A receipt or attestation is read as Python's parse_receipt and Go's
@@ -29,27 +29,48 @@ for (const line of readFileSync(casesPath, "utf8").split("\n")) {
     value = kind === "inclusion" ? JSON.parse(raw) : parseReceipt(raw);
   } catch (err) {
     const reason = err instanceof Error && err.message === TOO_DEEP ? TOO_DEEP : "parse failed";
-    verdicts.push({ id, ok: false, reason });
-    continue;
+    return { id, ok: false, reason };
   }
   try {
     if (kind === "receipt") {
       const { ok, reason } = verifyV2Receipt(value, publicKey);
-      verdicts.push({ id, ok, reason: reason ?? null });
-    } else if (kind === "guardian") {
+      return { id, ok, reason: reason ?? null };
+    }
+    if (kind === "guardian") {
       // The library verifier names its reasons differently ("nesting-too-deep"),
       // so compare.py compares only its verdict.
       const { ok, reason } = verifyGuardianAttestation(value, (canonical, signature) =>
         signature.startsWith("v2=") &&
         verify(null, Buffer.from(canonical, "utf8"), publicKey, Buffer.from(signature.slice(3), "base64")),
       );
-      verdicts.push({ id, ok, reason: reason ?? null });
-    } else {
-      const ok = verifyInclusionProof(value.leafHashHex, value.leafIndex, value.treeSize, value.auditPath, value.rootHashHex);
-      verdicts.push({ id, ok, reason: null });
+      return { id, ok, reason: reason ?? null };
     }
+    const ok = verifyInclusionProof(value.leafHashHex, value.leafIndex, value.treeSize, value.auditPath, value.rootHashHex);
+    return { id, ok, reason: null };
   } catch (err) {
-    verdicts.push({ id, ok: false, threw: String(err) });
+    return { id, ok: false, threw: String(err) };
   }
 }
-writeFileSync(outPath, verdicts.map((v) => JSON.stringify(v)).join("\n") + "\n");
+
+function writeAll(fd, text) {
+  const bytes = Buffer.from(text, "utf8");
+  for (let off = 0; off < bytes.length; ) off += writeSync(fd, bytes, off);
+}
+
+const [keyPath, casesPath, outPath] = process.argv.slice(2);
+const publicKey = createPublicKey(readFileSync(keyPath, "utf8"));
+const out = openSync(outPath, "w");
+const lines = createInterface({ input: createReadStream(casesPath, "utf8"), crlfDelay: Infinity });
+let batch = "";
+let pending = 0;
+for await (const line of lines) {
+  if (line === "") continue;
+  batch += JSON.stringify(judge(JSON.parse(line), publicKey)) + "\n";
+  if (++pending === BATCH) {
+    writeAll(out, batch);
+    batch = "";
+    pending = 0;
+  }
+}
+writeAll(out, batch);
+closeSync(out);

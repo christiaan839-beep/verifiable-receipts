@@ -7,6 +7,9 @@
 # case and prefixes, index and size edge values). Each verifier parses
 # each case with its own JSON parser. compare.py fails on any
 # disagreement or exception and writes the cases to disagreements.jsonl.
+# Every stage reads and writes its JSONL a line at a time, and each
+# runner writes its verdicts in case order, so compare.py reads the four
+# files side by side: memory stays flat at any number of cases.
 #
 # Needs node 22+ with packages/verifiable-receipts built, python 3.10+
 # with `cryptography`, and go 1.22+. The Python package is read from the

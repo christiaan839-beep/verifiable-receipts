@@ -56,7 +56,7 @@ jobs:
       - name: pytest, with the package read from the working tree
         env:
           PYTHONPATH: packages/verifiable-receipts-py
-        run: python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py schemas
+        run: python -m pytest packages/verifiable-receipts-py/tests packages/verifiable-receipts/conformance/conformance.py packages/verifiable-receipts/conformance/differential schemas
   go:
     name: Go ${{ matrix.go }}
     runs-on: ubuntu-latest
