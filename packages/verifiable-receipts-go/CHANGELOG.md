@@ -18,8 +18,9 @@ Earlier changes are in the git history only.
   canonical encoding of a point of order L (not of small order, the
   identity included, nor of mixed order) and its S below L; a key must
   be a point of order L too. v0.1.0 accepted R = identity with
-  S = k*a, which the TypeScript verifier on Node.js 24.22.1 (OpenSSL
-  3.5.9) rejects, and keys of mixed order, so it is retracted
+  S = k*a, and Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL
+  3.5.8) refuse R = identity, which Node.js 22.23.2 accepts; it also
+  accepted keys of mixed order. So v0.1.0 is retracted
   (`go.mod`). New reasons: `public key is not a point on the curve`,
   `public key is not in the prime-order subgroup`, `signature R is not
   a canonical encoding`, `signature R is not a point on the curve`,

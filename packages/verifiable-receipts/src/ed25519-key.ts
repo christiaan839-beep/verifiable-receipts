@@ -6,8 +6,10 @@
  * message), not of mixed order, not off the curve, not a non-canonical
  * encoding. A signature's R must be the same, and its S below L. These
  * are checked before node:crypto sees the signature: on what passes them,
- * every correct Ed25519 verifier, cofactored or cofactorless, and OpenSSL
- * 3.5.9's refusal of a small-order R, give the same verdict.
+ * every correct Ed25519 verifier, cofactored or cofactorless, gives the
+ * same verdict. Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL
+ * 3.5.8) refuse R = identity, which Node.js 22.23.2 accepts; these
+ * checks refuse it on every line.
  */
 import { KeyObject, createPublicKey, verify as nodeVerify } from "node:crypto";
 import { L, pointProblem } from "./edwards25519.js";

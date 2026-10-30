@@ -7,7 +7,7 @@ are in the git history only.
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-10-29
+## [0.3.0] — 2026-10-30
 
 ### Security
 
@@ -31,7 +31,8 @@ are in the git history only.
   canonical encoding of a point of order L (not of small order, the
   identity included, nor of mixed order) and its S below L; a key must
   be a point of order L too. Before, R = identity with S = k*a verified
-  here and in Go but not on Node.js 24.22.1 (OpenSSL 3.5.9). New
+  here and in Go; Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL
+  3.5.8) refuse R = identity, which Node.js 22.23.2 accepts. New
   reasons: `public key is not a point on the curve`, `public key is not
   in the prime-order subgroup`, `signature R is not a canonical
   encoding`, `signature R is not a point on the curve`, `signature R is

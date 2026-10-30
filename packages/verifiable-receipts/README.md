@@ -14,10 +14,9 @@ signature)` rather than `crypto.verify` alone. It makes the checks of
 VAOS 2.0 §7.3, the strict profile, before `node:crypto` sees the
 signature: the key and the signature's R must be canonical encodings
 of points of order L (no small-order or mixed-order points, nothing off
-the curve), and S must be below L. Node.js 22 and 24.22 answer
-differently on some signatures that fail these checks (Node 24.22,
-with OpenSSL 3.5.9, refuses an R of small order); with them, every
-Node line, the Python verifier and the Go verifier give the same
+the curve), and S must be below L. Node.js 24.22.1 (OpenSSL 3.5.9)
+and 26.10.0 (OpenSSL 3.5.8) refuse R = identity, which Node.js 22.23.2
+accepts; with these checks, every Node line, the Python verifier and the Go verifier give the same
 verdict. It returns `{ ok, reason }`, with the reasons of the Python
 and Go verifiers. `loadEd25519PublicKey` refuses the same keys when it
 loads them, and `ed25519PublicKeyProblem` and

@@ -17,9 +17,9 @@ published: the release workflow failed before publishing (fixed in
 
 - Ed25519 signatures are verified under a strict profile (VAOS 2.0
   §7.3, amended 30 October 2026), so every verifier gives one verdict.
-  Before, `node:crypto` on Node.js 24.22.1 (OpenSSL 3.5.9) rejected a
-  signature with R = identity that Node.js 22, the Python and Go
-  verifiers and the browsers accepted, and WebKit on Linux rejected one
+  Before, Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL 3.5.8)
+  refused R = identity, which Node.js 22.23.2 accepts (and so did the
+  Python and Go verifiers and the browsers), and WebKit on Linux rejected one
   under a mixed-order key that the rest accepted. Now, before
   `node:crypto` sees a signature, the key and the signature's R must be
   canonical encodings of points of order L, and S must be below L. A

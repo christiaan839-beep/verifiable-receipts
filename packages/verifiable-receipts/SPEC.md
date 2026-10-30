@@ -79,8 +79,9 @@ const { ok } = verifyEd25519(publicKey, Buffer.from(canonical, "utf8"), Buffer.f
 Verify under the strict profile of VAOS 2.0 §7.3, as `verifyEd25519`
 does: the key and the signature's R are canonical encodings of points
 of order L, and S is below L, checked before the cofactorless check of
-`node:crypto`. `crypto.verify` alone answers differently on Node.js 22
-and 24.22 for an R of small order.
+`node:crypto`. With `crypto.verify` alone, Node.js 24.22.1 (OpenSSL
+3.5.9) and 26.10.0 (OpenSSL 3.5.8) refuse R = identity, which Node.js
+22.23.2 accepts.
 
 ---
 

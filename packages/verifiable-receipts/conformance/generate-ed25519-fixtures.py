@@ -256,8 +256,8 @@ def main() -> int:
         k = challenge(r_enc, pub, text.encode())
         what = "R is the identity (order 1)" if order == 1 else f"R is a point of order {order}"
         before = (
-            "valid under Node.js 22, Python cryptography and Go; invalid under Node.js 24.22.1 "
-            "(OpenSSL 3.5.9) and 26.10 (OpenSSL 3.6.5)"
+            "valid under Node.js 22.23.2, Python cryptography and Go; invalid under Node.js "
+            "24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL 3.5.8)"
             if order == 1
             else "rejected, signature does not verify"
         )

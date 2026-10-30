@@ -92,7 +92,7 @@ describe("strict Ed25519", () => {
 
   it("rejects R = identity, S = k*a, which the cofactorless check alone may accept", () => {
     const sig = sigWithR(IDENTITY, MSG);
-    // Node 22 answers true here, Node 24.22 (OpenSSL 3.5.9) false; the
+    // Node.js 22.23.2 answers true here, 24.22.1 and 26.10.0 false; the
     // strict profile answers the same on both.
     expect(typeof nodeVerify(null, MSG, keyObject(PUB), sig)).toBe("boolean");
     expect(reasons(PUB, MSG, sig)).toEqual(Array(4).fill("signature R is a small-order point"));

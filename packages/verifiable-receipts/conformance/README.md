@@ -260,9 +260,9 @@ bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
 The arguments are the number of cases and the seed. The `fuzz` workflow
 runs 20,000 cases with seed 1 on every pull request and a million with a
 new seed every night, and runs them again with the TypeScript verifier
-on Node 24 (200,000 at night): Node 24.22 (OpenSSL 3.5.9) refuses an R
-of small order that Node 22 accepts, which only the strict profile makes
-every verifier refuse. The seed decides the cases and the key, so the same
+on Node 24 (200,000 at night): Node.js 24.22.1 (OpenSSL 3.5.9) and
+26.10.0 (OpenSSL 3.5.8) refuse R = identity, which Node.js 22.23.2
+accepts; the strict profile makes every verifier refuse it. The seed decides the cases and the key, so the same
 count and seed give byte-identical cases and verdicts. When a run fails,
 `collect.py` gathers `run.json` (the count and seed), `summary.txt`,
 `public.pem`, the first 50 disagreements and their lines of `cases.jsonl`,

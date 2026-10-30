@@ -335,8 +335,8 @@ cofactorless check and the cofactored check `[8][S]B = [8]R + [8][k]A`
 of RFC 8032 §5.1.7 accept the same signatures, and comparing `R` as
 encoded or as a point makes no difference once `R` is canonical. Every
 correct Ed25519 verifier, cofactored or cofactorless, and every library
-that also refuses a small-order `R` (as OpenSSL 3.5.9 does, below) gives the same
-verdict on whatever passes the checks above. An honest signer's `A` and
+that also refuses `R` = identity (as Node.js 24.22.1 and 26.10.0 do,
+below) gives the same verdict on whatever passes the checks above. An honest signer's `A` and
 `R` are multiples of `B`, never the identity except with negligible
 probability, so it never makes a signature these checks reject. The
 three verifiers of this repository make the checks with their own
@@ -353,7 +353,11 @@ verification (its Algorithm 2) rejects `S ≥ L`, non-canonical `A` and
 equation; it does not refuse mixed-order keys or small-order and
 mixed-order `R`. This profile is stricter: by refusing those too it
 leaves only inputs on which the paper's cofactored and cofactorless
-verifiers agree, so it needs no choice between them.
+verifiers agree, so it needs no choice between them. It accepts a
+strict subset of what Algorithm 2 accepts: a signature that passes
+these checks and the cofactorless equation passes the cofactored one,
+and Algorithm 2 accepts signatures under mixed-order keys, and with
+`R` of small or mixed order, that this profile rejects.
 
 (Amended 30 October 2026.) Until this date §7.3 took `A` as given once
 the key rule had refused small-order and non-canonical keys, and
@@ -363,10 +367,12 @@ equation held. On 24 October 2026 Node.js 22.23.2 (OpenSSL 3.5.7),
 verdict on fourteen signatures that tell these choices apart, and the
 review of the receipts explorer found Chromium 153's WebCrypto agreeing
 with Node.js on 16. On 30 October 2026 the receipts explorer's CI found
-two that no longer agree. Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10
-(OpenSSL 3.6.5) reject `R` = identity with `S = k·a` under an ordinary
-key, a signature the cofactorless check accepts and Node.js 22, Python,
-Go and the browsers accepted; they also differ on four signatures under
+two that no longer agree. Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0
+(OpenSSL 3.5.8) refuse `R` = identity, which Node.js 22.23.2 accepts:
+with `S = k·a` under an ordinary key, a signature the cofactorless
+check accepts and Python, Go and the browsers accepted too. Which
+change in Node.js or OpenSSL causes this is not established. The two
+newer lines also differ on four signatures under
 small-order keys, which the key rule already refused. And WebKit on
 Linux (Playwright 1.64, WebKit 27.2) rejects a signature under a
 mixed-order key with `k` ≡ 0 mod 8, which every other verifier
@@ -475,7 +481,7 @@ For VAOS 2.0 specifically:
 |                                     | a verifier's stack or makes verifiers in different languages disagree.                                                  |
 | Verifiers that accept different     | Every verifier makes the checks of §7.3, the strict profile, before its Ed25519 library: `S < L`, and `A` and `R`        |
 | signatures                          | canonical encodings of points of order `L` (no small-order or mixed-order points). On what passes them, cofactored      |
-|                                     | and cofactorless libraries agree, Node.js 24.22's refusal of a small-order `R` included. (Amended 30 October 2026.)     |
+|                                     | and cofactorless libraries agree, as do Node.js 24.22.1 and 26.10.0, which refuse `R` = identity. (Amended 30 Oct 2026.) |
 
 ---
 
