@@ -348,7 +348,7 @@ func TestStrict_ExportedPreChecksOnTheFixtures(t *testing.T) {
 func TestStrict_ExportedPreChecksOnWrongLengths(t *testing.T) {
 	pub := strictPub()
 	sig := sigWithR(edScalarMult(rScalar, edBase), strictMsg, pub, rScalar)
-	for _, k := range [][]byte{nil, {}, pub[:31], append(append([]byte(nil), pub...), 0)} {
+	for _, k := range [][]byte{nil, ed25519.PublicKey(nil), {}, pub[:31], append(append([]byte(nil), pub...), 0)} {
 		if got := Ed25519PublicKeyProblem(k); got != "public key is not 32 bytes" {
 			t.Fatalf("key of %d bytes: %q", len(k), got)
 		}

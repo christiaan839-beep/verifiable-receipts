@@ -152,11 +152,11 @@ def ed25519_public_key_problem(raw: bytes) -> str | None:
 
     Returns:
         The reason, or None. An argument that is not bytes, bytearray or
-        memoryview gets "signature does not verify under the supplied
-        public key", as in ``verify_ed25519``; it never raises.
+        memoryview gets "public key is not 32 bytes", as in TypeScript
+        and Go; it never raises.
     """
     if not isinstance(raw, _BYTES_LIKE):
-        return _SIGNATURE_DOES_NOT_VERIFY
+        return "public key is not 32 bytes"
     return _cached_key_problem(bytes(raw))
 
 
@@ -181,7 +181,8 @@ def ed25519_signature_problem(signature: bytes) -> str | None:
     Returns:
         The reason, or None. An argument that is not bytes, bytearray or
         memoryview gets "signature does not verify under the supplied
-        public key", as in ``verify_ed25519``; it never raises.
+        public key", the reason of a wrong length, as in TypeScript and
+        Go; it never raises.
     """
     if not isinstance(signature, _BYTES_LIKE):
         return _SIGNATURE_DOES_NOT_VERIFY

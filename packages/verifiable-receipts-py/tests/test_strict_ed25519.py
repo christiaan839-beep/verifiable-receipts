@@ -239,8 +239,8 @@ def test_the_public_pre_checks_give_each_fixtures_reason(path: Path) -> None:
     "bad", [32, 64, -1, "x" * 32, "x" * 64, None, [1, 2], 1.5, {"key": b"x"}]
 )
 def test_the_public_pre_checks_refuse_inputs_that_are_not_bytes(bad: object) -> None:
-    # As verify_ed25519 does: the generic reason, never an exception.
-    assert ed25519_public_key_problem(bad) == GENERIC  # type: ignore[arg-type]
+    # The reason of a wrong length, as in TypeScript and Go; never an exception.
+    assert ed25519_public_key_problem(bad) == "public key is not 32 bytes"  # type: ignore[arg-type]
     assert ed25519_signature_problem(bad) == GENERIC  # type: ignore[arg-type]
 
 

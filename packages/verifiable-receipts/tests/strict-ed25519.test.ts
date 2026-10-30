@@ -240,3 +240,52 @@ describe("the exported pre-checks on the Ed25519 fixtures", () => {
     });
   }
 });
+
+/**
+ * The exported pre-checks take a Uint8Array (a Buffer included) and
+ * nothing else: anything else gets the reason of a wrong length, as in
+ * Python and Go, and never throws. A Uint32Array is not one: its
+ * elements are not bytes.
+ */
+describe("the exported pre-checks on inputs that are not a Uint8Array", () => {
+  const KEY_LENGTH = "public key is not 32 bytes";
+  const sig = sigWithR(scalarMult(R_SCALAR, BASE), MSG, PUB, R_SCALAR);
+  const bad: unknown[] = [
+    undefined,
+    null,
+    42,
+    "x".repeat(32),
+    "x".repeat(64),
+    {},
+    { length: 32 },
+    Array.from(PUB),
+    Array.from(sig),
+    new Array(32).fill(256),
+    new Array(64).fill(256),
+    new Uint32Array(32),
+    new Uint32Array(64),
+    new Uint16Array(32),
+    new Int8Array(64),
+    PUB.buffer.slice(0, 32),
+    new DataView(new ArrayBuffer(32)),
+  ];
+  for (const [i, value] of bad.entries()) {
+    const name = `${i}: ` + (value === null ? "null" : Array.isArray(value) ? `array of ${value.length}` : (value?.constructor?.name ?? typeof value));
+    it(name, () => {
+      expect(() => ed25519PublicKeyProblem(value as Uint8Array)).not.toThrow();
+      expect(() => ed25519SignatureProblem(value as Uint8Array)).not.toThrow();
+      expect(ed25519PublicKeyProblem(value as Uint8Array)).toBe(KEY_LENGTH);
+      expect(ed25519SignatureProblem(value as Uint8Array)).toBe(GENERIC);
+    });
+  }
+
+  it("a Buffer and a plain Uint8Array are both accepted, with the same answers", () => {
+    for (const wrap of [(b: Uint8Array) => Buffer.from(b), (b: Uint8Array) => new Uint8Array(b)]) {
+      expect(ed25519PublicKeyProblem(wrap(PUB))).toBeNull();
+      expect(ed25519PublicKeyProblem(wrap(encode(T8)))).toBe("public key is a small-order point");
+      expect(ed25519PublicKeyProblem(wrap(PUB.subarray(0, 31)))).toBe(KEY_LENGTH);
+      expect(ed25519SignatureProblem(wrap(sig))).toBeNull();
+      expect(ed25519SignatureProblem(wrap(sig.subarray(0, 63)))).toBe(GENERIC);
+    }
+  });
+});

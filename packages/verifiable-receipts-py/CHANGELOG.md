@@ -49,8 +49,9 @@ are in the git history only.
   a signature's R and S, is refused, or `None`. The same reasons, in the
   same order, as TypeScript `ed25519PublicKeyProblem` and
   `ed25519SignatureProblem`. An argument that is not bytes, bytearray or
-  memoryview gets `signature does not verify under the supplied public
-  key`, as in `verify_ed25519`; neither raises.
+  memoryview gets the reason of a wrong length, as in TypeScript and Go:
+  `public key is not 32 bytes` for a key, `signature does not verify
+  under the supplied public key` for a signature; neither raises.
 - `parse_receipt(text)` reads a receipt from JSON text, counting its
   depth on the text first: it raises `ValueError("receipt nesting
   deeper than 64")` at any depth, a duplicate key the parser discards

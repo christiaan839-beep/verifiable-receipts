@@ -15,6 +15,14 @@ published: the release workflow failed before publishing (fixed in
 
 ### Security
 
+- `ed25519PublicKeyProblem` and `ed25519SignatureProblem` take a
+  `Uint8Array` (a `Buffer` included) and nothing else. Anything else,
+  such as `null`, a string, a `number[]` or a `Uint32Array`, gets the
+  reason of a wrong length (`public key is not 32 bytes`, `signature
+  does not verify under the supplied public key`), as in Python and Go.
+  Before, `null` threw, a string got a curve reason or threw, and a
+  `number[]` with elements over 255 was read two different ways.
+
 - Ed25519 signatures are verified under a strict profile (VAOS 2.0
   §7.3, amended 30 October 2026), so every verifier gives one verdict.
   Before, Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL 3.5.8)
