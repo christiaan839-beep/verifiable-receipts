@@ -1,7 +1,7 @@
 # @sovereignos/verifiable-receipts
 
 TypeScript library for signing receipts for AI agent actions and
-verifying them later. Version 0.5.0, Apache-2.0. Not on npm yet:
+verifying them later. Version 0.5.1, Apache-2.0. Not on npm yet:
 install it from the repository (see the [root README](../../README.md)).
 
 Node 22.12 or later. One runtime dependency,
