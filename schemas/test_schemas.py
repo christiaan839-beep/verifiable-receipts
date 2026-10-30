@@ -84,6 +84,8 @@ def test_fixture_fits_the_fixture_schema(path: Path) -> None:
 def test_wire_object_matches_the_expected_outcome(path: Path) -> None:
     fixture = _load(path)
     assert isinstance(fixture, dict)
+    if "ed25519" in fixture:
+        return  # one raw signature (hex), no wire object to check
     if "receiptText" in fixture:
         wire, validator = json.loads(fixture["receiptText"]), _validator("receipt.schema.json")
     elif "receipt" in fixture:

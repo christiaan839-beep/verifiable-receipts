@@ -18,7 +18,7 @@ import { createPublicKey } from "node:crypto";
 
 import { verifyInclusionProof } from "../src/transparency.js";
 // The harness's own v2 verifier, shared with roundtrip/verify.mjs.
-import { parseReceipt, verifyV2Receipt } from "./verify-v2.mjs";
+import { parseReceipt, verifyEd25519Strict, verifyV2Receipt } from "./verify-v2.mjs";
 
 const FIXTURES_DIR = join(__dirname, "fixtures");
 const PUBLIC_KEY_PEM = readFileSync(join(__dirname, "public-key.pem"));
@@ -68,6 +68,23 @@ describe("Cross-language conformance — TypeScript verifier", () => {
   });
 
   for (const fixture of fixtures) {
+    // One Ed25519 signature, as hex, checked with verifyEd25519Strict.
+    if ("ed25519" in fixture) {
+      const f = fixture as unknown as {
+        ed25519: { publicKey: string; message: string; signature: string };
+        description: string;
+        expected: { ok: boolean; reasonContains?: string };
+      };
+      it(`${fixture.__filename} — ${f.description}`, () => {
+        const hex = (s: string) => Buffer.from(s, "hex");
+        const result = verifyEd25519Strict(hex(f.ed25519.publicKey), hex(f.ed25519.message), hex(f.ed25519.signature));
+        expect(result.ok).toBe(f.expected.ok);
+        if (f.expected.reasonContains && !result.ok) {
+          expect(result.reason ?? "").toMatch(new RegExp(f.expected.reasonContains, "i"));
+        }
+      });
+      continue;
+    }
     // A receipt given as text (receiptText) is read with parseReceipt,
     // which counts depth on the text; a refusal is a rejection.
     if ("receiptText" in fixture) {
@@ -113,7 +130,7 @@ describe("Cross-language conformance — TypeScript verifier", () => {
       } else {
         const name = (fixture as { __filename: string }).__filename;
         throw new Error(
-          `unknown fixture shape in ${name} — must contain "receipt" or "leafHashHex"`,
+          `unknown fixture shape in ${name} — must contain "receipt", "receiptText", "ed25519" or "leafHashHex"`,
         );
       }
     });

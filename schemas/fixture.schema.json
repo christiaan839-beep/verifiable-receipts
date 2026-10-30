@@ -30,6 +30,22 @@
         }
       }
     },
+    {
+      "required": ["ed25519"],
+      "properties": {
+        "ed25519": {
+          "description": "One Ed25519 signature, checked with each language's strict Ed25519 verification (VAOS 2.0 section 7.3): the raw public key, the message and the signature (R || S), as lowercase hex.",
+          "type": "object",
+          "required": ["publicKey", "message", "signature"],
+          "properties": {
+            "publicKey": { "type": "string", "pattern": "^([0-9a-f]{2})*$" },
+            "message": { "type": "string", "pattern": "^([0-9a-f]{2})*$" },
+            "signature": { "type": "string", "pattern": "^([0-9a-f]{2})*$" }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
     { "required": ["leafHashHex", "leafIndex", "treeSize", "auditPath", "rootHashHex"] }
   ]
 }
