@@ -7,7 +7,7 @@ Earlier changes are in the git history only.
 
 ## [Unreleased]
 
-## [0.1.0] — 2026-10-29
+## [0.1.0] — 2026-10-30
 
 ### Security
 
