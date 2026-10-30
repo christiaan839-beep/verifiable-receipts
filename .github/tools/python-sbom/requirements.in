@@ -1,0 +1,7 @@
+# The SBOM generator for the Python release files (.github/release/build.sh),
+# installed by hash. Regenerate requirements.txt after a change here, and
+# runtime.txt (the runtime dependencies the SBOM lists, compiled from the
+# package's pyproject.toml) with each dependency change there:
+#   uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 --exclude-newer <14 days ago> -o requirements.txt requirements.in
+#   uv pip compile --generate-hashes --python-version 3.12 --python-platform x86_64-manylinux_2_28 --exclude-newer <14 days ago> -o runtime.txt ../../../packages/verifiable-receipts-py/pyproject.toml
+cyclonedx-bom==7.5.0

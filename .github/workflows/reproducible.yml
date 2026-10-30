@@ -1,0 +1,109 @@
+# Reproducible builds: builds each package's release files twice, with the
+# release build script (.github/release/build.sh), and fails if any byte
+# differs. The second build runs on another runner image, about two minutes
+# later, under umask 077 (so the checkout's file modes differ), with another
+# time zone and locale, from a deeper checkout path. Runs on every pull
+# request, so reproducibility cannot regress, and on main.
+#
+# Actions are pinned to full commit SHAs (the tag in the comment). The token
+# is read-only and checkout does not keep it.
+name: reproducible
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions: {}
+concurrency:
+  group: reproducible-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    name: Build ${{ matrix.package }} (${{ matrix.build }})
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js, py, go]
+        build: [first, second]
+        include:
+          - build: first
+            runner: ubuntu-24.04
+            path: src
+          - build: second
+            runner: ubuntu-22.04
+            path: a/much/deeper/checkout
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the code
+    steps:
+      - name: Start later than the first build
+        if: matrix.build == 'second'
+        run: sleep 120
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the Go zip's pseudo-version needs the tags
+          path: ${{ matrix.path }}
+      - name: Another umask's file modes
+        if: matrix.build == 'second'
+        working-directory: ${{ matrix.path }}
+        run: chmod -R go-rwx . && touch -d '2001-02-03 04:05:06' packages/*/*
+      - uses: $/.github/actions/release-toolchain
+        with:
+          package: ${{ matrix.package }}
+          root: ${{ matrix.path }}
+      - name: Build
+        working-directory: ${{ matrix.path }}
+        env:
+          PACKAGE: ${{ matrix.package }}
+          OUT: ${{ runner.temp }}/out-${{ matrix.build }}
+          BUILD: ${{ matrix.build }}
+        run: |
+          if [ "$BUILD" = second ]; then
+            umask 077
+            export TZ=Pacific/Kiritimati LANG=de_DE.UTF-8
+          fi
+          .github/release/build.sh "$PACKAGE" "$OUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: repro-${{ matrix.package }}-${{ matrix.build }}
+          path: ${{ runner.temp }}/out-${{ matrix.build }}/
+          if-no-files-found: error
+
+  compare:
+    name: Compare ${{ matrix.package }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js, py, go]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: repro-${{ matrix.package }}-*
+          path: ${{ runner.temp }}/repro
+      - name: The two builds are byte-identical
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/repro"
+          (cd "repro-$PACKAGE-first" && sha256sum -- *) > first.sha256
+          (cd "repro-$PACKAGE-second" && sha256sum -- *) > second.sha256
+          {
+            echo "### $PACKAGE"
+            echo '```'
+            cat first.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! diff -u first.sha256 second.sha256; then
+            echo "::error::the $PACKAGE release files differ between the two builds"
+            for f in "repro-$PACKAGE-first"/*; do
+              cmp "$f" "repro-$PACKAGE-second/$(basename "$f")" || true
+            done
+            exit 1
+          fi
+          echo "identical:"; cat first.sha256

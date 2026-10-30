@@ -59,6 +59,19 @@ published: the release workflow failed before publishing (fixed in
   the build of `js-v0.5.0` failed with ENOENT before anything was
   published (#35).
 
+### Release
+
+- The release is built reproducibly, with SLSA v1.0 Build Level 3
+  provenance (signed by the reusable workflow
+  `.github/workflows/build.yml`) and a CycloneDX SBOM, itself attested,
+  for each file. The GitHub release for `js-v0.5.1` has
+  `sovereignos-verifiable-receipts-0.5.1.tgz`, an SBOM (`FILE.cdx.json`)
+  and the provenance and SBOM attestation bundles
+  (`FILE.provenance.sigstore.json`, `FILE.sbom.sigstore.json`) for each,
+  and `SHA256SUMS`. The tarball npm publishes is the attested one, byte
+  for byte; the release workflow checks it before staging. RELEASING.md
+  ("Verifying a release", "Rebuilding a release") has the commands.
+
 ## [0.5.0] — 2026-10-30
 
 ### Changed

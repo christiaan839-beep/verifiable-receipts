@@ -40,5 +40,44 @@ not affect this code (report those upstream).
 ## Supported versions
 
 Fixes go into `main` and the latest release of each package (npm,
-PyPI and the Go module); older versions are not patched. Releases are
-built and published from CI with signed provenance (see `RELEASING.md`).
+PyPI and the Go module); older versions are not patched.
+
+## Verifying a release
+
+Releases are built and published from CI, never from a maintainer's
+machine. Each release file has:
+
+- SLSA v1.0 Build Level 3 provenance, signed (Sigstore, through GitHub
+  artifact attestations) by the reusable workflow
+  `.github/workflows/build.yml`;
+- a CycloneDX SBOM, `FILE.cdx.json`, attested by the same workflow;
+- a reproducible build: rebuilding the tagged commit with
+  `.github/release/build.sh` gives the same bytes, and CI checks that on
+  every pull request.
+
+Verify a file (here the npm tarball; RELEASING.md has the other packages):
+
+```
+gh attestation verify sovereignos-verifiable-receipts-0.5.1.tgz \
+  --repo christiaan839-beep/verifiable-receipts \
+  --signer-workflow christiaan839-beep/verifiable-receipts/.github/workflows/build.yml \
+  --source-ref refs/tags/js-v0.5.1 --deny-self-hosted-runners
+gh attestation verify sovereignos-verifiable-receipts-0.5.1.tgz \
+  --repo christiaan839-beep/verifiable-receipts \
+  --signer-workflow christiaan839-beep/verifiable-receipts/.github/workflows/build.yml \
+  --source-ref refs/tags/js-v0.5.1 --deny-self-hosted-runners \
+  --predicate-type https://cyclonedx.org/bom
+```
+
+and rebuild it:
+
+```
+git checkout js-v0.5.1
+.github/release/build.sh js ../rebuild
+(cd ../rebuild && sha256sum --check --ignore-missing /path/to/release/SHA256SUMS)
+```
+
+Pin both `--signer-workflow` and `--source-ref`: without the first, a
+file signed by any workflow of this repository passes; without the
+second, so does a dry-run build from a branch. A file that fails any of
+these checks did not come from a release; please report it as above.

@@ -40,6 +40,21 @@ Earlier changes are in the git history only.
   `ed25519SignatureProblem`; a key that is not 32 bytes gets `public key
   is not 32 bytes`.
 
+### Release
+
+- The release is built reproducibly, with SLSA v1.0 Build Level 3
+  provenance (signed by the reusable workflow
+  `.github/workflows/build.yml`) and a CycloneDX SBOM, itself attested,
+  for each file. The GitHub release for
+  `packages/verifiable-receipts-go/v0.2.0` has
+  `verifiable-receipts-go-v0.2.0.zip`, an SBOM (`FILE.cdx.json`) and the
+  provenance and SBOM attestation bundles
+  (`FILE.provenance.sigstore.json`, `FILE.sbom.sigstore.json`) for each,
+  and `SHA256SUMS`. The zip is the module zip, the same bytes
+  `proxy.golang.org` serves (the release workflow checks it) and the zip
+  the `go.sum` hash covers. RELEASING.md ("Verifying a release",
+  "Rebuilding a release") has the commands.
+
 ## [0.1.0] — 2026-10-30
 
 ### Security
