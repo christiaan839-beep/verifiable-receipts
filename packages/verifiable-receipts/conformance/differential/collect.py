@@ -8,9 +8,12 @@ from <out-dir>, the first <max-cases> (default 50) entries of
 disagreements.jsonl, and those entries' lines of cases.jsonl as
 cases-failing.jsonl. run.json gains the number of disagreements, how
 many are included, and the command that reruns the whole run: the seed
-gives back the same cases and key. Files that a failed run did not get
-to write are left out. cases.jsonl is read a line at a time and never
-copied, so the result stays small however many cases there were.
+gives back the same cases and key. run.json is written first, so it is
+there whatever stops the collection. A disagreements.jsonl line that
+does not parse (compare.py killed mid-write) is skipped and counted in
+run.json. Files that a failed run did not get to write are left out.
+cases.jsonl is read a line at a time and never copied, so the result
+stays small however many cases there were.
 """
 
 from __future__ import annotations
@@ -34,20 +37,36 @@ def main() -> int:
     run: dict[str, object] = {}
     if (out / "run.json").exists():
         run = json.loads((out / "run.json").read_text(encoding="utf-8"))
+    if "cases" in run and "seed" in run:
+        run["reproduce"] = (
+            "bash packages/verifiable-receipts/conformance/differential/run.sh "
+            f"{run['cases']} {run['seed']} <out-dir>"
+        )
 
-    total, wanted = 0, set()
+    def write_run() -> None:
+        (repro / "run.json").write_text(json.dumps(run, indent=2) + "\n", encoding="utf-8")
+
+    write_run()
+
+    total, skipped, wanted = 0, 0, set()
     if (out / "disagreements.jsonl").exists():
         with (
             (out / "disagreements.jsonl").open(encoding="utf-8") as src,
             (repro / "disagreements.jsonl").open("w", encoding="utf-8") as dst,
         ):
             for line in src:
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    skipped += 1
+                    continue
                 total += 1
                 if total <= limit:
-                    dst.write(line)
-                    case_id = json.loads(line).get("id")
-                    if isinstance(case_id, int):
-                        wanted.add(case_id)
+                    dst.write(line if line.endswith("\n") else line + "\n")
+                    if isinstance(entry.get("id"), int):
+                        wanted.add(entry["id"])
+    run.update(disagreements=total, included=min(total, limit), skipped=skipped)
+    write_run()
 
     if wanted and (out / "cases.jsonl").exists():
         last = max(wanted)
@@ -63,13 +82,6 @@ def main() -> int:
                 if case_id >= last:
                     break
 
-    run.update(disagreements=total, included=min(total, limit))
-    if "cases" in run and "seed" in run:
-        run["reproduce"] = (
-            "bash packages/verifiable-receipts/conformance/differential/run.sh "
-            f"{run['cases']} {run['seed']} <out-dir>"
-        )
-    (repro / "run.json").write_text(json.dumps(run, indent=2) + "\n", encoding="utf-8")
     print(f"{min(total, limit)} of {total} disagreement(s) collected in {repro}")
     return 0
 

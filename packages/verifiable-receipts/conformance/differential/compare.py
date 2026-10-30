@@ -9,8 +9,9 @@ the cases go to <disagreements.jsonl> with each verifier's verdict.
 
 Each runner writes one verdict per case, in case order, so the four
 files are read a line at a time, side by side: memory does not grow
-with the number of cases. A verdict missing, extra or out of order
-fails the run ("missing verdict"), and the comparison stops there.
+with the number of cases. A verdict missing, extra or out of order, or
+a verdict line that does not parse, fails the run ("missing verdict"),
+and the comparison stops there.
 """
 
 from __future__ import annotations
@@ -26,8 +27,16 @@ SHOWN = 10  # disagreements printed; all are written to the file
 
 
 def next_verdict(fh: IO[str]) -> dict[str, Any] | None:
+    """The next verdict, None at the end, or a stand-in with no id for a
+    line that does not parse (blank, or cut off by a runner that died),
+    which the caller reports as a missing verdict."""
     line = fh.readline()
-    return json.loads(line) if line else None
+    if not line:
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return {"id": None, "unparsed": line[:200]}
 
 
 def main() -> int:
@@ -52,7 +61,7 @@ def main() -> int:
             read = {n: next_verdict(fh) for n, fh in zip(NAMES, files, strict=True)}
             verdicts = {n: v for n, v in read.items() if v is not None and v["id"] == case["id"]}
             if len(verdicts) < len(NAMES):
-                report({**case, "verdicts": read, "why": "missing verdict"})
+                report({"why": "missing verdict", **case, "verdicts": read})
                 break
             oks = {n: v["ok"] for n, v in verdicts.items()}
             reasons = {n: v.get("reason") for n, v in verdicts.items()}
@@ -75,7 +84,7 @@ def main() -> int:
         else:
             extra = {n: next_verdict(fh) for n, fh in zip(NAMES, files, strict=True)}
             if any(v is not None for v in extra.values()):
-                report({"verdicts": extra, "why": "missing verdict"})
+                report({"why": "missing verdict", "verdicts": extra})
     for k in sorted(stats):
         print(f"  {k} by all three: {stats[k]}")
     if bad_count:
