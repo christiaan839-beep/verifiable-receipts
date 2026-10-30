@@ -85,7 +85,7 @@ v3=<base64 Ed25519 signature>.<base64 ML-DSA-65 signature>
 
 Both halves sign the same `canonical` bytes. ML-DSA-65 is pure
 ML-DSA (FIPS 204 ML-DSA.Sign) with an empty context string, as
-implemented by `@noble/post-quantum` 0.6. The literal `.` is the only
+implemented by `@noble/post-quantum` 0.7. The literal `.` is the only
 separator.
 
 ```ts
