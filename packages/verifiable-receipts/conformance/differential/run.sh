@@ -7,10 +7,18 @@
 # case and prefixes, index and size edge values). Each verifier parses
 # each case with its own JSON parser. compare.py fails on any
 # disagreement or exception and writes the cases to disagreements.jsonl.
+# Every stage reads and writes its JSONL a line at a time, and each
+# runner writes its verdicts in case order, so compare.py reads the four
+# files side by side: memory stays flat at any number of cases.
 #
 # Needs node 22+ with packages/verifiable-receipts built, python 3.10+
 # with `cryptography`, and go 1.22+. The Python package is read from the
 # working tree (PYTHONPATH).
+#
+# The seed decides the cases and the signing key, so a run is reproduced
+# by repeating it with the same case count and seed; run.json in the
+# out-dir records both, and summary.txt keeps compare.py's report.
+# collect.py gathers what a failed run needs, without cases.jsonl.
 #
 # Usage: bash run.sh [cases] [seed] [out-dir]   (defaults: 2000, 1, a temp dir)
 set -euo pipefail
@@ -34,10 +42,11 @@ if [ -z "$OUT" ]; then
 fi
 mkdir -p "$OUT"
 
+printf '{"cases": %d, "seed": %d}\n' "$CASES" "$SEED" > "$OUT/run.json"
 "$PYTHON" "$HERE/gen.py" "$OUT" "$CASES" "$SEED"
 (cd "$HERE/go" && go build -o "$OUT/verify-go" .)
 node "$HERE/verify.mjs" "$OUT/public.pem" "$OUT/cases.jsonl" "$OUT/ts.jsonl"
 "$PYTHON" "$HERE/verify.py" "$OUT/public.pem" "$OUT/cases.jsonl" "$OUT/py.jsonl"
 "$OUT/verify-go" "$OUT/public.pem" "$OUT/cases.jsonl" "$OUT/go.jsonl"
 "$PYTHON" "$HERE/compare.py" "$OUT/cases.jsonl" "$OUT/ts.jsonl" "$OUT/py.jsonl" "$OUT/go.jsonl" \
-  "$OUT/disagreements.jsonl"
+  "$OUT/disagreements.jsonl" | tee "$OUT/summary.txt"

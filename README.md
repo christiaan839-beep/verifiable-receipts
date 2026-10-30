@@ -184,7 +184,7 @@ Limits of the implementation:
   Ed25519 if the verifier refuses `v2=` from an issuer that signs
   `v3=`. The `verifiable-receipts verify` CLI refuses `v3=` manifests
   rather than check half of them.
-- **ML-DSA-65** comes from `@noble/post-quantum` 0.6.1, which its
+- **ML-DSA-65** comes from `@noble/post-quantum` 0.7.1, which its
   authors describe as self-audited, not independently audited. Only
   the TypeScript package signs or verifies it.
 - **Threshold envelopes** carry their own policy (`m`, `n`, issuer

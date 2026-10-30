@@ -6,6 +6,11 @@ and this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `SPEC.md` names `@noble/post-quantum` 0.7, the version the package
+  depends on (`^0.7.1`); it said 0.6.
+
 ## [0.5.0] — 2026-10-29
 
 ### Changed

@@ -191,7 +191,7 @@ fails if they disagree on any of them or if one raises. On a receipt the
 three must also give the same failure reason; on a Guardian attestation
 Python and Go must, while the TypeScript library, which names its
 reasons its own way (`nesting-too-deep`), must give the same verdict. `gen.py` signs fresh receipts with a
-throwaway key and builds valid inclusion proofs for arbitrary indexes and
+throwaway key derived from the seed and builds valid inclusion proofs for arbitrary indexes and
 tree sizes (by folding a random audit path), then mutates most cases
 once or twice: signature spellings (line breaks, padding bits, the
 URL-safe alphabet, prefixes), `contentHash` forms, canonical text,
@@ -216,7 +216,12 @@ bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
 
 The arguments are the number of cases and the seed. The `fuzz` workflow
 runs 20,000 cases with seed 1 on every pull request and a million with a
-new seed every night; disagreements are uploaded as an artifact. Its
+new seed every night. The seed decides the cases and the key, so the same
+count and seed give byte-identical cases and verdicts. When a run fails,
+`collect.py` gathers `run.json` (the count and seed), `summary.txt`,
+`public.pem`, the first 50 disagreements and their lines of `cases.jsonl`,
+and the workflow uploads only that as an artifact; `run.json` holds the
+command that reruns the whole run. Its
 first runs found the Python and Go proof verifiers accepting tree sizes
 above 2^53 − 1, and the three receipt verifiers comparing integers above
 2^53 in envelope fields differently; both are fixed and in the specs.

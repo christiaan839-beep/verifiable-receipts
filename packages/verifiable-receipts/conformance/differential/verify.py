@@ -2,8 +2,9 @@
 Judges every case in cases.jsonl with the Python verifiers.
 
 Usage: python verify.py <public.pem> <cases.jsonl> <out.jsonl>
-Writes one {"id", "ok", "reason"} line per case; "threw" records an
-exception, which the verifiers must never raise. Receipts and Guardian
+Writes one {"id", "ok", "reason"} line per case, in case order, as it
+judges it; "threw" records an exception, which the verifiers must never
+raise. Receipts and Guardian
 attestations are read with parse_receipt, which gives the verifiers'
 reason for a receipt nested deeper than 64; any other text that does
 not parse has the reason "parse failed", as in the other runners.
@@ -47,8 +48,7 @@ def main() -> int:
     key_path, cases_path, out_path = sys.argv[1:]
     with open(key_path, "rb") as fh:
         pem = fh.read()
-    lines = []
-    with open(cases_path, encoding="utf-8") as fh:
+    with open(cases_path, encoding="utf-8") as fh, open(out_path, "w", encoding="utf-8") as out:
         for line in fh:
             case = json.loads(line)
             verdict: dict[str, object] = {"id": case["id"]}
@@ -56,9 +56,7 @@ def main() -> int:
                 verdict["ok"], verdict["reason"] = judge(case["kind"], case["raw"], pem)
             except Exception as err:  # noqa: BLE001 - recorded, and fails the run
                 verdict.update(ok=False, threw=repr(err))
-            lines.append(json.dumps(verdict))
-    with open(out_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+            out.write(json.dumps(verdict) + "\n")
     return 0
 
 
