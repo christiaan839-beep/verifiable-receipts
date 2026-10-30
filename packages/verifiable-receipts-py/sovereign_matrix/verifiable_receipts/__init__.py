@@ -14,6 +14,8 @@ Public API:
     verify_v2_receipt(receipt, public_key_pem) -> VerifyResult
     verify_guardian_attestation(attestation, public_key_pem) -> VerifyResult
     verify_ed25519(public_key, message, signature) -> VerifyResult
+    ed25519_public_key_problem(raw) -> str | None
+    ed25519_signature_problem(signature) -> str | None
     parse_receipt(text) -> dict
     verify_inclusion_proof(proof, leaf_hash_hex, root_hash_hex) -> bool
     leaf_hash(data) -> bytes, inner_hash(left, right) -> bytes
@@ -30,6 +32,8 @@ from .transparency import (
 )
 from .verify import (
     VerifyResult,
+    ed25519_public_key_problem,
+    ed25519_signature_problem,
     parse_receipt,
     verify_ed25519,
     verify_guardian_attestation,
@@ -44,6 +48,8 @@ __all__ = [
     "parse_receipt",
     "verify_guardian_attestation",
     "verify_ed25519",
+    "ed25519_public_key_problem",
+    "ed25519_signature_problem",
     "verify_inclusion_proof",
     "leaf_hash",
     "inner_hash",

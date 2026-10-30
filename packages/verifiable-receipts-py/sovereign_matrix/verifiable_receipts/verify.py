@@ -118,16 +118,12 @@ _SMALL_ORDER_KEYS = frozenset(
 _P = 2**255 - 19
 
 
-@lru_cache(maxsize=256)
-def _ed25519_key_problem(raw: bytes) -> str | None:
-    """Why a raw Ed25519 public key is refused (VAOS 2.0 section 7.3), or None.
+_SIGNATURE_DOES_NOT_VERIFY = "signature does not verify under the supplied public key"
+_BYTES_LIKE = (bytes, bytearray, memoryview)
 
-    In order: a length other than 32; a point of small order by the
-    blocklist (sign bit cleared); y of p or more; a y with no x on the
-    curve; a point of small order; a point outside the prime-order
-    subgroup (mixed order). The answer depends only on the key, so it
-    is cached.
-    """
+
+@lru_cache(maxsize=256)
+def _cached_key_problem(raw: bytes) -> str | None:
     if len(raw) != 32:
         return "public key is not 32 bytes"
     cleared = raw[:31] + bytes([raw[31] & 0x7F])
@@ -139,19 +135,58 @@ def _ed25519_key_problem(raw: bytes) -> str | None:
     return None if problem is None else "public key is " + problem
 
 
-_SIGNATURE_DOES_NOT_VERIFY = "signature does not verify under the supplied public key"
+def ed25519_public_key_problem(raw: bytes) -> str | None:
+    """Why a raw Ed25519 public key is refused (VAOS 2.0 section 7.3), or None.
+
+    In order: "public key is not 32 bytes"; "public key is a small-order
+    point" (the blocklist, sign bit cleared); "public key is not a
+    canonical encoding" (y of p or more); "public key is not a point on
+    the curve"; "public key is a small-order point"; "public key is not
+    in the prime-order subgroup" (mixed order). The same reasons, in the
+    same order, as TypeScript ``ed25519PublicKeyProblem`` and Go
+    ``Ed25519PublicKeyProblem``. The answer depends only on the key, so
+    it is cached.
+
+    Args:
+        raw: The raw public key, as bytes, bytearray or memoryview.
+
+    Returns:
+        The reason, or None. An argument that is not bytes, bytearray or
+        memoryview gets "public key is not 32 bytes", as in TypeScript
+        and Go; it never raises.
+    """
+    if not isinstance(raw, _BYTES_LIKE):
+        return "public key is not 32 bytes"
+    return _cached_key_problem(bytes(raw))
 
 
-def _ed25519_signature_problem(signature: bytes) -> str | None:
-    """Why a signature is rejected before the library sees it, or None.
+def ed25519_signature_problem(signature: bytes) -> str | None:
+    """Why a signature is rejected before the signature check, or None.
 
     VAOS 2.0 section 7.3, the strict profile: the signature is 64 bytes,
     R (its first 32) is a canonical encoding of a point on the curve
     that is not of small order (the identity included) and is in the
-    prime-order subgroup, and S (its last 32, little-endian) is below L.
-    A wrong length or an S of L or more has the reason a failed
-    signature check has.
+    prime-order subgroup ("signature R is not a canonical encoding",
+    "... is not a point on the curve", "... is a small-order point",
+    "... is not in the prime-order subgroup"), and S (its last 32,
+    little-endian) is below L. A wrong length or an S of L or more has
+    the reason a failed signature check has. The same reasons, in the
+    same order, as TypeScript ``ed25519SignatureProblem`` and Go
+    ``Ed25519SignatureProblem``. R is never cached.
+
+    Args:
+        signature: The raw signature (R || S), as bytes, bytearray or
+            memoryview.
+
+    Returns:
+        The reason, or None. An argument that is not bytes, bytearray or
+        memoryview gets "signature does not verify under the supplied
+        public key", the reason of a wrong length, as in TypeScript and
+        Go; it never raises.
     """
+    if not isinstance(signature, _BYTES_LIKE):
+        return _SIGNATURE_DOES_NOT_VERIFY
+    signature = bytes(signature)
     if len(signature) != 64:
         return _SIGNATURE_DOES_NOT_VERIFY
     problem = edwards25519.point_problem(signature[:32])
@@ -165,8 +200,8 @@ def _ed25519_signature_problem(signature: bytes) -> str | None:
 def verify_ed25519(public_key: bytes, message: bytes, signature: bytes) -> VerifyResult:
     """Verify one Ed25519 signature under the strict profile of VAOS 2.0 section 7.3.
 
-    The key is checked first (``_ed25519_key_problem``), then R and S
-    (``_ed25519_signature_problem``), and only then does
+    The key is checked first (``ed25519_public_key_problem``), then R
+    and S (``ed25519_signature_problem``), and only then does
     ``cryptography`` run the cofactorless check, over the bytes of R
     and A as given. Under these pre-checks every correct Ed25519
     verifier, cofactored or cofactorless, gives the same verdict.
@@ -182,12 +217,11 @@ def verify_ed25519(public_key: bytes, message: bytes, signature: bytes) -> Verif
         bytearray or memoryview fails with "signature does not verify
         under the supplied public key"; it never raises.
     """
-    args = (public_key, message, signature)
-    if not all(isinstance(a, (bytes, bytearray, memoryview)) for a in args):
+    if not all(isinstance(a, _BYTES_LIKE) for a in (public_key, message, signature)):
         return VerifyResult(False, _SIGNATURE_DOES_NOT_VERIFY)
-    problem = _ed25519_key_problem(bytes(public_key))
+    problem = ed25519_public_key_problem(public_key)
     if problem is None:
-        problem = _ed25519_signature_problem(bytes(signature))
+        problem = ed25519_signature_problem(signature)
     if problem is not None:
         return VerifyResult(False, problem)
     try:
@@ -211,7 +245,7 @@ def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
         raise ValueError(
             f"expected Ed25519 public key, got {type(key).__name__}",
         )
-    problem = _ed25519_key_problem(key.public_bytes(Encoding.Raw, PublicFormat.Raw))
+    problem = ed25519_public_key_problem(key.public_bytes(Encoding.Raw, PublicFormat.Raw))
     if problem is not None:
         raise ValueError(problem)
     return key
@@ -426,7 +460,7 @@ def verify_v2_receipt(
             )
 
     # VAOS 2.0 section 7.3: R and S are checked before cryptography sees them.
-    problem = _ed25519_signature_problem(sig_bytes)
+    problem = ed25519_signature_problem(sig_bytes)
     if problem is not None:
         return VerifyResult(False, problem)
     try:

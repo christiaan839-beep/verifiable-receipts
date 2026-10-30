@@ -44,6 +44,14 @@ are in the git history only.
 
 - `verify_ed25519(public_key, message, signature)`: one raw Ed25519
   signature under the strict profile, returning a `VerifyResult`.
+- `ed25519_public_key_problem(raw)` and `ed25519_signature_problem(signature)`,
+  the two pre-checks of `verify_ed25519` on their own: why a raw key, or
+  a signature's R and S, is refused, or `None`. The same reasons, in the
+  same order, as TypeScript `ed25519PublicKeyProblem` and
+  `ed25519SignatureProblem`. An argument that is not bytes, bytearray or
+  memoryview gets the reason of a wrong length, as in TypeScript and Go:
+  `public key is not 32 bytes` for a key, `signature does not verify
+  under the supplied public key` for a signature; neither raises.
 - `parse_receipt(text)` reads a receipt from JSON text, counting its
   depth on the text first: it raises `ValueError("receipt nesting
   deeper than 64")` at any depth, a duplicate key the parser discards

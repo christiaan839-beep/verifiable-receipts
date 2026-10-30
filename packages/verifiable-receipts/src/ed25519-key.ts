@@ -45,12 +45,14 @@ const KEY_CACHE_SIZE = 256;
  * not a canonical encoding" (y of p or more); "public key is not a point
  * on the curve"; "public key is a small-order point"; "public key is not
  * in the prime-order subgroup" (mixed order). The same reasons as the
- * Python and Go verifiers. Answers are cached per key.
+ * Python and Go verifiers. Answers are cached per key. Anything that is
+ * not a Uint8Array (a Buffer is one) gets "public key is not 32 bytes",
+ * as in Python; it never throws.
  *
  * @public
  */
 export function ed25519PublicKeyProblem(raw: Uint8Array): string | null {
-  if (raw.length !== 32) return "public key is not 32 bytes";
+  if (!(raw instanceof Uint8Array) || raw.length !== 32) return "public key is not 32 bytes";
   const hex = Buffer.from(raw).toString("hex");
   const cached = keyProblems.get(hex);
   if (cached !== undefined) return cached;
@@ -78,13 +80,14 @@ export function ed25519PublicKeyProblem(raw: Uint8Array): string | null {
  * R is not a canonical encoding", "... is not a point on the curve",
  * "... is a small-order point", "... is not in the prime-order
  * subgroup"); and its S (last 32, little-endian) must be below L. A wrong
- * length or an S of L or more has the reason a failed check has. R is
- * never cached.
+ * length or an S of L or more has the reason a failed check has, and so
+ * has anything that is not a Uint8Array (a Buffer is one), as in Python;
+ * it never throws. R is never cached.
  *
  * @public
  */
 export function ed25519SignatureProblem(signature: Uint8Array): string | null {
-  if (signature.length !== 64) return DOES_NOT_VERIFY;
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return DOES_NOT_VERIFY;
   const problem = pointProblem(signature.subarray(0, 32));
   if (problem !== null) return `signature R is ${problem}`;
   const s = BigInt("0x" + Buffer.from(signature.subarray(32)).reverse().toString("hex"));
