@@ -19,6 +19,7 @@ correct on inputs the corpus does not cover.
 | `conformance.py`                                | Python harness (pytest).                                                      |
 | `../verifiable-receipts-go/conformance_test.go` | Go harness (`go test`).                                                       |
 | `generate-fixtures.mjs`                         | Regenerates the key and the v2 fixtures (see below).                          |
+| `generate-ed25519-fixtures.py`                  | Regenerates the Ed25519 edge fixtures, `fixtures/ed25519-*.json` (see below). |
 | `roundtrip/`                                    | Signs and verifies across languages with a throwaway key (see below).         |
 
 ## Fixture shape
@@ -64,6 +65,13 @@ which the harnesses use instead of `public-key.pem` (the Go harness
 parses it without `LoadEd25519PublicKeyFromPEM`, which would refuse it,
 so that `VerifyV2Receipt` gives the reason).
 
+An Ed25519 fixture holds `ed25519`: one signature, with the raw public
+key, the message and the signature (R ‖ S) as lowercase hex. The
+harnesses check it with each language's strict Ed25519 verification
+(VAOS 2.0 §7.3): TypeScript `verifyEd25519Strict` (in `verify-v2.mjs`),
+Python `verify_ed25519` and Go `VerifyEd25519`. The RFC 8032 test
+vectors use it, since their messages are not JSON objects.
+
 A text fixture holds `receiptText`, a receipt given as JSON text instead
 of `receipt`, for what parsing the fixture file would lose, such as a
 duplicate key. The harnesses read it as a caller reads a receipt from
@@ -88,8 +96,8 @@ From the root of a clone of this repository:
 ```
 
 Each harness checks every fixture against its `expected.ok`, and all
-three MUST agree. Measured on 24 October 2026: TypeScript 31 passed,
-Python 31 passed (one fixture-count check plus one test per fixture), Go
+three MUST agree. Measured on 30 October 2026: TypeScript 51 passed,
+Python 51 passed (one fixture-count check plus one test per fixture), Go
 2 tests passed with one subtest per fixture.
 
 ## Coverage today
@@ -120,6 +128,19 @@ Fixtures cover:
   identity point, under which the receipt's signature (R = identity,
   S = 0) verifies every message, refused as a small-order point · a key
   encoding y = p + 3, refused as non-canonical
+- Ed25519 edges, the strict profile of `docs/specs/vaos-2.0.md` §7.3
+  (`ed25519-*.json`, each a v2 receipt under its own key): an honest
+  signature accept · `S + L` · R the identity with S = k·a (the
+  cofactorless equation holds) · R of order 2, 4 and 8 · R of mixed
+  order under an ordinary key (only the cofactored equation holds) · R
+  and A both of mixed order with the cofactorless equation holding
+  (refused for the key) · R non-canonical (the identity as y = p + 1) ·
+  R off the curve · keys of mixed order (T8 with k ≡ 0 mod 8, T8
+  otherwise, T2 with k even, T4 otherwise) · a key of order 8 with
+  R = identity, S = 0 and k ≡ 0 mod 8 · the identity key with the sign
+  bit · a key off the curve, each reject with its reason · RFC 8032
+  §7.1 TEST 1 to 3 accept (`ed25519` fixtures). Each description says
+  what the verifiers answered before the strict profile
 - RFC 9162 inclusion proof: single-leaf · 2-leaf (idx 1) · 4-leaf
   (idx 1) · 7-leaf asymmetric (idx 4) · 7-leaf rightmost leaf (idx 6) ·
   tampered-root reject · out-of-range index
@@ -128,7 +149,7 @@ Fixtures cover:
   audit-path entry (folds to the 2-leaf root) · leafIndex 1.5 ·
   leafIndex `true` · the 2-leaf proof at treeSize 2^32 + 2
 
-30 fixtures, each checked by all 3 verifiers.
+50 fixtures, each checked by all 3 verifiers.
 
 ## How to add a fixture
 
@@ -159,6 +180,20 @@ node packages/verifiable-receipts/conformance/generate-fixtures.mjs
 This rewrites `public-key.pem` and the seventeen `v2-*.json` fixtures in
 one pass with a new key; inclusion-proof fixtures are key-independent
 and untouched. Re-run all three harnesses afterwards.
+
+## The Ed25519 edge fixtures
+
+`fixtures/ed25519-*.json` are written by `generate-ed25519-fixtures.py`,
+which builds each signature point by point with the Python verifier's
+own edwards25519 arithmetic (`edwards25519.py`), from secrets derived
+from fixed labels, so a run rewrites the same bytes. It checks, for
+each fixture, which of the cofactorless and cofactored equations hold,
+and that its arithmetic reproduces RFC 8032's TEST 1 to 3 signatures.
+
+```bash
+PYTHONPATH=packages/verifiable-receipts-py \
+    python packages/verifiable-receipts/conformance/generate-ed25519-fixtures.py
+```
 
 ## Round trip
 
@@ -204,6 +239,14 @@ whose `runId` or unsigned evidence nests near the limit or past it.
 Some receipts repeat a field, once shallow and once deep, in either
 order: the parser keeps the last copy, but the depth is counted on the
 text.
+About one receipt in ten is an Ed25519 edge case (VAOS 2.0 §7.3) under
+a key of its own, which the case carries as PEM (`pem`) and the runners
+use instead of `public.pem`: an ordinary key, or one of mixed or small
+order, off the curve or non-canonical; an R that is honest, the
+identity, of small or mixed order, non-canonical, off the curve or
+random; an S that is r + k·a, k·a, 0, plus L or random. They are built
+with the Python verifier's edwards25519 arithmetic, so some pass the
+cofactorless check of the libraries and not the strict profile.
 Each verifier parses each receipt as a caller would: TypeScript with
 `parseReceipt`, Python with `parse_receipt` and Go with `ParseReceipt`,
 which all refuse text nested deeper than 64 with the verifiers' reason
@@ -216,7 +259,10 @@ bash packages/verifiable-receipts/conformance/differential/run.sh 20000 1
 
 The arguments are the number of cases and the seed. The `fuzz` workflow
 runs 20,000 cases with seed 1 on every pull request and a million with a
-new seed every night. The seed decides the cases and the key, so the same
+new seed every night, and runs them again with the TypeScript verifier
+on Node 24 (200,000 at night): Node.js 24.22.1 (OpenSSL 3.5.9) and
+26.10.0 (OpenSSL 3.5.8) refuse R = identity, which Node.js 22.23.2
+accepts; the strict profile makes every verifier refuse it. The seed decides the cases and the key, so the same
 count and seed give byte-identical cases and verdicts. When a run fails,
 `collect.py` gathers `run.json` (the count and seed), `summary.txt`,
 `public.pem`, the first 50 disagreements and their lines of `cases.jsonl`,
@@ -228,7 +274,12 @@ above 2^53 − 1, and the three receipt verifiers comparing integers above
 Its depth cases, added on 24 October 2026, found 71 disagreements in
 20,000 cases on the verifiers of that day: TypeScript overflowed its
 stack comparing a deep field, Python rejected at its recursion limit
-and Go accepted. All three now reject nesting deeper than 64.
+and Go accepted. All three now reject nesting deeper than 64. Its
+Ed25519 edge cases, added on 30 October 2026, found 8 disagreements in
+20,000 cases (seed 1) on the verifiers as they were before the strict
+profile, with the TypeScript verifier on Node 24.22.1: R = identity
+with S = k·a, which Node refused and Python and Go accepted. They found
+none on Node 22, and none on either line with the strict profile.
 
 ## Stability
 

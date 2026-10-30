@@ -56,7 +56,8 @@ other field in the receipt agrees with it. The format is in
 | `base64` | The signature is not canonical padded base64. |
 | `v2` | Not a v2 signature (`v3=` receipts need the TypeScript verifier). |
 | `nesting deeper than 64` | Rejected as hostile input. |
-| `public key is a small-order point` / `not a canonical encoding` | The key is unsafe: every signature or many would verify. Do not trust it. |
+| `public key is a small-order point` / `not a canonical encoding` / `not a point on the curve` / `not in the prime-order subgroup` | The key is unsafe or malformed: with a small-order key every signature or many would verify, and verifiers disagree on keys of mixed order. Do not trust it. |
+| `signature R is ...` | The signature's R is not a point of order L (small order, mixed order, non-canonical or off the curve). No honest signer makes one: treat it as forged. |
 
 ## What a pass does not show
 

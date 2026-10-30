@@ -7,6 +7,33 @@ Earlier changes are in the git history only.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-30
+
+### Security
+
+- Ed25519 signatures are verified under the strict profile of VAOS 2.0
+  §7.3 (amended 30 October 2026), so this verifier, the TypeScript one
+  on Node.js 22 or 24.22 and the Python one give one verdict on every
+  signature. Before `crypto/ed25519` sees a signature, its R must be a
+  canonical encoding of a point of order L (not of small order, the
+  identity included, nor of mixed order) and its S below L; a key must
+  be a point of order L too. v0.1.0 accepted R = identity with
+  S = k*a, and Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL
+  3.5.8) refuse R = identity, which Node.js 22.23.2 accepts; it also
+  accepted keys of mixed order. So v0.1.0 is retracted
+  (`go.mod`). New reasons: `public key is not a point on the curve`,
+  `public key is not in the prime-order subgroup`, `signature R is not
+  a canonical encoding`, `signature R is not a point on the curve`,
+  `signature R is a small-order point`, `signature R is not in the
+  prime-order subgroup`. `LoadEd25519PublicKeyFromPEM` refuses the new
+  keys too; the key's answer is cached. The arithmetic uses
+  `math/big` (`edwards25519.go`); the module still has no dependencies.
+
+### Added
+
+- `VerifyEd25519(pub, message, sig)`: one raw Ed25519 signature under
+  the strict profile, returning a `VerifyResult`.
+
 ## [0.1.0] — 2026-10-30
 
 ### Security

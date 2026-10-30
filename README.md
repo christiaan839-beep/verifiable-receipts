@@ -89,8 +89,8 @@ npx verifiable-receipts-sign --input body.json --key ed25519-private.pem --out r
 **TypeScript**: Ed25519 comes from the caller (here `node:crypto`).
 
 ```ts
-import { runGuardian, verifyGuardianAttestation, outputSizeRule } from "@sovereignos/verifiable-receipts";
-import { generateKeyPairSync, sign, verify } from "node:crypto";
+import { runGuardian, verifyEd25519, verifyGuardianAttestation, outputSizeRule } from "@sovereignos/verifiable-receipts";
+import { generateKeyPairSync, sign } from "node:crypto";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 const att = await runGuardian(
@@ -99,7 +99,7 @@ const att = await runGuardian(
   (c) => "v2=" + sign(null, Buffer.from(c), privateKey).toString("base64"),
 );
 const check = verifyGuardianAttestation(att, (c, s) =>
-  s.startsWith("v2=") && verify(null, Buffer.from(c), publicKey, Buffer.from(s.slice(3), "base64")),
+  s.startsWith("v2=") && verifyEd25519(publicKey, Buffer.from(c), Buffer.from(s.slice(3), "base64")).ok,
 );
 console.log(check.ok);
 ```

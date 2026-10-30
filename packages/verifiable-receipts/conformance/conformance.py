@@ -30,6 +30,7 @@ if str(SDK_DIR) not in sys.path:
 from sovereign_matrix.verifiable_receipts import (  # noqa: E402
     VerifyResult,
     parse_receipt,
+    verify_ed25519,
     verify_inclusion_proof,
     verify_v2_receipt,
 )
@@ -61,7 +62,19 @@ def test_loads_at_least_10_fixtures(fixtures: list[dict]) -> None:
 def test_fixture_outcome_matches(fixture: dict) -> None:
     expected_ok = fixture["expected"]["ok"]
 
-    if "receiptText" in fixture:
+    if "ed25519" in fixture:
+        # One Ed25519 signature, as hex, checked with verify_ed25519.
+        vector = fixture["ed25519"]
+        verdict = verify_ed25519(
+            bytes.fromhex(vector["publicKey"]),
+            bytes.fromhex(vector["message"]),
+            bytes.fromhex(vector["signature"]),
+        )
+        assert verdict.ok is expected_ok, f"{fixture['__filename']}: got {verdict}"
+        reason_contains = fixture["expected"].get("reasonContains")
+        if reason_contains and not verdict.ok:
+            assert re.search(reason_contains, verdict.reason or "", re.IGNORECASE), verdict
+    elif "receiptText" in fixture:
         # A receipt given as text, read with its depth counted on the text.
         try:
             verdict = verify_v2_receipt(parse_receipt(fixture["receiptText"]), PUBLIC_KEY_PEM)
@@ -103,5 +116,5 @@ def test_fixture_outcome_matches(fixture: dict) -> None:
     else:
         pytest.fail(
             f"{fixture['__filename']}: unknown fixture shape — "
-            "must contain 'receipt' or 'leafHashHex'"
+            "must contain 'receipt', 'receiptText', 'ed25519' or 'leafHashHex'"
         )

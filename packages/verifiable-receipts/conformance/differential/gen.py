@@ -17,6 +17,14 @@ whose runId or unsigned evidence nests near the limit or past it. Some
 repeat a field, once shallow and once deep, in either order: the parser
 keeps the last copy, but the depth counted on the text includes both.
 
+About one receipt in ten is an Ed25519 edge case (VAOS 2.0 section 7.3)
+under a key of its own, given as PEM in the case's "pem" field: the key
+is ordinary, of mixed or small order, off the curve or non-canonical;
+R is honest, the identity, of small or mixed order, non-canonical, off
+the curve or random bytes; S is r + k*a, k*a, 0, plus L or random. The
+signatures are built with the Python verifier's edwards25519 arithmetic,
+so some of them pass the cofactorless check and not the strict profile.
+
 The seed decides everything: the same seed and count give byte-identical
 public.pem and cases.jsonl (Ed25519 signing is deterministic), so a
 failing run is reproduced by running it again with its seed.
@@ -33,6 +41,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sovereign_matrix.verifiable_receipts import edwards25519 as ed
 
 B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
@@ -337,6 +346,98 @@ def inclusion_case(rng: random.Random) -> str:
     return json.dumps(proof)
 
 
+SPKI_PREFIX = bytes.fromhex("302a300506032b6570032100")
+TORSION = [
+    ed.decode(bytes.fromhex(h))[0]
+    for h in (
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",  # order 2
+        "0000000000000000000000000000000000000000000000000000000000000000",  # order 4
+        "0000000000000000000000000000000000000000000000000000000000000080",  # order 4
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",  # order 8
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",  # order 8
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",  # order 8
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",  # order 8
+    )
+]
+
+
+def edge_pem(raw: bytes) -> str:
+    return (
+        "-----BEGIN PUBLIC KEY-----\n"
+        + base64.b64encode(SPKI_PREFIX + raw).decode()
+        + "\n-----END PUBLIC KEY-----\n"
+    )
+
+
+def off_curve(rng: random.Random) -> bytes:
+    """An encoding whose y has no x on the curve."""
+    while True:
+        data = rng.randrange(ed.P).to_bytes(32, "little")
+        if ed.decode(data)[1] == ed.NOT_ON_CURVE:
+            return data
+
+
+def non_canonical(rng: random.Random) -> bytes:
+    """y + p for y < 19, or x = 0 with the sign bit set."""
+    if rng.random() < 0.3:
+        return (rng.choice([1, ed.P - 1]) | (1 << 255)).to_bytes(32, "little")
+    return (ed.P + rng.randrange(19) | (rng.randrange(2) << 255)).to_bytes(32, "little")
+
+
+def edge_case(rng: random.Random, i: int) -> tuple[str, str]:
+    """A receipt whose key, R or S sits on an edge of Ed25519; returns (raw, pem)."""
+    a = rng.randrange(1, ed.L)
+    a_point = ed.scalar_mult(a, ed.BASE)
+    key_kind = rng.choice(["ordinary"] * 4 + ["mixed"] * 3 + ["small", "off", "noncanonical"])
+    if key_kind == "ordinary":
+        pub = ed.encode(a_point)
+    elif key_kind == "mixed":
+        pub = ed.encode(ed.point_add(a_point, rng.choice(TORSION)))
+    elif key_kind == "small":
+        pub = ed.encode(rng.choice([ed.IDENTITY, *TORSION]))
+    elif key_kind == "off":
+        pub = off_curve(rng)
+    else:
+        pub = non_canonical(rng)
+    r = rng.randrange(1, ed.L)
+    r_kinds = ["identity", "small", "mixed", "mixed", "nc", "off", "bytes"]
+    r_kind = rng.choice(["honest"] * 3 + r_kinds)
+    if r_kind == "honest":
+        r_enc = ed.encode(ed.scalar_mult(r, ed.BASE))
+    elif r_kind == "identity":
+        r_enc = ed.encode(ed.IDENTITY)
+    elif r_kind == "small":
+        r_enc = ed.encode(rng.choice(TORSION))
+    elif r_kind == "mixed":
+        r_enc = ed.encode(ed.point_add(ed.scalar_mult(r, ed.BASE), rng.choice(TORSION)))
+    elif r_kind == "nc":
+        r_enc = non_canonical(rng)
+    elif r_kind == "off":
+        r_enc = off_curve(rng)
+    else:
+        r_enc = rng.randbytes(32)
+    canonical = canonical_json({"edge": i, "key": key_kind, "overall": "pass", "r": r_kind})
+    k = int.from_bytes(hashlib.sha512(r_enc + pub + canonical.encode()).digest(), "little") % ed.L
+    s = rng.choice(
+        [
+            (r + k * a) % ed.L,
+            (r + k * a) % ed.L,
+            k * a % ed.L,
+            0,
+            (r + k * a) % ed.L + ed.L,
+            rng.randrange(2**256),
+        ]
+    )
+    sig = "v2=" + base64.b64encode(r_enc + s.to_bytes(32, "little")).decode()
+    receipt = {
+        "canonical": canonical,
+        "contentHash": "sha256:" + hashlib.sha256(canonical.encode()).hexdigest(),
+        "signature": sig,
+        "overall": "pass",
+    }
+    return json.dumps(receipt), edge_pem(pub)
+
+
 def seed_key(seed: int) -> Ed25519PrivateKey:
     """The signing key for a seed: SHA-256 of a label and the seed, as the private key."""
     return Ed25519PrivateKey.from_private_bytes(
@@ -359,15 +460,21 @@ def main() -> int:
             kind = "receipt" if rng.random() < 0.6 else "inclusion"
             if kind == "receipt" and rng.random() < 0.05:
                 kind = "guardian"
+            pem = None
             if kind == "guardian":
                 raw = guardian_case(rng, key)
             elif kind == "inclusion":
                 raw = inclusion_case(rng)
             elif rng.random() < 0.08:
                 raw = depth_case(rng, key) if rng.random() < 0.85 else duplicate_deep_case(rng, key)
+            elif rng.random() < 0.1:
+                raw, pem = edge_case(rng, i)
             else:
                 raw = receipt_case(rng, key)
-            fh.write(json.dumps({"id": i, "kind": kind, "raw": raw}) + "\n")
+            case: dict[str, object] = {"id": i, "kind": kind, "raw": raw}
+            if pem is not None:
+                case["pem"] = pem  # the case's own key, used instead of public.pem
+            fh.write(json.dumps(case) + "\n")
     print(f"{count} cases, seed {seed}")
     return 0
 

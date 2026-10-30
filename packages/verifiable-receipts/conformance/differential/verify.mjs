@@ -11,17 +11,27 @@
  * and verdicts written in batches, so memory does not grow with the
  * number of cases.
  */
-import { createPublicKey, verify } from "node:crypto";
+import { createPublicKey } from "node:crypto";
 import { closeSync, createReadStream, openSync, readFileSync, writeSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { parseReceipt, verifyV2Receipt } from "../verify-v2.mjs";
 import { verifyInclusionProof } from "../../dist/transparency.js";
 import { verifyGuardianAttestation } from "../../dist/guardian.js";
+import { verifyEd25519 } from "../../dist/ed25519-key.js";
 
 const TOO_DEEP = "receipt nesting deeper than 64";
 const BATCH = 1000; // verdicts per write
 
-function judge({ id, kind, raw }, publicKey) {
+function judge({ id, kind, raw, pem }, runKey) {
+  // An Ed25519 edge case carries its own key.
+  let publicKey = runKey;
+  if (pem !== undefined) {
+    try {
+      publicKey = createPublicKey(pem);
+    } catch (err) {
+      return { id, ok: false, threw: `key: ${String(err)}` };
+    }
+  }
   let value;
   try {
     // A receipt or attestation is read as Python's parse_receipt and Go's
@@ -41,7 +51,7 @@ function judge({ id, kind, raw }, publicKey) {
       // so compare.py compares only its verdict.
       const { ok, reason } = verifyGuardianAttestation(value, (canonical, signature) =>
         signature.startsWith("v2=") &&
-        verify(null, Buffer.from(canonical, "utf8"), publicKey, Buffer.from(signature.slice(3), "base64")),
+        verifyEd25519(publicKey, Buffer.from(canonical, "utf8"), Buffer.from(signature.slice(3), "base64")).ok,
       );
       return { id, ok, reason: reason ?? null };
     }

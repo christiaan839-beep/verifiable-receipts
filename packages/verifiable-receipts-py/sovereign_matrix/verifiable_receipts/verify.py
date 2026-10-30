@@ -15,7 +15,10 @@ What ``verify_v2_receipt`` checks, in this order:
      prefix optional); an empty string is a mismatch, not an absent
      field.
   4. The Ed25519 signature verifies over the UTF-8 bytes of
-     ``canonical``, exactly as given.
+     ``canonical``, exactly as given, under the strict profile of VAOS
+     2.0 section 7.3: R is a canonical encoding of a point of order L
+     and S is below L, checked before ``cryptography`` sees the
+     signature (the key is checked when it is loaded, after step 2).
   5. ``canonical`` nests at most 64 deep, counted on its text before it
      is parsed, and parses as a JSON object.
   6. Every other top-level field of the receipt (all but
@@ -40,6 +43,7 @@ import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -51,6 +55,8 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
     load_pem_public_key,
 )
+
+from . import edwards25519
 
 # Top-level fields that carry the signature material rather than
 # signed content. Every other field must match the canonical.
@@ -112,21 +118,93 @@ _SMALL_ORDER_KEYS = frozenset(
 _P = 2**255 - 19
 
 
+@lru_cache(maxsize=256)
 def _ed25519_key_problem(raw: bytes) -> str | None:
-    """Why a raw 32-byte Ed25519 public key is refused (VAOS 2.0 section 7.3), or None."""
+    """Why a raw Ed25519 public key is refused (VAOS 2.0 section 7.3), or None.
+
+    In order: a length other than 32; a point of small order by the
+    blocklist (sign bit cleared); y of p or more; a y with no x on the
+    curve; a point of small order; a point outside the prime-order
+    subgroup (mixed order). The answer depends only on the key, so it
+    is cached.
+    """
+    if len(raw) != 32:
+        return "public key is not 32 bytes"
     cleared = raw[:31] + bytes([raw[31] & 0x7F])
     if cleared in _SMALL_ORDER_KEYS:
         return "public key is a small-order point"
     if int.from_bytes(cleared, "little") >= _P:
         return "public key is not a canonical encoding"
+    problem = edwards25519.point_problem(raw)
+    return None if problem is None else "public key is " + problem
+
+
+_SIGNATURE_DOES_NOT_VERIFY = "signature does not verify under the supplied public key"
+
+
+def _ed25519_signature_problem(signature: bytes) -> str | None:
+    """Why a signature is rejected before the library sees it, or None.
+
+    VAOS 2.0 section 7.3, the strict profile: the signature is 64 bytes,
+    R (its first 32) is a canonical encoding of a point on the curve
+    that is not of small order (the identity included) and is in the
+    prime-order subgroup, and S (its last 32, little-endian) is below L.
+    A wrong length or an S of L or more has the reason a failed
+    signature check has.
+    """
+    if len(signature) != 64:
+        return _SIGNATURE_DOES_NOT_VERIFY
+    problem = edwards25519.point_problem(signature[:32])
+    if problem is not None:
+        return "signature R is " + problem
+    if int.from_bytes(signature[32:], "little") >= edwards25519.L:
+        return _SIGNATURE_DOES_NOT_VERIFY
     return None
+
+
+def verify_ed25519(public_key: bytes, message: bytes, signature: bytes) -> VerifyResult:
+    """Verify one Ed25519 signature under the strict profile of VAOS 2.0 section 7.3.
+
+    The key is checked first (``_ed25519_key_problem``), then R and S
+    (``_ed25519_signature_problem``), and only then does
+    ``cryptography`` run the cofactorless check, over the bytes of R
+    and A as given. Under these pre-checks every correct Ed25519
+    verifier, cofactored or cofactorless, gives the same verdict.
+
+    Args:
+        public_key: The raw 32-byte public key.
+        message: The signed bytes.
+        signature: The raw 64-byte signature (R || S).
+
+    Returns:
+        VerifyResult(ok=True), or VerifyResult(False, reason), with the
+        reasons of verify_v2_receipt. An argument that is not bytes,
+        bytearray or memoryview fails with "signature does not verify
+        under the supplied public key"; it never raises.
+    """
+    args = (public_key, message, signature)
+    if not all(isinstance(a, (bytes, bytearray, memoryview)) for a in args):
+        return VerifyResult(False, _SIGNATURE_DOES_NOT_VERIFY)
+    problem = _ed25519_key_problem(bytes(public_key))
+    if problem is None:
+        problem = _ed25519_signature_problem(bytes(signature))
+    if problem is not None:
+        return VerifyResult(False, problem)
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes(public_key)).verify(
+            bytes(signature), bytes(message)
+        )
+    except InvalidSignature:
+        return VerifyResult(False, _SIGNATURE_DOES_NOT_VERIFY)
+    return VerifyResult(True)
 
 
 def _load_ed25519_public_key(pem: bytes) -> Ed25519PublicKey:
     """Load an Ed25519 public key from PEM bytes. Raises ValueError on mismatch.
 
-    Refuses a key that is a point of small order or a non-canonical
-    encoding (VAOS 2.0 section 7.3).
+    Refuses a key that is not a canonical encoding of a point of order
+    L: a point of small order, of mixed order, off the curve, or a
+    non-canonical encoding (VAOS 2.0 section 7.3).
     """
     key = load_pem_public_key(pem)
     if not isinstance(key, Ed25519PublicKey):
@@ -347,10 +425,14 @@ def verify_v2_receipt(
                 False, "contentHash mismatch with canonical bytes"
             )
 
+    # VAOS 2.0 section 7.3: R and S are checked before cryptography sees them.
+    problem = _ed25519_signature_problem(sig_bytes)
+    if problem is not None:
+        return VerifyResult(False, problem)
     try:
         pub.verify(sig_bytes, canonical_bytes)
     except InvalidSignature:
-        return VerifyResult(False, "signature does not verify under the supplied public key")
+        return VerifyResult(False, _SIGNATURE_DOES_NOT_VERIFY)
 
     # Only now parse the canonical: these bytes are authenticated.
     reason = _check_envelope(receipt, canonical)

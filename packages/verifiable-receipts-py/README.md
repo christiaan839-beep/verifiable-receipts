@@ -71,12 +71,18 @@ print(result.reason)  # None, or why it failed
    level, and each list or dict in it one more.
 1. `canonical` and `signature` are non-empty strings, and `signature` is
    `v2=` followed by canonical standard base64 (padding bits zero). The
-   public key is not a point of small order or a non-canonical encoding
-   (VAOS 2.0 §7.3).
+   public key is a canonical encoding of a point of order L: not of
+   small or mixed order, not off the curve (VAOS 2.0 §7.3, the strict
+   profile).
 2. If `contentHash` is present, it equals the hex SHA-256 of the UTF-8
    bytes of `canonical` (the `sha256:` prefix is optional).
 3. The Ed25519 signature verifies over the UTF-8 bytes of `canonical`,
-   exactly as given.
+   exactly as given. Before `cryptography` sees it, its R must be a
+   canonical encoding of a point of order L (not of small order, the
+   identity included, nor of mixed order) and its S below L: so this
+   verifier, the TypeScript one on Node.js 22 or 24 and the Go one give
+   the same verdict on every signature. `verify_ed25519(public_key,
+   message, signature)` makes the same checks on one raw signature.
 4. `canonical` nests at most 64 deep, counted on its text before it is
    parsed, and parses as a JSON object.
 5. Every other field of the receipt is in that object with an equal JSON

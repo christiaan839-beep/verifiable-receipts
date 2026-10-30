@@ -3,6 +3,7 @@ package vaos
 import (
 	"crypto/ed25519"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -117,6 +118,33 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 				t.Fatalf("unmarshal probe: %v", err)
 			}
 
+			if _, isEd25519 := probe["ed25519"]; isEd25519 {
+				// One Ed25519 signature, as hex, checked with VerifyEd25519.
+				var shape struct {
+					Ed25519 struct {
+						PublicKey string `json:"publicKey"`
+						Message   string `json:"message"`
+						Signature string `json:"signature"`
+					} `json:"ed25519"`
+					Expected v2Expected `json:"expected"`
+				}
+				if err := json.Unmarshal(raw, &shape); err != nil {
+					t.Fatalf("unmarshal ed25519: %v", err)
+				}
+				pub, err1 := hex.DecodeString(shape.Ed25519.PublicKey)
+				msg, err2 := hex.DecodeString(shape.Ed25519.Message)
+				sig, err3 := hex.DecodeString(shape.Ed25519.Signature)
+				if err := errors.Join(err1, err2, err3); err != nil {
+					t.Fatalf("ed25519 hex: %v", err)
+				}
+				result := VerifyEd25519(pub, msg, sig)
+				if result.OK != shape.Expected.OK || (!result.OK && shape.Expected.ReasonContains != "" &&
+					!regexp.MustCompile("(?i)"+shape.Expected.ReasonContains).MatchString(result.Reason)) {
+					t.Fatalf("%s: got %+v, want %+v", name, result, shape.Expected)
+				}
+				return
+			}
+
 			if text, isText := probe["receiptText"]; isText {
 				// A receipt given as text, read with ParseReceipt, which
 				// counts depth on the text; a refusal is a rejection.
@@ -222,7 +250,7 @@ func TestConformance_EveryFixtureMatchesExpected(t *testing.T) {
 				return
 			}
 
-			t.Fatalf("%s: unknown fixture shape (no 'receipt' or 'leafHashHex')", name)
+			t.Fatalf("%s: unknown fixture shape (no 'receipt', 'receiptText', 'ed25519' or 'leafHashHex')", name)
 		})
 	}
 }

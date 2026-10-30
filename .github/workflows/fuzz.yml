@@ -1,13 +1,16 @@
 # Fuzzing beyond the property tests that run with every test suite.
 # On pull requests and pushes: each Go fuzz target for 15 seconds, and
-# the differential run (all three verifiers judge the same 20,000 cases).
+# the differential run (all three verifiers judge the same 20,000 cases),
+# once with the TypeScript verifier on Node 22 and once on Node 24.
 # Every night, and on demand: each Go target for 5 minutes, the
-# differential run with a million cases and a new seed, and the
+# differential run with a million cases and a new seed (200,000 on
+# Node 24), and the
 # fast-check and Hypothesis properties with 20,000 cases each. The Go
 # corpus and the Hypothesis database are cached between runs. A failing
 # input is uploaded as an artifact.
 #
-# A failed differential run uploads differential-disagreements: run.json
+# A failed differential run uploads differential-disagreements, one
+# directory per Node line that failed: run.json
 # (the case count and seed), summary.txt, public.pem, the first 50
 # disagreements and their lines of cases.jsonl, which is not uploaded.
 # The seed decides the cases and the signing key, so the run comes back
@@ -72,7 +75,7 @@ jobs:
   differential:
     name: Differential run (TypeScript, Python, Go)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read # check out the code
     env:
@@ -101,11 +104,28 @@ jobs:
         run: |
           if [ "$LONG" = true ]; then cases=1000000; seed="$RUN_ID"; else cases=20000; seed=1; fi
           bash packages/verifiable-receipts/conformance/differential/run.sh "$cases" "$seed" "$RUNNER_TEMP/differential"
+      # Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0 (OpenSSL 3.5.8) refuse
+      # R = identity, which Node.js 22.23.2 accepts (VAOS 2.0 section 7.3),
+      # so the TypeScript side runs on both lines.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: The same, with the TypeScript verifier on Node 24
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ "$LONG" = true ]; then cases=200000; seed="$RUN_ID"; else cases=20000; seed=1; fi
+          node --version
+          bash packages/verifiable-receipts/conformance/differential/run.sh "$cases" "$seed" "$RUNNER_TEMP/differential-node24"
       - name: Collect what reproduces the failure
         if: failure()
         run: |
-          python packages/verifiable-receipts/conformance/differential/collect.py \
-            "$RUNNER_TEMP/differential" "$RUNNER_TEMP/differential-repro" 50
+          for run in differential differential-node24; do
+            if [ -f "$RUNNER_TEMP/$run/run.json" ]; then
+              python packages/verifiable-receipts/conformance/differential/collect.py \
+                "$RUNNER_TEMP/$run" "$RUNNER_TEMP/differential-repro/$run" 50
+            fi
+          done
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

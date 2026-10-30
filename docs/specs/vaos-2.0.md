@@ -288,58 +288,113 @@ field 5,000 deep, CPython's default recursion limit is 1,000, and Go's
 
 RFC 8032 lets verifiers differ in how they check a signature, and two
 verifiers that differ accept different signatures. Step 4 makes these
-choices. With the 64-byte signature split into `R` (its first 32 bytes)
-and `S` (its last 32, a little-endian integer), the public key `A` (32
-bytes), the base point `B`, the group order `L`, and the message `M`
-(the canonical bytes):
+choices, the strict profile. With the 64-byte signature split into `R`
+(its first 32 bytes) and `S` (its last 32, a little-endian integer),
+the public key `A` (32 bytes), the base point `B`, the group order `L`,
+and the message `M` (the canonical bytes), a verifier rejects the
+signature, before any Ed25519 library sees it, unless all of these
+hold:
 
-- `S` MUST be less than `L`; otherwise the signature is invalid. So
-  `S + L`, which satisfies the same equation, is rejected, and a
-  signature has one valid `S`.
-- The check is cofactorless: the signature is valid iff
-  `[S]B = R + [k]A`, where `k` is SHA-512(`R` ‖ `A` ‖ `M`) read as a
-  little-endian integer, mod `L`, over the bytes of `R` and `A` exactly
-  as given. A verifier MUST NOT use the cofactored check
-  `[8][S]B = [8]R + [8][k]A`, which RFC 8032 §5.1.7 also allows: it
-  accepts signatures whose `R` or `A` has a small-order component, which
-  the cofactorless check rejects for most messages.
-- `R` is compared as encoded: the signature is valid iff the encoding
-  of `[S]B − [k]A` equals the 32 bytes of `R`. An `R` that is not the
-  canonical encoding of a point (a y-coordinate of p or more, or x = 0
-  with the sign bit set) never matches, even when it would decode to
-  the right point.
-- `A` that does not decode to a point of the curve (for example
-  y = 2, which has no x) makes every signature invalid.
-- Otherwise the signature check uses `A` as given: the equation above
-  holds or fails the same way for a key of small order and for a
-  non-canonical encoding of a point (a y-coordinate of p or more, or
-  x = 0 with the sign bit set), which RFC 8032 §5.1.3 would refuse to
-  decode. The key rule below refuses such keys before the check.
+- `S` is less than `L`. So `S + L`, which satisfies the same equation,
+  is rejected, and a signature has one valid `S`.
+- `A` is a canonical encoding (a y-coordinate below p, and not x = 0
+  with the sign bit set) of a point of the curve that is not of small
+  order and is in the prime-order subgroup: `[L]A` is the identity. A
+  key of mixed order (a point of order `L` plus a point of small
+  order) is refused. The key rule below states the reasons.
+- `R` is a canonical encoding of a point of the curve that is not of
+  small order, the identity included, and is in the prime-order
+  subgroup: `[L]R` is the identity.
 
-Node.js `crypto.verify` (OpenSSL), Python `cryptography` (OpenSSL) and
-Go `crypto/ed25519`, which the three verifiers of this repository call,
-check signatures this way. On 24 October 2026 Node.js 22.23.2 (OpenSSL
-3.5.7), `cryptography` 50.0.2 (OpenSSL 4.0.3) and Go 1.27.3 gave the
-same verdict on each of fourteen signatures that tell these choices
-apart: `S + L`, keys of order 1 and 8, a key off the curve, keys and
-`R` values that are non-canonical encodings, and keys and `R` values
-with an order-8 component. The review of the receipts explorer checked
-Chromium 153's WebCrypto on 16 such vectors, and it agreed with Node.js
-on every one. None of the three libraries refuses a key of small order
-or a non-canonical key on its own.
+Then the check is cofactorless, run by the platform's Ed25519 library:
+the signature is valid iff `[S]B = R + [k]A`, where `k` is
+SHA-512(`R` ‖ `A` ‖ `M`) read as a little-endian integer, mod `L`, over
+the bytes of `R` and `A` exactly as given, and iff the encoding of
+`[S]B − [k]A` equals the 32 bytes of `R`.
+
+A verifier rejects with these reasons, checked in this order, the key
+right after step 2 and the signature right before the library's check:
+
+| Rejected                                         | Reason                                                    |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| `A` (see the key rule below)                     | `public key is a small-order point`                       |
+|                                                  | `public key is not a canonical encoding`                  |
+|                                                  | `public key is not a point on the curve`                  |
+|                                                  | `public key is not in the prime-order subgroup`           |
+| `R` not a canonical encoding                     | `signature R is not a canonical encoding`                 |
+| `R` with no x on the curve                       | `signature R is not a point on the curve`                 |
+| `R` of small order (`[8]R` is the identity)      | `signature R is a small-order point`                      |
+| `R` of mixed order                               | `signature R is not in the prime-order subgroup`          |
+| a signature that is not 64 bytes; `S ≥ L`; the   | `signature does not verify under the supplied public key` |
+| cofactorless equation does not hold              |                                                           |
+
+**Why this makes every verifier agree.** For `A` and `R` in the
+prime-order subgroup and not the identity, `[S]B − R − [k]A` is in that
+subgroup too, so it is the identity iff `[8]` of it is: the
+cofactorless check and the cofactored check `[8][S]B = [8]R + [8][k]A`
+of RFC 8032 §5.1.7 accept the same signatures, and comparing `R` as
+encoded or as a point makes no difference once `R` is canonical. Every
+correct Ed25519 verifier, cofactored or cofactorless, and every library
+that also refuses `R` = identity (as Node.js 24.22.1 and 26.10.0 do,
+below) gives the same verdict on whatever passes the checks above. An honest signer's `A` and
+`R` are multiples of `B`, never the identity except with negligible
+probability, so it never makes a signature these checks reject. The
+three verifiers of this repository make the checks with their own
+dependency-free edwards25519 arithmetic (TypeScript
+`src/edwards25519.ts`, and its copy in `conformance/verify-v2.mjs`;
+Python `edwards25519.py`; Go `edwards25519.go`), with the same constants,
+before they call Node.js `crypto.verify`, Python `cryptography` or Go
+`crypto/ed25519`.
+
+"Taming the many EdDSAs" (Chalkias, Garillot and Nikolaenko, 2020)
+catalogues these choices and their test vectors. Its recommended
+verification (its Algorithm 2) rejects `S ≥ L`, non-canonical `A` and
+`R` and the eight keys of small order, and uses the cofactored
+equation; it does not refuse mixed-order keys or small-order and
+mixed-order `R`. This profile is stricter: by refusing those too it
+leaves only inputs on which the paper's cofactored and cofactorless
+verifiers agree, so it needs no choice between them. It accepts a
+strict subset of what Algorithm 2 accepts: a signature that passes
+these checks and the cofactorless equation passes the cofactored one,
+and Algorithm 2 accepts signatures under mixed-order keys, and with
+`R` of small or mixed order, that this profile rejects.
+
+(Amended 30 October 2026.) Until this date §7.3 took `A` as given once
+the key rule had refused small-order and non-canonical keys, and
+counted `R` of small or mixed order as valid wherever the cofactorless
+equation held. On 24 October 2026 Node.js 22.23.2 (OpenSSL 3.5.7),
+`cryptography` 50.0.2 (OpenSSL 4.0.3) and Go 1.27.3 gave the same
+verdict on fourteen signatures that tell these choices apart, and the
+review of the receipts explorer found Chromium 153's WebCrypto agreeing
+with Node.js on 16. On 30 October 2026 the receipts explorer's CI found
+two that no longer agree. Node.js 24.22.1 (OpenSSL 3.5.9) and 26.10.0
+(OpenSSL 3.5.8) refuse `R` = identity, which Node.js 22.23.2 accepts:
+with `S = k·a` under an ordinary key, a signature the cofactorless
+check accepts and Python, Go and the browsers accepted too. Which
+change in Node.js or OpenSSL causes this is not established. The two
+newer lines also differ on four signatures under
+small-order keys, which the key rule already refused. And WebKit on
+Linux (Playwright 1.64, WebKit 27.2) rejects a signature under a
+mixed-order key with `k` ≡ 0 mod 8, which every other verifier
+accepted. So one receipt was valid under one verifier and invalid under
+another. Under the strict profile both are rejected everywhere: the
+first for its `R`, the second for its key. The fixtures
+`ed25519-*.json` of the conformance suite test each case, and the
+differential run builds such signatures at random.
 
 **Weak keys.** Under a key of small order some signatures verify every
 message: under the key `01 00 … 00` (the identity point),
-`R = 01 00 … 00` with `S = 0` does. Such a key proves nothing.
+`R = 01 00 … 00` with `S = 0` does. Such a key proves nothing, and a
+key of mixed order makes verifiers disagree.
 
-- An issuer MUST NOT publish or sign with a key that is a point of
-  small order or a non-canonical encoding.
+- An issuer MUST NOT publish or sign with a key that is not a
+  canonical encoding of a point of order `L`. A key made as RFC 8032
+  §5.1.5 says always is one.
 - A verifier SHOULD refuse such a key when it loads it, and MUST then
   reject every receipt it is asked to verify with that key. It refuses
   a key whose 32 bytes, with the sign bit (the top bit of the last
   byte) cleared, equal one of the seven encodings of points of small
-  order that libsodium blocks (from "Taming the many EdDSAs", Chalkias
-  et al., 2020):
+  order that libsodium blocks (from "Taming the many EdDSAs"):
 
   ```
   0000000000000000000000000000000000000000000000000000000000000000
@@ -351,15 +406,22 @@ message: under the key `01 00 … 00` (the identity point),
   eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
   ```
 
-  and a key whose y-coordinate, those bytes read as a little-endian
-  integer, is p or more (a non-canonical encoding). The verifiers of
-  this repository refuse both, when the key is loaded (TypeScript
+  with the reason `public key is a small-order point`; then a key whose
+  y-coordinate, those bytes read as a little-endian integer, is p or
+  more, with `public key is not a canonical encoding`; then a key whose
+  y has no x on the curve, with `public key is not a point on the
+  curve` (added 30 October 2026); then, as a last check on the
+  blocklist, a key `[8]A` of which is the identity, with `public key
+  is a small-order point`; then a key `[L]A` of which is not the
+  identity, a key of mixed order, with `public key is not in the
+  prime-order subgroup` (added 30 October 2026). The verifiers of this
+  repository refuse these when the key is loaded (TypeScript
   `loadEd25519PublicKey`, Python's PEM loading, Go
   `LoadEd25519PublicKeyFromPEM`) and again in the v2 verifiers, right
-  after step 2, with the reasons `public key is a small-order point`
-  and `public key is not a canonical encoding`. The fixtures
-  `v2-invalid-small-order-key.json` and
-  `v2-invalid-noncanonical-key.json` test this.
+  after step 2. The answer depends only on the key, so a verifier MAY
+  cache it per key; it MUST NOT cache the checks on `R`. The fixtures
+  `v2-invalid-small-order-key.json`, `v2-invalid-noncanonical-key.json`
+  and `ed25519-key-*.json` test this.
 - A verifier MUST take the verification key from the issuer by a route
   it trusts (§6.3), never from the receipt.
 
@@ -417,8 +479,9 @@ For VAOS 2.0 specifically:
 |                                     | `@sovereignos/verifiable-receipts` is the conformance test.                                                        |
 | Deeply nested JSON                  | A receipt or canonical nested deeper than 64 is rejected before it is walked or parsed (§7.2), so no input exhausts    |
 |                                     | a verifier's stack or makes verifiers in different languages disagree.                                                  |
-| Verifiers that accept different     | Every verifier makes the choices of §7.3: `S < L`, the cofactorless check, `R` compared as encoded.                     |
-| signatures                          |                                                                                                                         |
+| Verifiers that accept different     | Every verifier makes the checks of §7.3, the strict profile, before its Ed25519 library: `S < L`, and `A` and `R`        |
+| signatures                          | canonical encodings of points of order `L` (no small-order or mixed-order points). On what passes them, cofactored      |
+|                                     | and cofactorless libraries agree, as do Node.js 24.22.1 and 26.10.0, which refuse `R` = identity. (Amended 30 Oct 2026.) |
 
 ---
 

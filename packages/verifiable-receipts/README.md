@@ -9,6 +9,19 @@ Node 22.12 or later. One runtime dependency,
 (`node:crypto`, a KMS, an HSM), except in the CLIs, which use
 `node:crypto`.
 
+To verify an Ed25519 signature, use `verifyEd25519(publicKey, message,
+signature)` rather than `crypto.verify` alone. It makes the checks of
+VAOS 2.0 §7.3, the strict profile, before `node:crypto` sees the
+signature: the key and the signature's R must be canonical encodings
+of points of order L (no small-order or mixed-order points, nothing off
+the curve), and S must be below L. Node.js 24.22.1 (OpenSSL 3.5.9)
+and 26.10.0 (OpenSSL 3.5.8) refuse R = identity, which Node.js 22.23.2
+accepts; with these checks, every Node line, the Python verifier and the Go verifier give the same
+verdict. It returns `{ ok, reason }`, with the reasons of the Python
+and Go verifiers. `loadEd25519PublicKey` refuses the same keys when it
+loads them, and `ed25519PublicKeyProblem` and
+`ed25519SignatureProblem` say why a key or a signature is refused.
+
 The wire formats are in [`SPEC.md`](./SPEC.md).
 
 ## Modules
@@ -30,8 +43,8 @@ exported from the package root.
 ## Sign and verify a verdict
 
 ```ts
-import { runGuardian, verifyGuardianAttestation, outputSizeRule, requireTokenRule } from "@sovereignos/verifiable-receipts";
-import { generateKeyPairSync, sign, verify } from "node:crypto";
+import { runGuardian, verifyEd25519, verifyGuardianAttestation, outputSizeRule, requireTokenRule } from "@sovereignos/verifiable-receipts";
+import { generateKeyPairSync, sign } from "node:crypto";
 
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 
@@ -43,7 +56,7 @@ const verdict = await runGuardian(
 
 const result = verifyGuardianAttestation(verdict, (canonical, signature) =>
   signature.startsWith("v2=") &&
-  verify(null, Buffer.from(canonical), publicKey, Buffer.from(signature.slice(3), "base64")),
+  verifyEd25519(publicKey, Buffer.from(canonical), Buffer.from(signature.slice(3), "base64")).ok,
 );
 console.log(verdict.overall, result.ok); // "pass" true
 ```
@@ -57,14 +70,14 @@ covers each rule's `ruleId`, `verdict` and `reason`; it does not cover
 ## Dual signature
 
 ```ts
-import { generateMlDsa65Keypair, signMlDsa65, formatV3Wire, verifyDualSig } from "@sovereignos/verifiable-receipts";
+import { generateMlDsa65Keypair, signMlDsa65, formatV3Wire, verifyDualSig, verifyEd25519 } from "@sovereignos/verifiable-receipts";
 
 const ml = generateMlDsa65Keypair();
 const edSig = sign(null, Buffer.from(canonical), privateKey).toString("base64");
 const wire = formatV3Wire(edSig, signMlDsa65(canonical, Buffer.from(ml.secretKeyB64, "base64")));
 
 const v = verifyDualSig(canonical, wire, Buffer.from(ml.publicKeyB64, "base64"), (c, s) =>
-  verify(null, Buffer.from(c), publicKey, Buffer.from(s.slice(3), "base64")),
+  verifyEd25519(publicKey, Buffer.from(c), Buffer.from(s.slice(3), "base64")).ok,
 );
 // { ok, ed25519, mldsa65 }
 ```

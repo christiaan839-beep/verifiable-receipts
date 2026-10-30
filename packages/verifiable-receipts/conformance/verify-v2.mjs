@@ -16,10 +16,12 @@
  *      optional); an empty string is a mismatch, not an absent field.
  *      (Go's Receipt.UnmarshalJSON rejects a non-string contentHash the
  *      same way.)
- *   4. The public key is not a point of small order or a non-canonical
- *      encoding (VAOS 2.0 §7.3; checked right after step 2), and the
- *      Ed25519 signature verifies over `canonical`'s UTF-8 bytes,
- *      exactly as given.
+ *   4. The public key is a canonical encoding of a point of order L:
+ *      not of small order, not of mixed order, not off the curve
+ *      (VAOS 2.0 §7.3; checked right after step 2). The signature's R
+ *      is the same, and its S is below L, checked before node:crypto
+ *      sees it; then the Ed25519 signature verifies over `canonical`'s
+ *      UTF-8 bytes, exactly as given.
  *   5. `canonical` nests at most 64 deep, counted on its text before it
  *      is parsed, and parses as a JSON object.
  *   6. Every other top-level field of the receipt equals the same field
@@ -32,10 +34,15 @@
  * the Python and Go verifiers (VAOS 2.0 §7, step 6): all three reject
  * such a field rather than compare it differently.
  *
+ * The edwards25519 arithmetic for step 4 is written out below, apart
+ * from the library's src/edwards25519.ts, so the harness does not rest
+ * on the code it checks; the two, and the Python and Go copies, use the
+ * same constants and the same order of checks.
+ *
  * jsonEqual below recurses at most 64 deep, and the depth checks walk an
  * explicit stack, so no input can overflow the call stack.
  */
-import { createHash, verify as nodeVerify } from "node:crypto";
+import { createHash, createPublicKey, verify as nodeVerify } from "node:crypto";
 
 const ENVELOPE_ONLY = new Set(["canonical", "contentHash", "signature"]);
 
@@ -43,6 +50,77 @@ const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+
 
 function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+// --- edwards25519 (RFC 8032), for the strict profile of VAOS 2.0 §7.3 ---
+// BigInt, for correctness, not constant time: keys and R are public.
+// Extended coordinates [X, Y, Z, T]; the addition of RFC 8032 §5.1.4 is
+// complete on this curve (it doubles, and takes points of small order).
+
+const P = 2n ** 255n - 19n;
+const L = 2n ** 252n + 27742317777372353535851937790883648493n;
+const mod = (a) => ((a % P) + P) % P;
+function powMod(b, e) {
+  let r = 1n;
+  b = mod(b);
+  for (; e > 0n; e >>= 1n) {
+    if (e & 1n) r = (r * b) % P;
+    b = (b * b) % P;
+  }
+  return r;
+}
+const inv = (a) => powMod(a, P - 2n);
+const D = mod(-121665n * inv(121666n));
+const SQRT_M1 = powMod(2n, (P - 1n) / 4n);
+const IDENTITY = Object.freeze([0n, 1n, 1n, 0n]);
+
+function add([x1, y1, z1, t1], [x2, y2, z2, t2]) {
+  const a = mod((y1 - x1) * (y2 - x2));
+  const b = mod((y1 + x1) * (y2 + x2));
+  const c = mod(2n * t1 * t2 * D);
+  const d = mod(2n * z1 * z2);
+  const [e, f, g, h] = [b - a, d - c, d + c, b + a];
+  return [mod(e * f), mod(g * h), mod(f * g), mod(e * h)];
+}
+
+function mult(k, p) {
+  let q = IDENTITY;
+  for (const bit of k > 0n ? k.toString(2) : "") {
+    q = add(q, q);
+    if (bit === "1") q = add(q, p);
+  }
+  return q;
+}
+
+const isIdentity = ([x, y, z]) => mod(x) === 0n && mod(y - z) === 0n;
+const littleEndian = (bytes) => BigInt("0x" + (Buffer.from(bytes).reverse().toString("hex") || "0"));
+
+/**
+ * Why 32 bytes are not a canonical encoding of a point of order L, or
+ * null: "not a canonical encoding" (y of p or more, or x = 0 with the
+ * sign bit set), "not a point on the curve", "a small-order point" (the
+ * identity included), "not in the prime-order subgroup".
+ */
+function pointProblem(bytes) {
+  if (bytes.length !== 32) return "not a canonical encoding";
+  const n = littleEndian(bytes);
+  const y = n & ((1n << 255n) - 1n);
+  const sign = n >> 255n;
+  if (y >= P) return "not a canonical encoding";
+  const x2 = mod((y * y - 1n) * inv(D * y * y + 1n));
+  let x = 0n;
+  if (x2 === 0n) {
+    if (sign) return "not a canonical encoding";
+  } else {
+    x = powMod(x2, (P + 3n) / 8n);
+    if (mod(x * x - x2) !== 0n) x = mod(x * SQRT_M1);
+    if (mod(x * x - x2) !== 0n) return "not a point on the curve";
+    if ((x & 1n) !== sign) x = P - x;
+  }
+  const point = [x, y, 1n, mod(x * y)];
+  if (isIdentity(mult(8n, point))) return "a small-order point";
+  if (!isIdentity(mult(L, point))) return "not in the prime-order subgroup";
+  return null;
 }
 
 /**
@@ -60,12 +138,39 @@ const SMALL_ORDER_KEYS = new Set([
   "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
 ]);
 
+const DOES_NOT_VERIFY = "signature does not verify under the supplied public key";
+const keyProblems = new Map(); // a key's answer never changes; R is not cached
+
 /**
- * Why the Ed25519 public key is refused (VAOS 2.0 §7.3), or null: a point
- * of small order, or a non-canonical encoding (y of p or more). A key that
- * is not Ed25519 is left to the signature check, which fails.
+ * Why a raw Ed25519 public key is refused (VAOS 2.0 §7.3), or null. In
+ * order: not 32 bytes; on the small-order blocklist (sign bit cleared);
+ * y of p or more; then pointProblem. The reasons of Python and Go.
+ */
+function rawKeyProblem(raw) {
+  if (raw.length !== 32) return "public key is not 32 bytes";
+  const hex = Buffer.from(raw).toString("hex");
+  if (keyProblems.has(hex)) return keyProblems.get(hex);
+  const cleared = Buffer.from(raw);
+  cleared[31] &= 0x7f;
+  let problem;
+  if (SMALL_ORDER_KEYS.has(cleared.toString("hex"))) problem = "public key is a small-order point";
+  else if (littleEndian(cleared) >= P) problem = "public key is not a canonical encoding";
+  else {
+    const p = pointProblem(raw);
+    problem = p === null ? null : `public key is ${p}`;
+  }
+  if (keyProblems.size >= 256) keyProblems.clear();
+  keyProblems.set(hex, problem);
+  return problem;
+}
+
+/**
+ * Why the Ed25519 public key is refused (VAOS 2.0 §7.3), or null. A key
+ * that is not Ed25519, or not 32 bytes, is left to the signature check,
+ * which fails.
  */
 function ed25519KeyProblem(publicKey) {
+  if (publicKey?.asymmetricKeyType !== "ed25519") return null;
   let x;
   try {
     x = publicKey.export({ format: "jwk" }).x;
@@ -73,13 +178,54 @@ function ed25519KeyProblem(publicKey) {
     return null;
   }
   if (typeof x !== "string") return null;
-  const cleared = Buffer.from(x, "base64url");
-  if (cleared.length !== 32) return null;
-  cleared[31] &= 0x7f;
-  if (SMALL_ORDER_KEYS.has(cleared.toString("hex"))) return "public key is a small-order point";
-  const y = BigInt("0x" + Buffer.from(cleared).reverse().toString("hex"));
-  if (y >= 2n ** 255n - 19n) return "public key is not a canonical encoding";
+  const raw = Buffer.from(x, "base64url");
+  return raw.length === 32 ? rawKeyProblem(raw) : null;
+}
+
+/**
+ * Why a signature is rejected before node:crypto sees it (VAOS 2.0 §7.3),
+ * or null: it is 64 bytes, its R a canonical encoding of a point of order
+ * L ("signature R is ..."), its S below L. A wrong length or an S of L or
+ * more has the reason a failed check has.
+ */
+function signatureProblem(sig) {
+  if (sig.length !== 64) return DOES_NOT_VERIFY;
+  const problem = pointProblem(sig.subarray(0, 32));
+  if (problem !== null) return `signature R is ${problem}`;
+  if (littleEndian(sig.subarray(32)) >= L) return DOES_NOT_VERIFY;
   return null;
+}
+
+/**
+ * One Ed25519 signature under the strict profile of VAOS 2.0 §7.3: the
+ * key, then R and S, then node:crypto's cofactorless check. `publicKey`,
+ * `message` and `signature` are bytes (the raw key and R || S).
+ *
+ * @param {Uint8Array} publicKey
+ * @param {Uint8Array} message
+ * @param {Uint8Array} signature
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export function verifyEd25519Strict(publicKey, message, signature) {
+  for (const arg of [publicKey, message, signature]) {
+    if (!(arg instanceof Uint8Array)) return { ok: false, reason: DOES_NOT_VERIFY };
+  }
+  const keyProblem = rawKeyProblem(publicKey);
+  if (keyProblem) return { ok: false, reason: keyProblem };
+  const sig = Buffer.from(signature);
+  const sigProblem = signatureProblem(sig);
+  if (sigProblem) return { ok: false, reason: sigProblem };
+  let ok;
+  try {
+    const key = createPublicKey({
+      key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(publicKey).toString("base64url") },
+      format: "jwk",
+    });
+    ok = nodeVerify(null, message, key, sig);
+  } catch {
+    ok = false;
+  }
+  return ok ? { ok: true } : { ok: false, reason: DOES_NOT_VERIFY };
 }
 
 /** The nesting limit of VAOS 2.0 §7.2. */
@@ -223,6 +369,9 @@ export function verifyV2Receipt(receipt, publicKey) {
     }
   }
 
+  // VAOS 2.0 §7.3: R and S are checked before node:crypto sees them.
+  const sigProblem = signatureProblem(sigBytes);
+  if (sigProblem) return { ok: false, reason: sigProblem };
   let verified;
   try {
     verified = nodeVerify(null, canonicalBytes, publicKey, sigBytes);
@@ -232,7 +381,7 @@ export function verifyV2Receipt(receipt, publicKey) {
   if (!verified) {
     return {
       ok: false,
-      reason: "signature does not verify under the supplied public key",
+      reason: DOES_NOT_VERIFY,
     };
   }
 
