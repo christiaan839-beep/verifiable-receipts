@@ -1,10 +1,16 @@
-# Weekly updates, grouped per ecosystem. A release must be 14 days old
+# Weekly updates, grouped per ecosystem. Not covered: the release
+# toolchain versions in .github/release/*-version (node, python, go), which
+# RELEASING.md says how to bump. A release must be 14 days old
 # before Dependabot proposes it, so a compromised release has time to be
 # caught and pulled first. Security updates are not delayed.
 version: 2
 updates:
+  # The workflows (/ covers .github/workflows) and the composite actions in
+  # .github/actions/<name>/action.yml.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
     cooldown:

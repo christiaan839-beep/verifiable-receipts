@@ -5,8 +5,17 @@
 # The tag must match the package's version and must point at a commit on
 # main. The test workflow runs first. The reusable build workflow
 # (build.yml) builds the files reproducibly, with a CycloneDX SBOM for each,
-# and signs SLSA build provenance and SBOM attestations for them (SLSA
-# Build L3: the signer is build.yml, which this workflow cannot change).
+# in a job that cannot sign, then signs SLSA build provenance and SBOM
+# attestations for them in a job that runs no repository code, after a
+# maintainer approves the "release" environment (SLSA Build L3: the signer
+# is build.yml, which this workflow cannot change). The npm and PyPI jobs
+# and the GitHub release job check the exact files they upload against
+# those attestations (signed by build.yml, from this tag and commit) and
+# against the digests build.yml output, with .github/release/verify.sh, and
+# stop if any check fails. Go has nothing to upload: proxy.golang.org serves
+# the tagged version as soon as the tag is pushed, before any of this; the
+# proxy-go job runs the same check on the attested zip and then compares
+# the proxy's zip with it.
 # Publishing uses trusted publishing (OIDC, no stored tokens) from the
 # protected "release" environment. npm uploads are staged (npm stage
 # publish) and go live only when a maintainer approves them with 2FA. The
@@ -83,7 +92,8 @@ jobs:
   build:
     # The reusable release build (SLSA Build L3): builds the package's files
     # and an SBOM for each, and signs a provenance and an SBOM attestation
-    # for each file. Uploads them as the artifact dist-<kind>.
+    # for each file (after approval of the release environment). Uploads
+    # them as the artifact dist-<kind>, and outputs their digests.
     name: Build
     needs: [plan, test]
     uses: $/.github/workflows/build.yml
@@ -107,6 +117,7 @@ jobs:
       name: release
       url: https://www.npmjs.com/package/@sovereignos/verifiable-receipts
     permissions:
+      contents: read # check out verify.sh
       id-token: write # npm trusted publishing (OIDC) and npm provenance
     steps:
       # The release build's Node, so npm packs the same bytes it packed.
@@ -127,6 +138,24 @@ jobs:
         with:
           name: dist-js
           path: dist
+      # verify.sh only, from the tagged commit: it runs gh and jq, nothing
+      # from a registry.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: vr
+          sparse-checkout: .github/release
+          sparse-checkout-cone-mode: false
+      - name: Verify the files against the attestations and build.yml's digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMS: ${{ needs.build.outputs.sha256sums }}
+          DIR: dist
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/expected.sha256"
+          vr/.github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" \
+            --source-digest "$GITHUB_SHA" "$DIR" "$GITHUB_REF"
       - name: Stage the attested tarball's contents for approval on npm
         run: |
           set -euo pipefail
@@ -152,13 +181,33 @@ jobs:
       name: release
       url: https://pypi.org/project/sovereign-matrix-verifiable-receipts/
     permissions:
+      contents: read # check out verify.sh
       id-token: write # PyPI trusted publishing (OIDC) and PEP 740 attestations
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-py
           path: built
-      # PyPI takes the sdist and the wheel only, not the SBOMs and bundles.
+      # verify.sh only, from the tagged commit: it runs gh and jq, nothing
+      # from a registry.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: vr
+          sparse-checkout: .github/release
+          sparse-checkout-cone-mode: false
+      - name: Verify the files against the attestations and build.yml's digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMS: ${{ needs.build.outputs.sha256sums }}
+          DIR: built
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/expected.sha256"
+          vr/.github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" \
+            --source-digest "$GITHUB_SHA" "$DIR" "$GITHUB_REF"
+      # PyPI takes the sdist and the wheel only, not the SBOMs and bundles:
+      # exactly the files verified above.
       - run: mkdir dist && cp built/*.tar.gz built/*.whl dist/ && ls -l dist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
@@ -170,16 +219,35 @@ jobs:
     if: needs.plan.outputs.kind == 'go'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions: {}
+    permissions:
+      contents: read # check out verify.sh and the Go version
     steps:
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.27"
-          cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-go
           path: ${{ runner.temp }}/built
+      # verify.sh only, from the tagged commit: it runs gh and jq, nothing
+      # from a registry.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: vr
+          sparse-checkout: .github/release
+          sparse-checkout-cone-mode: false
+      - name: Verify the files against the attestations and build.yml's digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUMS: ${{ needs.build.outputs.sha256sums }}
+          DIR: ${{ runner.temp }}/built
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/expected.sha256"
+          vr/.github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" \
+            --source-digest "$GITHUB_SHA" "$DIR" "$GITHUB_REF"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: vr/.github/release/go-version
+          cache: false
       - name: Fetch the module version through the public proxy and checksum database
         env:
           VERSION: ${{ needs.plan.outputs.version }}
@@ -206,23 +274,35 @@ jobs:
     permissions:
       contents: write # create the release and upload its files
     steps:
+      # verify.sh and the changelogs only (contents: write is for the
+      # release, not for running repository code).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          sparse-checkout: |
+            .github/release
+            packages/*/CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-${{ needs.plan.outputs.kind }}
           path: assets
       # The files, an SBOM for each (FILE.cdx.json), the provenance and SBOM
       # attestation bundles (FILE.provenance.sigstore.json,
-      # FILE.sbom.sigstore.json) and SHA256SUMS over all of them.
+      # FILE.sbom.sigstore.json) and SHA256SUMS over all of them. verify.sh
+      # --expect refuses anything else in assets/, so assets/* below is
+      # only checked files.
       - name: Write SHA256SUMS
         run: cd assets && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
       - name: Verify the files as a user would
         env:
           GH_TOKEN: ${{ github.token }}
-          REF: ${{ github.ref }}
-        run: .github/release/verify.sh assets "$REF"
+          SUMS: ${{ needs.build.outputs.sha256sums }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/expected.sha256"
+          .github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" \
+            --source-digest "$GITHUB_SHA" assets "$GITHUB_REF"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}

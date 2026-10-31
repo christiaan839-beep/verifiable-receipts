@@ -12,6 +12,10 @@ depends on the Go build that made it. This sets instead:
   gives the same SBOM, and each file's SBOM has its own serial number;
 - metadata.component's purl and version to PURL, and its hashes to the
   file's SHA-256, so the SBOM names the file it describes;
+- metadata.component's bom-ref to PURL, and every reference to the old
+  bom-ref (dependencies[].ref and dependsOn, anywhere else a string equals
+  it) to the new one, so the dependency graph still starts at the root
+  (cyclonedx-gomod's root bom-ref has no version, for one);
 - no hashes for the tools (their names and versions stay).
 
 The output is sorted JSON with a trailing newline. Standard library only.
@@ -21,7 +25,28 @@ import argparse
 import datetime
 import hashlib
 import json
+import urllib.parse
 import uuid
+
+
+def replace_refs(node, old, new):
+    """Every string in node that equals old, replaced by new."""
+    if isinstance(node, dict):
+        return {k: replace_refs(v, old, new) for k, v in node.items()}
+    if isinstance(node, list):
+        return [replace_refs(v, old, new) for v in node]
+    return new if node == old else node
+
+
+def all_bom_refs(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("bom-ref"), str):
+            yield node["bom-ref"]
+        for v in node.values():
+            yield from all_bom_refs(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from all_bom_refs(v)
 
 
 def main() -> None:
@@ -51,11 +76,24 @@ def main() -> None:
     for tool in tools.get("components", []) if isinstance(tools, dict) else tools or []:
         tool.pop("hashes", None)
 
+    name, sep, rest = a.purl.partition("@")
+    version = urllib.parse.unquote(rest.split("?", 1)[0].split("#", 1)[0])
+    if not (name.startswith("pkg:") and sep and version):
+        raise SystemExit(f"{a.purl}: not a purl with a version")
+
     root = meta.get("component")
     if root is None:
         raise SystemExit(f"{a.sbom}: no metadata.component")
+    old_ref = root.pop("bom-ref", None)
+    others = set(all_bom_refs(bom))
+    if a.purl in others:
+        raise SystemExit(f"{a.sbom}: another component already has the bom-ref {a.purl}")
+    if old_ref is not None:
+        bom = replace_refs(bom, old_ref, a.purl)
+        root = bom["metadata"]["component"]
+    root["bom-ref"] = a.purl
     root["purl"] = a.purl
-    root["version"] = a.purl.split("@", 1)[1].split("?", 1)[0]
+    root["version"] = version
     root["hashes"] = [{"alg": "SHA-256", "content": digest}]
 
     with open(a.out, "w", encoding="utf-8", newline="\n") as f:
