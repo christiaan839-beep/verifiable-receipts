@@ -8,6 +8,6 @@ hypothesis==6.168.5
 ruff==0.17.0
 # Checks that .github/tools/python-sbom/runtime.txt is what pyproject.toml
 # compiles to (.github/tools/python-sbom/check_runtime.sh).
-uv==0.13.1
+uv==0.13.4
 jsonschema
 mcp
