@@ -63,6 +63,8 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
+# bash runs the EXIT trap when a signal (HUP, INT, TERM) ends the script
+# too, so a dry run's manifest is restored then as well (test_build.sh).
 dry_run=${VR_DRY_RUN:-}
 case "$dry_run" in "" | 0) dry_run= ;; 1) ;; *) echo "error: VR_DRY_RUN must be 1 or unset" >&2; exit 2 ;; esac
 if [ -n "$dry_run" ] && [ -n "${VR_GO_VERSION:-}" ]; then

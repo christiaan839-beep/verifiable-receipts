@@ -30,6 +30,22 @@ concurrency:
   group: release-dry-run-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  # On a tag every other job is skipped (build.yml would build a release),
+  # which would look like a passing run; this one fails instead.
+  refuse-tags:
+    name: Refuse a tag
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: A dry run runs on a branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::release-dry-run does not run on a tag ($REF): a tag's build is a release. Start it on a branch, or push a branch named release-dry-run/<name>."
+          exit 1
+
   # One job per package, not a matrix: a matrix keeps only one leg's
   # outputs, and each package's digests are needed below. On a tag
   # build.yml would build a release, so the dry run refuses tags.
@@ -99,49 +115,68 @@ jobs:
         run: |
           set -euo pipefail
           case "$PACKAGE" in js) SUMS=$JS ;; py) SUMS=$PY ;; go) SUMS=$GO ;; esac
-          guard() { vr/.github/release/verify.sh --expect "$1" --source-digest "$GITHUB_SHA" "$2" "$GITHUB_REF"; }
-          refused() { # name, expect, dir
-            if guard "$2" "$3" > "$RUNNER_TEMP/log" 2>&1; then
-              cat "$RUNNER_TEMP/log"; echo "::error::the guard accepted $1"; exit 1
+          v=vr/.github/release/verify.sh
+          # refused NAME ERROR VERIFY-ARGS...: verify.sh must fail, with an
+          # error matching ERROR (an ERE), so it is refused for that reason.
+          refused() {
+            local name=$1 error=$2; shift 2
+            if "$v" "$@" > "$RUNNER_TEMP/log" 2>&1; then
+              cat "$RUNNER_TEMP/log"; echo "::error::the guard accepted $name"; exit 1
             fi
-            echo "refused, as it must: $1 ($(grep -m1 -i 'error' "$RUNNER_TEMP/log" || tail -n1 "$RUNNER_TEMP/log"))"
+            if ! grep -Eq -- "$error" "$RUNNER_TEMP/log"; then
+              cat "$RUNNER_TEMP/log"; echo "::error::the guard refused $name, but not with /$error/"; exit 1
+            fi
+            echo "refused, as it must: $name: $(grep -Em1 -- "$error" "$RUNNER_TEMP/log")"
           }
           d=$RUNNER_TEMP/dist
-          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/expected.sha256"
+          e=$RUNNER_TEMP/expected.sha256
+          printf '%s\n' "$SUMS" > "$e"
           echo "::group::genuine files"
-          guard "$RUNNER_TEMP/expected.sha256" "$d"
+          "$v" --expect "$e" --source-digest "$GITHUB_SHA" "$d" "$GITHUB_REF"
           echo "::endgroup::"
           shopt -s nullglob
           files=("$d"/*.tgz "$d"/*.tar.gz "$d"/*.whl "$d"/*.zip)
           f=$(basename "${files[0]}")
+          q=$(printf '%s' "$f" | sed 's/[][\.*^$+?(){}|]/\\&/g') # $f as an ERE
 
-          # 1. One byte appended to a release file: the build's digest and
-          #    the attestation both no longer match.
+          # 1. One byte appended to a release file: it is not the build's,
+          #    and (without --expect) no attestation signs its digest.
           cp -R "$d" "$RUNNER_TEMP/tampered"
           printf 'x' >> "$RUNNER_TEMP/tampered/$f"
-          refused "a tampered $f" "$RUNNER_TEMP/expected.sha256" "$RUNNER_TEMP/tampered"
+          refused "a tampered $f" "error: $q is [0-9a-f]{64}, the build made [0-9a-f]{64}" \
+            --expect "$e" --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/tampered" "$GITHUB_REF"
+          refused "a tampered $f, without --expect" 'Error: verifying with issuer "sigstore.dev"' \
+            --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/tampered" "$GITHUB_REF"
           # 2. The same tampered file, its digest in the list changed to
           #    match: the attestation still refuses it.
           have=$(sha256sum < "$RUNNER_TEMP/tampered/$f" | cut -d' ' -f1)
-          awk -v f="$f" -v h="$have" '$2 == f { $0 = h "  " f } { print }' "$RUNNER_TEMP/expected.sha256" > "$RUNNER_TEMP/forged.sha256"
-          refused "a tampered $f with a forged digest list" "$RUNNER_TEMP/forged.sha256" "$RUNNER_TEMP/tampered"
-          # 3. A tampered SBOM.
+          awk -v f="$f" -v h="$have" '$2 == f { $0 = h "  " f } { print }' "$e" > "$RUNNER_TEMP/forged.sha256"
+          refused "a tampered $f with a forged digest list" 'Error: verifying with issuer "sigstore.dev"' \
+            --expect "$RUNNER_TEMP/forged.sha256" --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/tampered" "$GITHUB_REF"
+          # 3. A tampered SBOM: not the build's, and (without --expect) not
+          #    the attested one.
           cp -R "$d" "$RUNNER_TEMP/sbom"
           jq '.metadata.component.version = "0.0.0"' "$d/$f.cdx.json" > "$RUNNER_TEMP/sbom/$f.cdx.json"
-          refused "a tampered $f.cdx.json" "$RUNNER_TEMP/expected.sha256" "$RUNNER_TEMP/sbom"
+          refused "a tampered $f.cdx.json" "error: $q\\.cdx\\.json is [0-9a-f]{64}, the build made" \
+            --expect "$e" --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/sbom" "$GITHUB_REF"
+          refused "a tampered $f.cdx.json, without --expect" "error: the SBOM attested for $q is not $q\\.cdx\\.json" \
+            --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/sbom" "$GITHUB_REF"
           # 4. Genuine files, but a digest list that is not the build's.
           awk 'NR == 1 { c = substr($1, 1, 1); $0 = (c == "0" ? "1" : "0") substr($1, 2) "  " $2 } { print }' \
-            "$RUNNER_TEMP/expected.sha256" > "$RUNNER_TEMP/wrong.sha256"
-          refused "a digest list that is not the build's" "$RUNNER_TEMP/wrong.sha256" "$d"
-          # 5. Another ref or commit than the one that was built.
-          if vr/.github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" "$d" refs/tags/js-v0.0.0 > "$RUNNER_TEMP/log" 2>&1; then
-            echo "::error::the guard accepted another source ref"; exit 1
-          fi
-          echo "refused, as it must: another source ref"
-          if vr/.github/release/verify.sh --expect "$RUNNER_TEMP/expected.sha256" --source-digest 0000000000000000000000000000000000000000 "$d" > "$RUNNER_TEMP/log" 2>&1; then
-            echo "::error::the guard accepted another commit"; exit 1
-          fi
-          echo "refused, as it must: another commit"
+            "$e" > "$RUNNER_TEMP/wrong.sha256"
+          refused "a digest list that is not the build's" 'is [0-9a-f]{64}, the build made [0-9a-f]{64}' \
+            --expect "$RUNNER_TEMP/wrong.sha256" --source-digest "$GITHUB_SHA" "$d" "$GITHUB_REF"
+          # 5. A file the build did not make, next to the genuine ones (the
+          #    release job uploads the whole directory).
+          cp -R "$d" "$RUNNER_TEMP/stray"
+          echo x > "$RUNNER_TEMP/stray/notes.txt"
+          refused "a stray file" 'error: notes\.txt is not a file the build made, its bundle or SHA256SUMS' \
+            --expect "$e" --source-digest "$GITHUB_SHA" "$RUNNER_TEMP/stray" "$GITHUB_REF"
+          # 6. Another ref or commit than the one that was built.
+          refused "another source ref" 'Error: expected SourceRepositoryRef to be refs/tags/js-v0\.0\.0' \
+            --expect "$e" "$d" refs/tags/js-v0.0.0
+          refused "another commit" 'Error: expected SourceRepositoryDigest to be 0{40}' \
+            --expect "$e" --source-digest 0000000000000000000000000000000000000000 "$d"
 
   assemble:
     name: Assemble and verify the release files
@@ -151,9 +186,22 @@ jobs:
     permissions:
       contents: read # check out the verify script
     steps:
+      # The release job's sparse checkout (release.yml github-release).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          sparse-checkout: |
+            .github/release
+            packages/*/CHANGELOG.md
+          sparse-checkout-cone-mode: false
+      - name: The sparse checkout has what the release job reads
+        run: |
+          set -euo pipefail
+          for f in .github/release/verify.sh packages/verifiable-receipts/CHANGELOG.md \
+            packages/verifiable-receipts-py/CHANGELOG.md packages/verifiable-receipts-go/CHANGELOG.md; do
+            [ -f "$f" ] || { echo "::error::$f is not in the sparse checkout"; exit 1; }
+          done
+          echo "checked out: $(git ls-files -t | grep -c '^H') of $(git ls-files | wc -l) files"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: dist-*

@@ -61,7 +61,7 @@ jobs:
     # The release scripts' own tests, and the Python SBOM's lockfile.
     name: Release tools
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,6 +74,8 @@ jobs:
         run: .github/release/test_build.sh
       - name: verify.sh, the publish jobs' guard
         run: .github/release/test_verify.sh
+      - name: Each check in verify.sh and build.sh has a test that fails without it
+        run: .github/release/test_mutants.sh
       - name: runtime.txt is what pyproject.toml compiles to
         run: .github/tools/python-sbom/check_runtime.sh
   go:

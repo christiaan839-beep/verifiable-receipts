@@ -8,10 +8,14 @@
 # in a job that cannot sign, then signs SLSA build provenance and SBOM
 # attestations for them in a job that runs no repository code, after a
 # maintainer approves the "release" environment (SLSA Build L3: the signer
-# is build.yml, which this workflow cannot change). Every publish job
-# checks the exact files it uploads against those attestations (signed by
-# build.yml, from this tag and commit) and against the digests build.yml
-# output, with .github/release/verify.sh, and stops if any check fails.
+# is build.yml, which this workflow cannot change). The npm and PyPI jobs
+# and the GitHub release job check the exact files they upload against
+# those attestations (signed by build.yml, from this tag and commit) and
+# against the digests build.yml output, with .github/release/verify.sh, and
+# stop if any check fails. Go has nothing to upload: proxy.golang.org serves
+# the tagged version as soon as the tag is pushed, before any of this; the
+# proxy-go job runs the same check on the attested zip and then compares
+# the proxy's zip with it.
 # Publishing uses trusted publishing (OIDC, no stored tokens) from the
 # protected "release" environment. npm uploads are staged (npm stage
 # publish) and go live only when a maintainer approves them with 2FA. The
@@ -270,16 +274,24 @@ jobs:
     permissions:
       contents: write # create the release and upload its files
     steps:
+      # verify.sh and the changelogs only (contents: write is for the
+      # release, not for running repository code).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          sparse-checkout: |
+            .github/release
+            packages/*/CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist-${{ needs.plan.outputs.kind }}
           path: assets
       # The files, an SBOM for each (FILE.cdx.json), the provenance and SBOM
       # attestation bundles (FILE.provenance.sigstore.json,
-      # FILE.sbom.sigstore.json) and SHA256SUMS over all of them.
+      # FILE.sbom.sigstore.json) and SHA256SUMS over all of them. verify.sh
+      # --expect refuses anything else in assets/, so assets/* below is
+      # only checked files.
       - name: Write SHA256SUMS
         run: cd assets && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
       - name: Verify the files as a user would

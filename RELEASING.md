@@ -15,12 +15,23 @@ runs the test workflow, then the reusable release build,
 reproducibly and writes a CycloneDX SBOM for each, with a read-only token;
 its `attest` job, once a maintainer approves the `release` environment,
 checks the files against the build job's digests and signs a SLSA build
-provenance attestation and an SBOM attestation for each. Then each publish
-job, again after approval, checks the exact files it is about to upload
-against those attestations and digests (`.github/release/verify.sh`), stops
-if anything does not match, and publishes through trusted publishing, with
-no stored token. Last, the GitHub release is created with the files, after
-the same check.
+provenance attestation and an SBOM attestation for each. Then the npm
+and PyPI publish jobs, again after approval, check the exact files they are
+about to upload against those attestations and digests
+(`.github/release/verify.sh`), stop if anything does not match, and publish
+through trusted publishing, with no stored token. Last, the GitHub release
+is created with the files, after the same check.
+
+Go is different: there is nothing to upload. The Go module is public the
+moment the tag is pushed, because `proxy.golang.org` fetches any tagged
+version from GitHub on request, before any approval, attestation or check.
+The `proxy-go` job has no environment and uploads nothing: after the build
+it runs the same check on the attested zip, then fetches the version through
+the proxy and checksum database and compares the proxy's zip with the
+attested one byte for byte. A failure there means the version on the proxy
+is not the attested build, and it cannot be withdrawn (only retracted in a
+later version's `go.mod`). So for Go the gate is the tag itself: push a Go
+tag only on a reviewed commit on `main`, after a dry run.
 
 ## What a release contains
 
@@ -173,8 +184,12 @@ of these checks on every file in a directory (the commit check excepted):
 src/.github/release/verify.sh --source-digest "$commit" release refs/tags/js-v0.5.1
 ```
 
-Every publish job in `release.yml` runs it on the files it uploads, with
-`--expect` set to the digests `build.yml` output, before it uploads.
+The npm and PyPI jobs and the GitHub release job in `release.yml` run it
+on the files they upload, before they upload, with `--expect` set to the
+digests `build.yml` output; with `--expect` it also refuses any file in the
+directory that is not one of those files, their bundles or `SHA256SUMS`.
+The Go job runs it on the attested zip (see the top of this file for why
+that comes after the Go version is already public).
 
 | Package | Tag | Files |
 |---|---|---|
@@ -272,7 +287,8 @@ tampered files and digests, which it must refuse), `SHA256SUMS` and the
 verification for all three packages, and uploads the would-be release files
 as the artifact `release-assets`. It publishes nothing, uses no environment
 and makes no tag. Start it from the Actions tab (Run workflow, on a branch)
-or push a branch named `release-dry-run/<name>`. Pull requests do not run
+or push a branch named `release-dry-run/<name>`. Started on a tag it fails
+at once (a tag's build is a release). Pull requests do not run
 it: attestations need an OIDC token, and a pull request from a fork gets
 none.
 
@@ -340,4 +356,6 @@ first version goes up by hand:
 
 Nothing to configure. The release job fetches the version through
 `proxy.golang.org` and `sum.golang.org` so it is cached and its checksum is
-recorded.
+recorded. Anyone can fetch it through the proxy as soon as the tag exists,
+so the tag, not an approval, publishes a Go version (see the top of this
+file).

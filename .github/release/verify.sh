@@ -12,7 +12,8 @@
 #     same way, and its predicate is FILE.cdx.json;
 # with --expect SUMS (sha256sum format: the digests build.yml output for
 # the files it built), every release file and its SBOM is listed in SUMS,
-# every file SUMS lists is in DIR, and each matches its digest; and, if DIR
+# every file SUMS lists is in DIR, and each matches its digest, and DIR
+# holds nothing else but the release files' bundles and SHA256SUMS; and, if DIR
 # has a SHA256SUMS, every file in DIR matches it. Any failure exits non-zero
 # (the publish jobs run this before they upload, and stop on a failure).
 # Needs gh (logged in, or GH_TOKEN set) and jq.
@@ -64,13 +65,6 @@ if [ -n "$expect" ]; then
     digests+=("${BASH_REMATCH[1]}")
   done <"$expect"
   [ ${#names[@]} -ge 1 ] || { echo "error: $expect lists no files" >&2; exit 1; }
-  for f in "${files[@]}"; do
-    for g in "$f" "$f.cdx.json"; do
-      listed=
-      for n in "${names[@]}"; do [ "$n" != "$g" ] || listed=1; done
-      [ -n "$listed" ] || { echo "error: $g is not a file the build made ($expect)" >&2; exit 1; }
-    done
-  done
   for i in "${!names[@]}"; do
     g=${names[$i]}
     [ -f "$g" ] || { echo "error: the build made $g, which is not in $dir" >&2; exit 1; }
@@ -81,6 +75,20 @@ if [ -n "$expect" ]; then
     fi
     echo "ok  $g: the digest build.yml output"
   done
+  # Nothing else may be in DIR (the release job uploads all of it): only
+  # the listed files, each release file's two bundles, and SHA256SUMS.
+  shopt -s dotglob
+  for g in *; do
+    ok=
+    [ "$g" = SHA256SUMS ] && ok=1
+    for n in "${names[@]}"; do [ "$g" != "$n" ] || ok=1; done
+    for f in "${files[@]}"; do
+      [ "$g" != "$f.provenance.sigstore.json" ] && [ "$g" != "$f.sbom.sigstore.json" ] || ok=1
+    done
+    [ -n "$ok" ] && [ -f "$g" ] && [ ! -L "$g" ] ||
+      { echo "error: $g is not a file the build made, its bundle or SHA256SUMS" >&2; exit 1; }
+  done
+  shopt -u dotglob
 fi
 
 for f in "${files[@]}"; do

@@ -91,10 +91,12 @@ jobs:
           sudo chown -R vrbuild:vrbuild "$src"
           sudo install -d -o vrbuild -g vrbuild "$mnt" "$out"
           sudo -u vrbuild disorderfs --shuffle-dirents=yes "$src" "$mnt"
-          # Two reads of the same directory list it in different orders.
+          # Two reads of the same directory list it in different orders, or
+          # the build would not be the shuffled one this job claims.
           d=$mnt/packages/verifiable-receipts-py/tests
           if [ "$(sudo -u vrbuild ls -f "$d")" = "$(sudo -u vrbuild ls -f "$d")" ]; then
-            echo "::warning::disorderfs listed $d in the same order twice"
+            echo "::error::disorderfs listed $d in the same order twice; the listing is not shuffled"
+            exit 1
           fi
           sudo -u vrbuild env -i PATH="$PATH" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
             HOME=/home/vrbuild TZ=Pacific/Kiritimati LANG=de_DE.UTF-8 PACKAGE="$PACKAGE" OUT="$out" MNT="$mnt" \

@@ -24,8 +24,12 @@
 #
 # A build from a tag is a release: build.yml checks the tag names the
 # package (and, for Go, the version), and the attest job runs in the
-# protected "release" environment, so nothing is signed for a tag until a
-# maintainer approves (and the environment only admits the release tags).
+# protected "release" environment (which only admits the release tags), so
+# a maintainer must approve before this job signs anything for a tag. That
+# holds only if the tagged commit's build.yml is this reviewed one: a tag on
+# a commit that is not on main runs that commit's workflows. release.yml's
+# plan job refuses such a tag before the build, and RELEASING.md has users
+# check the commit is on main (git merge-base --is-ancestor).
 # Any other ref is a dry run: build.sh marks the version (VR_DRY_RUN=1,
 # X.Y.Z-dryrun.g<commit> and so on), so a dry run's files and attestations
 # never have a release file's bytes, and the attest job runs without an
