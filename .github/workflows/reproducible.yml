@@ -1,9 +1,25 @@
 # Reproducible builds: builds each package's release files twice, with the
 # release build script (.github/release/build.sh), and fails if any byte
-# differs. The second build runs on another runner image, about two minutes
-# later, under umask 077 (so the checkout's file modes differ), with another
-# time zone and locale, from a deeper checkout path. Runs on every pull
-# request, so reproducibility cannot regress, and on main.
+# differs. Runs on every pull request, so reproducibility cannot regress,
+# and on main.
+#
+# What the second build changes, against the first:
+#   - the runner image (ubuntu-22.04, not 24.04) and the start time (two
+#     minutes later, so a clock in the output would show);
+#   - the checkout path (a deeper one);
+#   - the user (another account, another uid and gid) and HOME (an empty
+#     one, so no npm, pip or Go build cache is shared);
+#   - the order in which directories list their files (the checkout is read
+#     through disorderfs, which shuffles every directory listing);
+#   - the files' modes (group and other bits cleared, as a clone made under
+#     umask 077 has them) and their mtimes (every file and directory under
+#     packages/ is set to 2001-02-03);
+#   - the umask (077), TZ and LANG it calls build.sh with.
+# build.sh resets the last three (umask 022, TZ=UTC, LC_ALL=C) and the
+# package's file modes (from the git index) itself, so those test that
+# reset rather than vary what the tools see. Not varied: the toolchain
+# (pinned, and the bytes depend on it), the CPU architecture (both x86-64)
+# and the kernel.
 #
 # Actions are pinned to full commit SHAs (the tag in the comment). The token
 # is read-only and checkout does not keep it.
@@ -44,26 +60,49 @@ jobs:
           persist-credentials: false
           fetch-depth: 0 # the Go zip's pseudo-version needs the tags
           path: ${{ matrix.path }}
-      - name: Another umask's file modes
-        if: matrix.build == 'second'
-        working-directory: ${{ matrix.path }}
-        run: chmod -R go-rwx . && touch -d '2001-02-03 04:05:06' packages/*/*
       - uses: $/.github/actions/release-toolchain
         with:
           package: ${{ matrix.package }}
           root: ${{ matrix.path }}
       - name: Build
+        if: matrix.build == 'first'
         working-directory: ${{ matrix.path }}
         env:
           PACKAGE: ${{ matrix.package }}
-          OUT: ${{ runner.temp }}/out-${{ matrix.build }}
-          BUILD: ${{ matrix.build }}
+          OUT: ${{ runner.temp }}/out-first
+        run: .github/release/build.sh "$PACKAGE" "$OUT"
+      # The second build runs as another user, from a copy under /srv (the
+      # runner's home is not that user's to read), read through disorderfs
+      # mounted at /srv/<the deeper checkout path>.
+      - name: Build as another user, with other modes and mtimes, through a shuffled file system
+        if: matrix.build == 'second'
+        env:
+          PACKAGE: ${{ matrix.package }}
+          CHECKOUT: ${{ matrix.path }}
         run: |
-          if [ "$BUILD" = second ]; then
-            umask 077
-            export TZ=Pacific/Kiritimati LANG=de_DE.UTF-8
+          set -euo pipefail
+          src=/srv/source mnt=/srv/$CHECKOUT out=/srv/out-second
+          sudo apt-get update -q
+          sudo apt-get install -y -q disorderfs
+          sudo useradd --create-home --uid 4321 --user-group vrbuild
+          sudo cp -a "$CHECKOUT" "$src"
+          sudo chmod -R go-rwx "$src"
+          sudo find "$src/packages" -exec touch -d '2001-02-03 04:05:06' {} +
+          sudo chown -R vrbuild:vrbuild "$src"
+          sudo install -d -o vrbuild -g vrbuild "$mnt" "$out"
+          sudo -u vrbuild disorderfs --shuffle-dirents=yes "$src" "$mnt"
+          # Two reads of the same directory list it in different orders.
+          d=$mnt/packages/verifiable-receipts-py/tests
+          if [ "$(sudo -u vrbuild ls -f "$d")" = "$(sudo -u vrbuild ls -f "$d")" ]; then
+            echo "::warning::disorderfs listed $d in the same order twice"
           fi
-          .github/release/build.sh "$PACKAGE" "$OUT"
+          sudo -u vrbuild env -i PATH="$PATH" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" \
+            HOME=/home/vrbuild TZ=Pacific/Kiritimati LANG=de_DE.UTF-8 PACKAGE="$PACKAGE" OUT="$out" MNT="$mnt" \
+            bash -c 'umask 077 && cd "$MNT" && id && .github/release/build.sh "$PACKAGE" "$OUT"'
+          sudo fusermount -u "$mnt"
+          mkdir "$RUNNER_TEMP/out-second"
+          sudo cp "$out"/* "$RUNNER_TEMP/out-second/"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/out-second"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: repro-${{ matrix.package }}-${{ matrix.build }}

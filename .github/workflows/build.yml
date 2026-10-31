@@ -1,19 +1,38 @@
-# The release build: builds one package's files, an SBOM for each, and signs
-# a SLSA build provenance attestation and an SBOM attestation for each file.
-#
-# This is a reusable workflow so that it reaches SLSA v1.0 Build Level 3.
-# The signing certificate names this file as the workflow that signed
-# (its Build Signer URI), and a caller cannot add steps to this job: it can
-# only choose the package (validated below) and, for Go, the tag version.
+# The release build: builds one package's files and an SBOM for each, then
+# signs a SLSA build provenance attestation and an SBOM attestation for each
+# file. A reusable workflow, so that it reaches SLSA v1.0 Build Level 3: the
+# signing certificate names this file as the workflow that signed (its Build
+# Signer URI), and a caller cannot add steps to its jobs; it can only pick
+# the package and, for Go, the tag version, and both are checked below.
 # Verify with --signer-workflow pinned to this file (RELEASING.md):
 #
 #   gh attestation verify FILE --repo christiaan839-beep/verifiable-receipts \
 #     --signer-workflow christiaan839-beep/verifiable-receipts/.github/workflows/build.yml
 #
-# Callers: release.yml (tags) and release-dry-run.yml (no publishing). Each
-# must grant contents: read, id-token: write and attestations: write.
-# The build itself is .github/release/build.sh, which anyone can run to
-# rebuild a release; the files are uploaded as the artifact dist-<package>.
+# Two jobs, so that the build cannot reach the signing identity:
+#   build   runs the repository's code and third-party tools (build.sh, npm,
+#           tsc, hatchling, cyclonedx-py, cyclonedx-gomod) with a read-only
+#           token and no id-token permission, uploads the files as the
+#           artifact build-<package>, and outputs their SHA-256 digests;
+#   attest  holds id-token: write and attestations: write, checks nothing
+#           out and runs no repository code, only the pinned actions and the
+#           shell below: it downloads the files, checks them against the
+#           build job's digests, signs, and uploads the files with their
+#           bundles as the artifact dist-<package>.
+# The digests are this workflow's outputs too, so the publish jobs check the
+# files they upload against them as well as against the attestations.
+#
+# A build from a tag is a release: build.yml checks the tag names the
+# package (and, for Go, the version), and the attest job runs in the
+# protected "release" environment, so nothing is signed for a tag until a
+# maintainer approves (and the environment only admits the release tags).
+# Any other ref is a dry run: build.sh marks the version (VR_DRY_RUN=1,
+# X.Y.Z-dryrun.g<commit> and so on), so a dry run's files and attestations
+# never have a release file's bytes, and the attest job runs without an
+# environment.
+#
+# Callers: release.yml (tags) and release-dry-run.yml (branches). Each must
+# grant contents: read, id-token: write and attestations: write.
 #
 # Actions are pinned to full commit SHAs (the tag in the comment).
 name: build
@@ -29,25 +48,50 @@ on:
         required: false
         type: string
         default: ""
+    outputs:
+      sha256sums:
+        description: >-
+          sha256sum lines (DIGEST, two spaces, NAME) for every file the build
+          job made: the release files and their SBOMs (FILE.cdx.json)
+        value: ${{ jobs.attest.outputs.sha256sums }}
+      files:
+        description: The release files' names, a JSON array
+        value: ${{ jobs.build.outputs.files }}
 permissions: {}
 jobs:
   build:
-    name: Build and attest (${{ inputs.package }})
+    name: Build (${{ inputs.package }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read # check out the code
-      id-token: write # sign the attestations (Sigstore)
-      attestations: write # store the attestations on GitHub
+    outputs:
+      sha256sums: ${{ steps.digests.outputs.sha256sums }}
+      files: ${{ steps.digests.outputs.files }}
     steps:
-      - name: Check the inputs
+      - name: Check the inputs and the ref
         env:
           PACKAGE: ${{ inputs.package }}
           GO_VERSION: ${{ inputs.go-version }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
+          set -euo pipefail
           case "$PACKAGE" in js | py | go) ;; *) echo "::error::unknown package"; exit 1 ;; esac
           if [ -n "$GO_VERSION" ] && { [ "$PACKAGE" != go ] || ! [[ "$GO_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }; then
             echo "::error::go-version must be vX.Y.Z, and only for go"; exit 1
+          fi
+          if [ "$REF_TYPE" = tag ]; then
+            case "$PACKAGE:$REF" in
+              js:refs/tags/js-v*) ;;
+              py:refs/tags/py-v*) ;;
+              go:refs/tags/packages/verifiable-receipts-go/v*)
+                [ "$GO_VERSION" = "${REF#refs/tags/packages/verifiable-receipts-go/}" ] || {
+                  echo "::error::a Go release builds the tag's version"; exit 1; } ;;
+              *) echo "::error::$REF is not a $PACKAGE release tag"; exit 1 ;;
+            esac
+          elif [ -n "$GO_VERSION" ]; then
+            echo "::error::go-version is for a release tag; a dry run builds the pseudo-version"; exit 1
           fi
       # Full history and tags: the Go module zip's version is the tag's, or
       # a pseudo-version computed from the latest tag before the commit.
@@ -62,44 +106,104 @@ jobs:
         env:
           PACKAGE: ${{ inputs.package }}
           VR_GO_VERSION: ${{ inputs.go-version }}
+          VR_DRY_RUN: ${{ github.ref_type != 'tag' && '1' || '' }}
         run: .github/release/build.sh "$PACKAGE" "$RUNNER_TEMP/dist"
-      - id: files
-        name: List the files to attest
+      - id: digests
+        name: Output the files' digests
+        shell: bash -O nullglob {0}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/dist"
           files=(*.tgz *.tar.gz *.whl *.zip)
           [ "${#files[@]}" -ge 1 ] && [ "${#files[@]}" -le 2 ] || { echo "::error::expected one or two files"; exit 1; }
-          echo "first=$RUNNER_TEMP/dist/${files[0]}" >> "$GITHUB_OUTPUT"
-          if [ "${#files[@]}" -eq 2 ]; then echo "second=$RUNNER_TEMP/dist/${files[1]}" >> "$GITHUB_OUTPUT"; fi
+          all=(*)
+          [ "${#all[@]}" -eq $((2 * ${#files[@]})) ] || { echo "::error::expected only the files and their SBOMs"; exit 1; }
+          sums=$(for f in "${files[@]}"; do /usr/bin/sha256sum -- "$f" "$f.cdx.json"; done)
+          echo "$sums"
+          {
+            echo "files=$(printf '%s\n' "${files[@]}" | jq -Rnc '[inputs]')"
+            echo "sha256sums<<SUMS_EOF"
+            echo "$sums"
+            echo "SUMS_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-${{ inputs.package }}
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error
+
+  attest:
+    # No checkout and no repository code: only pinned actions and this
+    # file's shell, which sees the files as data.
+    name: Attest (${{ inputs.package }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ${{ github.ref_type == 'tag' && 'release' || '' }}
+    permissions:
+      id-token: write # sign the attestations (Sigstore)
+      attestations: write # store the attestations on GitHub
+    outputs:
+      sha256sums: ${{ steps.check.outputs.sha256sums }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: build-${{ inputs.package }}
+          path: ${{ runner.temp }}/dist
+      - id: check
+        name: The files are the ones the build job made
+        env:
+          SUMS: ${{ needs.build.outputs.sha256sums }}
+          FILES: ${{ needs.build.outputs.files }}
         shell: bash -O nullglob {0}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          [ -n "$SUMS" ] || { echo "::error::the build job output no digests"; exit 1; }
+          # Plain names only (no paths), each listed once, and nothing else in the directory.
+          printf '%s\n' "$SUMS" | grep -Evq '^[0-9a-f]{64}  [A-Za-z0-9][A-Za-z0-9._+-]*$' &&
+            { echo "::error::malformed digest line"; exit 1; }
+          listed=$(printf '%s\n' "$SUMS" | cut -c67- | sort)
+          [ "$listed" = "$(printf '%s\n' "$listed" | sort -u)" ] || { echo "::error::a file is listed twice"; exit 1; }
+          [ "$listed" = "$(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)" ] || { echo "::error::the artifact holds other files than the build listed"; exit 1; }
+          printf '%s\n' "$SUMS" | /usr/bin/sha256sum --check --strict -
+          files=(*.tgz *.tar.gz *.whl *.zip)
+          [ "$(printf '%s\n' "${files[@]}" | jq -Rnc '[inputs]')" = "$FILES" ] || { echo "::error::the release files differ"; exit 1; }
+          [ "${#files[@]}" -ge 1 ] && [ "${#files[@]}" -le 2 ] || { echo "::error::expected one or two files"; exit 1; }
+          {
+            echo "first=$RUNNER_TEMP/dist/${files[0]}"
+            if [ "${#files[@]}" -eq 2 ]; then echo "second=$RUNNER_TEMP/dist/${files[1]}"; fi
+            echo "sha256sums<<SUMS_EOF"
+            printf '%s\n' "$SUMS"
+            echo "SUMS_EOF"
+          } >> "$GITHUB_OUTPUT"
       # One provenance and one SBOM attestation per file, so each file's
       # bundles sit next to it: FILE.provenance.sigstore.json and
       # FILE.sbom.sigstore.json.
       - id: provenance-1
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.files.outputs.first }}
+          subject-path: ${{ steps.check.outputs.first }}
       - id: sbom-1
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.files.outputs.first }}
-          sbom-path: ${{ steps.files.outputs.first }}.cdx.json
+          subject-path: ${{ steps.check.outputs.first }}
+          sbom-path: ${{ steps.check.outputs.first }}.cdx.json
       - id: provenance-2
-        if: steps.files.outputs.second != ''
+        if: steps.check.outputs.second != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.files.outputs.second }}
+          subject-path: ${{ steps.check.outputs.second }}
       - id: sbom-2
-        if: steps.files.outputs.second != ''
+        if: steps.check.outputs.second != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: ${{ steps.files.outputs.second }}
-          sbom-path: ${{ steps.files.outputs.second }}.cdx.json
+          subject-path: ${{ steps.check.outputs.second }}
+          sbom-path: ${{ steps.check.outputs.second }}.cdx.json
       - name: Keep the bundles next to the files
         env:
-          FIRST: ${{ steps.files.outputs.first }}
-          SECOND: ${{ steps.files.outputs.second }}
+          FIRST: ${{ steps.check.outputs.first }}
+          SECOND: ${{ steps.check.outputs.second }}
           P1: ${{ steps.provenance-1.outputs.bundle-path }}
           S1: ${{ steps.sbom-1.outputs.bundle-path }}
           P2: ${{ steps.provenance-2.outputs.bundle-path }}
