@@ -1,0 +1,32 @@
+# The exact toolchain a release is built with, from .github/release/*-version.
+# The compressed bytes of a release file depend on the Node, Python or Go
+# version, so the release build, the reproducibility check and a rebuild all
+# use the same one. No caches: a release build must not read state that
+# another run (a pull request's, say) could have written.
+name: Release toolchain
+description: Install the pinned toolchain for one package's release build
+inputs:
+  package:
+    description: js, py or go
+    required: true
+  root:
+    description: The checkout's path in the workspace
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - if: inputs.package == 'js'
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: ${{ inputs.root }}/.github/release/node-version
+        package-manager-cache: false
+    - if: inputs.package == 'py'
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version-file: ${{ inputs.root }}/.github/release/python-version
+    - if: inputs.package == 'go'
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: ${{ inputs.root }}/.github/release/go-version
+        cache: false

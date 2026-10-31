@@ -73,3 +73,16 @@ are in the git history only.
   message (`signature base64 invalid: Incorrect padding`, and others).
 - `sign_v2_receipt` and `canonicalize` refuse a body nested deeper than
   64 with a `ValueError`.
+### Release
+
+- The release is built reproducibly, with SLSA v1.0 Build Level 3
+  provenance (signed by the reusable workflow
+  `.github/workflows/build.yml`) and a CycloneDX SBOM, itself attested,
+  for each file. The GitHub release for `py-v0.3.0` has
+  `sovereign_matrix_verifiable_receipts-0.3.0.tar.gz` and
+  `…-py3-none-any.whl`, an SBOM (`FILE.cdx.json`) and the provenance and
+  SBOM attestation bundles (`FILE.provenance.sigstore.json`,
+  `FILE.sbom.sigstore.json`) for each, and `SHA256SUMS`. The files on
+  PyPI are the attested ones. RELEASING.md ("Verifying a release",
+  "Rebuilding a release") has the commands.
+

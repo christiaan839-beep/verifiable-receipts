@@ -1,0 +1,77 @@
+# A release without the release: builds every package through the release
+# build (build.yml: build, SBOM, provenance and SBOM attestations), then
+# assembles and verifies the files a GitHub release would get, SHA256SUMS
+# included, and uploads them as the artifact release-assets. Nothing is
+# published, no release environment is used, and no tag is made.
+#
+# It runs when a maintainer starts it (workflow_dispatch) or pushes a branch
+# named release-dry-run/*. Only those, because the attestations need an
+# OIDC token, which pull requests (from forks) do not get, and because each
+# run records real, public attestations. They are truthful (built by
+# build.yml from that branch's commit), and the verify commands in
+# RELEASING.md pin --source-ref to the release tag, so a dry-run's
+# attestations never stand in for a release's. Pull requests run the same
+# build script, twice, in reproducible.yml.
+#
+# Actions are pinned to full commit SHAs (the tag in the comment).
+name: release-dry-run
+on:
+  push:
+    branches:
+      - "release-dry-run/**"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: Build
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [js, py, go]
+    uses: $/.github/workflows/build.yml
+    with:
+      package: ${{ matrix.package }}
+    permissions:
+      contents: read # check out the code
+      id-token: write # sign the attestations (Sigstore)
+      attestations: write # store the attestations on GitHub
+
+  assemble:
+    name: Assemble and verify the release files
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # check out the verify script
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          path: ${{ runner.temp }}/assets
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        run: cd "$RUNNER_TEMP/assets" && sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Verify the provenance, the SBOMs and the checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+        run: .github/release/verify.sh "$RUNNER_TEMP/assets" "$REF"
+      - name: Summary
+        run: |
+          {
+            echo "### Release files (dry run, not published)"
+            echo '```'
+            cat "$RUNNER_TEMP/assets/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/assets/
+          if-no-files-found: error

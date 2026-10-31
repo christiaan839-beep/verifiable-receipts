@@ -1,0 +1,120 @@
+# The release build: builds one package's files, an SBOM for each, and signs
+# a SLSA build provenance attestation and an SBOM attestation for each file.
+#
+# This is a reusable workflow so that it reaches SLSA v1.0 Build Level 3.
+# The signing certificate names this file as the workflow that signed
+# (its Build Signer URI), and a caller cannot add steps to this job: it can
+# only choose the package (validated below) and, for Go, the tag version.
+# Verify with --signer-workflow pinned to this file (RELEASING.md):
+#
+#   gh attestation verify FILE --repo christiaan839-beep/verifiable-receipts \
+#     --signer-workflow christiaan839-beep/verifiable-receipts/.github/workflows/build.yml
+#
+# Callers: release.yml (tags) and release-dry-run.yml (no publishing). Each
+# must grant contents: read, id-token: write and attestations: write.
+# The build itself is .github/release/build.sh, which anyone can run to
+# rebuild a release; the files are uploaded as the artifact dist-<package>.
+#
+# Actions are pinned to full commit SHAs (the tag in the comment).
+name: build
+on:
+  workflow_call:
+    inputs:
+      package:
+        description: js, py or go
+        required: true
+        type: string
+      go-version:
+        description: For a Go release, the tag's version (vX.Y.Z); empty builds the commit
+        required: false
+        type: string
+        default: ""
+permissions: {}
+jobs:
+  build:
+    name: Build and attest (${{ inputs.package }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # check out the code
+      id-token: write # sign the attestations (Sigstore)
+      attestations: write # store the attestations on GitHub
+    steps:
+      - name: Check the inputs
+        env:
+          PACKAGE: ${{ inputs.package }}
+          GO_VERSION: ${{ inputs.go-version }}
+        run: |
+          case "$PACKAGE" in js | py | go) ;; *) echo "::error::unknown package"; exit 1 ;; esac
+          if [ -n "$GO_VERSION" ] && { [ "$PACKAGE" != go ] || ! [[ "$GO_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }; then
+            echo "::error::go-version must be vX.Y.Z, and only for go"; exit 1
+          fi
+      # Full history and tags: the Go module zip's version is the tag's, or
+      # a pseudo-version computed from the latest tag before the commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: $/.github/actions/release-toolchain
+        with:
+          package: ${{ inputs.package }}
+      - name: Build
+        env:
+          PACKAGE: ${{ inputs.package }}
+          VR_GO_VERSION: ${{ inputs.go-version }}
+        run: .github/release/build.sh "$PACKAGE" "$RUNNER_TEMP/dist"
+      - id: files
+        name: List the files to attest
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          files=(*.tgz *.tar.gz *.whl *.zip)
+          [ "${#files[@]}" -ge 1 ] && [ "${#files[@]}" -le 2 ] || { echo "::error::expected one or two files"; exit 1; }
+          echo "first=$RUNNER_TEMP/dist/${files[0]}" >> "$GITHUB_OUTPUT"
+          if [ "${#files[@]}" -eq 2 ]; then echo "second=$RUNNER_TEMP/dist/${files[1]}" >> "$GITHUB_OUTPUT"; fi
+        shell: bash -O nullglob {0}
+      # One provenance and one SBOM attestation per file, so each file's
+      # bundles sit next to it: FILE.provenance.sigstore.json and
+      # FILE.sbom.sigstore.json.
+      - id: provenance-1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.first }}
+      - id: sbom-1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.first }}
+          sbom-path: ${{ steps.files.outputs.first }}.cdx.json
+      - id: provenance-2
+        if: steps.files.outputs.second != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.second }}
+      - id: sbom-2
+        if: steps.files.outputs.second != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.files.outputs.second }}
+          sbom-path: ${{ steps.files.outputs.second }}.cdx.json
+      - name: Keep the bundles next to the files
+        env:
+          FIRST: ${{ steps.files.outputs.first }}
+          SECOND: ${{ steps.files.outputs.second }}
+          P1: ${{ steps.provenance-1.outputs.bundle-path }}
+          S1: ${{ steps.sbom-1.outputs.bundle-path }}
+          P2: ${{ steps.provenance-2.outputs.bundle-path }}
+          S2: ${{ steps.sbom-2.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$P1" "$FIRST.provenance.sigstore.json"
+          cp "$S1" "$FIRST.sbom.sigstore.json"
+          if [ -n "$SECOND" ]; then
+            cp "$P2" "$SECOND.provenance.sigstore.json"
+            cp "$S2" "$SECOND.sbom.sigstore.json"
+          fi
+          ls -l "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ inputs.package }}
+          path: ${{ runner.temp }}/dist/
+          if-no-files-found: error

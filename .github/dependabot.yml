@@ -61,3 +61,21 @@ updates:
     groups:
       python-build:
         patterns: ["*"]
+  # The SBOM generator for the Python release files, and the runtime
+  # dependencies the Python SBOM lists (runtime.txt, from pyproject.toml).
+  - package-ecosystem: pip
+    directory: /.github/tools/python-sbom
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      python-sbom:
+        patterns: ["*"]
+  # golang.org/x/mod, which makes the Go module zip for a release.
+  - package-ecosystem: gomod
+    directory: /.github/release/gomodzip
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

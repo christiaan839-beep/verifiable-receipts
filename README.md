@@ -77,6 +77,26 @@ cd verifiable-receipts
   `go mod edit -replace github.com/christiaan839-beep/verifiable-receipts/packages/verifiable-receipts-go=/path/to/clone/packages/verifiable-receipts-go`,
   then `go mod tidy`.
 
+## Verifying a release
+
+Every release file (the npm tarball, the Python sdist and wheel, the Go
+module zip) has SLSA v1.0 Build Level 3 provenance, a CycloneDX SBOM, and
+a reproducible build. To check the npm tarball, from npm or from the
+GitHub release:
+
+```
+npm pack @sovereignos/verifiable-receipts@0.5.1
+gh attestation verify sovereignos-verifiable-receipts-0.5.1.tgz \
+  --repo christiaan839-beep/verifiable-receipts \
+  --signer-workflow christiaan839-beep/verifiable-receipts/.github/workflows/build.yml \
+  --source-ref refs/tags/js-v0.5.1 --deny-self-hosted-runners
+```
+
+Add `--predicate-type https://cyclonedx.org/bom` to verify the SBOM
+attestation. [RELEASING.md](RELEASING.md#verifying-a-release) has the
+commands for each package, the SBOM check, and how to rebuild a release
+and compare checksums.
+
 ## Sign and verify
 
 **CLI** (TypeScript package):
